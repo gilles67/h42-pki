@@ -1,0 +1,5 @@
+PyKCS11
+cryptography
+fastapi[standard]
+granian
+toml

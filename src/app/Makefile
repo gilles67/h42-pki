@@ -5,8 +5,6 @@ all:
 	apt-get -y autoremove
 	apt-get clean
 	python3 -m venv /app
-	. /app/bin/activate && pip install PyKCS11
-	. /app/bin/activate && pip install cryptography
-	. /app/bin/activate && pip install fastapi[standard]
+	. /app/bin/activate && pip install -r /app/requirements.txt
 	echo ". /app/bin/activate" >> /root/.bashrc
 	echo "export PYKCS11LIB=/usr/lib/x86_64-linux-gnu/opensc-pkcs11.so" >> /root/.bashrc

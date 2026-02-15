@@ -8,4 +8,4 @@ RUN apt-get update -y && apt-get install -y --no-install-recommends make && make
 
 CMD ["/bin/bash"]
 
-EXPOSE 80
+EXPOSE 80 443
