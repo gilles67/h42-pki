@@ -1,43 +1,58 @@
-import sys, os, logging
+import sys, os, logging, tomllib, json, 
 from cryptography import x509
 
+CERTDB_CONFIGFILE = os.environ.get("H42_PKI_CERTDB", "/app/config/ca.toml")
 logger = logging.getLogger(__name__)
 
-def _check_folder(path):
-    if not os.path.exists(path):
-        logger.info('DB Directory {} not exists, creating ...'.format(path))
-        os.mkdir(path)
 
-class CACertificateDB:
-    _path = None
-    _path_inbox = None
-    _path_signed = None
-    _path_expired = None
-    _path_revoked = None
-
-    def __init__(self, path):
-        self._path = path 
-        self.checkFolders()
-
-    def checkFolders(self):
-        _check_folder(self._path)
-        
-        self._path_inbox = os.path.join(self._path, '_inbox')
-        _check_folder(self._path_inbox)
-        
-        self._path_signed = os.path.join(self._path, 'signed')
-        _check_folder(self._path_signed)
-        
-        self._path_expired = os.path.join(self._path, 'expired')
-        _check_folder(self._path_expired)
-        
-        self._path_revoked = os.path.join(self._path, 'revoked')
-        _check_folder(self._path_revoked)
-
-class CACertificateDoc:
+class certdbConf: 
+    self._data = {}
+    self._configfile = None
+    def __init__(self, configfile=CA_CONFIGFILE):
+        self._configfile = configfile
+        self.load()
+        logger.info("Load configuration from : {}".format(configfile))
     
+    def load(self): 
+        if (os.path.exits(self._configfile)):
+            self._data = tomllib.load(f)
 
-    def __init__(self, serial=x509.random_serial_number()):
+
+
+
+class certdbFolder:
+    _db = None
+    _name = None
+    _path = None
+    def __init__(self, db, name):
+        self._db = db
+        self._name = name
+
+class certdbDocument:
+    _folder = None
+    _serial = None
+    _filename = None
+
+    def __init__(self, folder, serial):
+
+
+
+class certdb:
+    _conf = None
+    _path = None
+    _inbox = None
+    _signed = None
+    _expired = None
+    _revoked = None
+
+    def __init__(self):
+        self._conf = certdbConf()
+
+
+
+
+# class CACertificateDoc:
+#     def __init__(self, serial=x509.random_serial_number()):
 
 
 
@@ -45,5 +60,5 @@ class CACertificateDoc:
 
 if __name__ == '__main__':
     logging.basicConfig(stream=sys.stdout, encoding='utf-8', level=logging.DEBUG)
-    db = CACertificateDB('/app/config/ca')
+    db = certdb()
 
