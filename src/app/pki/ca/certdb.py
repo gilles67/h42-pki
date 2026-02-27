@@ -1,24 +1,29 @@
-import sys, os, logging, tomllib, json, 
+import sys, os, logging, tomllib, json
 from cryptography import x509
 
 CERTDB_CONFIGFILE = os.environ.get("H42_PKI_CERTDB", "/app/config/ca.toml")
 logger = logging.getLogger(__name__)
 
-
 class certdbConf: 
-    self._data = {}
-    self._configfile = None
-    def __init__(self, configfile=CA_CONFIGFILE):
+    _data = {}
+    _configfile = None
+    def __init__(self, configfile=CERTDB_CONFIGFILE):
         self._configfile = configfile
         self.load()
         logger.info("Load configuration from : {}".format(configfile))
     
     def load(self): 
-        if (os.path.exits(self._configfile)):
-            self._data = tomllib.load(f)
+        if (os.path.exists(self._configfile)):
+            with open(self._configfile, 'rb') as f:
+                self._data = tomllib.load(f)
+                f.close()
 
-
-
+    def get(self, *keys, default=None):
+        nested_data = self._data
+        for key in keys:
+            if key in nested_data: 
+                nested_data = nested_data[key]
+        return nested_data
 
 class certdbFolder:
     _db = None
@@ -34,6 +39,7 @@ class certdbDocument:
     _filename = None
 
     def __init__(self, folder, serial):
+        self._folder = folder
 
 
 
@@ -47,7 +53,16 @@ class certdb:
 
     def __init__(self):
         self._conf = certdbConf()
+        self._path = self._conf.get("Authority", "DataPath", default="/app/config/ca")
+        if os.path.isdir(self._path):
+            logger.info("Database path: {} exists.".format(self._path))
+        else:
+            logger.info("Database path: {} not exists, creating ...".format(self._path))
+            os.mkdir(self._path)
 
+    @
+    def conf(self):
+        return self._conf
 
 
 
