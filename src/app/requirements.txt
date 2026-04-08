@@ -2,3 +2,4 @@ PyKCS11
 cryptography
 fastapi[standard]
 granian
+requests
