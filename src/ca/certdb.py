@@ -133,6 +133,13 @@ class Certificate(CertModel):
             self.__key_object = serialization.load_pem_private_key(bytes(self.key_data, DEFAULT_ENCODING), password=bytes(self.__key_passphare,DEFAULT_ENCODING))
         return self.__key_object
 
+    @property
+    def common_name(self):
+        if self.crt == None:
+            return None
+        return self.crt.subject.get_attributes_for_oid(NameOID.COMMON_NAME)[0].value
+
+
     def SetKeyPassphare(self, passphrase=None):
         self.__key_passphare = passphrase
         logger.debug("Set Passphrase: {}".format(passphrase))
@@ -225,7 +232,7 @@ class Certificate(CertModel):
 
 class CertConfiguration(): 
     _data = {}
-    def __init__(self, configfile=CERTDB_CONFIGFILE):
+    def __init__(self, configfile):
         self.load(configfile)
         logger.info("Load configuration from : {}".format(configfile))
     
@@ -274,8 +281,8 @@ class CertDatabase(CertFolder):
     __certificates = None
     __authority = None
 
-    def __init__(self):
-        self.__conf = CertConfiguration()
+    def __init__(self, configfile=CERTDB_CONFIGFILE):
+        self.__conf = CertConfiguration(configfile)
         path = self.conf.get("Authority", "DataPath", default="/app/config/ca")
         super().__init__(path)
         

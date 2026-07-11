@@ -3,3 +3,4 @@ cryptography
 fastapi[standard]
 granian
 requests
+typer
