@@ -1,16 +1,16 @@
 # Legacy CA operations, being split into core/, keystore/ and services/ during lot 4.
-# Keys now come from h42pki.core.keys (B8, B18); signing is still the legacy one.
+# Keys come from h42pki.core.keys (B8, B18), certificates from h42pki.core.issuance.
 import asyncio
-import datetime
+from datetime import UTC, datetime
 from uuid import UUID
 
-from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric.types import PrivateKeyTypes
 from tortoise.transactions import in_transaction
 
 from h42pki.config import get_settings
 from h42pki.core.extensions import Extensions
+from h42pki.core.issuance import DEFAULT_CA_VALIDITY_DAYS, build_self_signed, check_root_ca
 from h42pki.core.keys import (
     KeyAlgorithm,
     generate_private_key,
@@ -133,27 +133,17 @@ class PkiCertificate:
         if cert.private_key_id is None:
             raise Unprocessable("the certificate has no private key to self-sign with")
 
+        check_root_ca(cert.extensions)
         (datakey, pvkey) = await PkiPrivateKey.load_key(cert.private_key_id)
-        days = 3653
-        expire_at = datetime.datetime.utcnow() + datetime.timedelta(days=days)
-
-        subject = issuer = cert.subject.x509_name()
-        x509_cert = x509.CertificateBuilder()
-        x509_cert = x509_cert.subject_name(subject)
-        x509_cert = x509_cert.issuer_name(issuer)
-
-        x509_cert = x509_cert.public_key(pvkey.public_key())
-        x509_cert = x509_cert.serial_number(int(cert.serial_hex, 16))
-        x509_cert = x509_cert.not_valid_before(datetime.datetime.utcnow())
-        x509_cert = x509_cert.not_valid_after(expire_at)
-
-        x509_cert = cert.extensions.apply(x509_cert)
-
-        x509_cert = x509_cert.add_extension(
-            x509.SubjectKeyIdentifier.from_public_key(pvkey.public_key()), critical=False
+        x509_cert_sign = await asyncio.to_thread(
+            build_self_signed,
+            cert.subject,
+            cert.extensions,
+            pvkey,
+            serial_hex=cert.serial_hex,
+            validity_days=DEFAULT_CA_VALIDITY_DAYS,
+            now=datetime.now(UTC),
         )
-
-        x509_cert_sign = await asyncio.to_thread(x509_cert.sign, pvkey, hashes.SHA512())
 
         values = {
             "der": x509_cert_sign.public_bytes(serialization.Encoding.DER),
