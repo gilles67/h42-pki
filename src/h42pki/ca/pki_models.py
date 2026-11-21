@@ -2,18 +2,7 @@
 from typing import Literal
 
 from cryptography import x509
-from cryptography.x509.oid import NameOID
 from pydantic import BaseModel, ConfigDict, Field
-
-SUBJECT_OIDS = {
-    "country_name": NameOID.COUNTRY_NAME,
-    "state_or_province_name": NameOID.STATE_OR_PROVINCE_NAME,
-    "locality_name": NameOID.LOCALITY_NAME,
-    "organization_name": NameOID.ORGANIZATION_NAME,
-    "organizational_unit_name": NameOID.ORGANIZATIONAL_UNIT_NAME,
-    "common_name": NameOID.COMMON_NAME,
-    "email_address": NameOID.EMAIL_ADDRESS,
-}
 
 ExtendedKeyUsageName = Literal[
     "server_auth",
@@ -23,22 +12,6 @@ ExtendedKeyUsageName = Literal[
     "time_stamping",
     "ocsp_signing",
 ]
-
-
-class Subject(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    # All attributes are still mandatory (B11, lot 4).
-    country_name: str
-    state_or_province_name: str
-    locality_name: str
-    organization_name: str
-    organizational_unit_name: str
-    common_name: str
-    email_address: str
-
-    def x509_subject(self) -> x509.Name:
-        return x509.Name([x509.NameAttribute(SUBJECT_OIDS[field], value) for field, value in self])
 
 
 class BasicConstraints(BaseModel):

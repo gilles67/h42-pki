@@ -5,6 +5,7 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.x509.oid import NameOID
 from httpx import AsyncClient
 
+from h42pki.core.names import rfc4514
 from tests.conftest import PrivateKeyFactory
 
 SUBJECT = {
@@ -61,7 +62,7 @@ async def test_self_signed_ca(client: AsyncClient) -> None:
 
     assert from_der.fingerprint(hashes.SHA256()).hex() == signed["sha256_fingerprint"]
     assert from_der.serial_number == int(signed["serial_hex"], 16)
-    assert from_der.subject.rfc4514_string() == signed["subject_dn"]
+    assert rfc4514(from_der.subject) == signed["subject_dn"]
     assert from_der.not_valid_before_utc.isoformat() == signed["not_before"].replace("Z", "+00:00")
     assert from_der.subject.get_attributes_for_oid(NameOID.COMMON_NAME)[0].value == (
         "h42 Test Root CA"

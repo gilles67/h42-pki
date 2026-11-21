@@ -10,8 +10,9 @@ from cryptography import x509
 from cryptography.hazmat.primitives import serialization
 from pydantic import BaseModel, ConfigDict, Field
 
-from h42pki.ca.pki_models import Extensions, Subject
+from h42pki.ca.pki_models import Extensions
 from h42pki.core.keys import KeyAlgorithm
+from h42pki.core.names import Subject
 from h42pki.models import Certificate, CertificateStatus, KeyBackend, PrivateKey
 
 

@@ -9,7 +9,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric.types import PrivateKeyTypes
 from tortoise.transactions import in_transaction
 
-from h42pki.ca.pki_models import Extensions, Subject
+from h42pki.ca.pki_models import Extensions
 from h42pki.config import get_settings
 from h42pki.core.keys import (
     KeyAlgorithm,
@@ -17,6 +17,7 @@ from h42pki.core.keys import (
     load_encrypted,
     serialize_encrypted,
 )
+from h42pki.core.names import Subject, rfc4514
 from h42pki.errors import Conflict, Unprocessable
 from h42pki.models import (
     AuditLog,
@@ -136,7 +137,7 @@ class PkiCertificate:
         days = 3653
         expire_at = datetime.datetime.utcnow() + datetime.timedelta(days=days)
 
-        subject = issuer = cert.subject.x509_subject()
+        subject = issuer = cert.subject.x509_name()
         x509_cert = x509.CertificateBuilder()
         x509_cert = x509_cert.subject_name(subject)
         x509_cert = x509_cert.issuer_name(issuer)
@@ -158,7 +159,7 @@ class PkiCertificate:
             "der": x509_cert_sign.public_bytes(serialization.Encoding.DER),
             "public_key_der": _public_key_der(pvkey),
             "sha256_fingerprint": x509_cert_sign.fingerprint(hashes.SHA256()).hex(),
-            "subject_dn": x509_cert_sign.subject.rfc4514_string(),
+            "subject_dn": rfc4514(x509_cert_sign.subject),
             "not_before": x509_cert_sign.not_valid_before_utc,
             "not_after": x509_cert_sign.not_valid_after_utc,
             "status": CertificateStatus.VALID,

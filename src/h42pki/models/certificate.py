@@ -8,7 +8,8 @@ from typing import TYPE_CHECKING
 from cryptography.x509 import ReasonFlags
 from tortoise import fields
 
-from h42pki.ca.pki_models import Extensions, Subject
+from h42pki.ca.pki_models import Extensions
+from h42pki.core.names import Subject
 from h42pki.core.serial import new_serial_hex
 from h42pki.models.base import TimestampedModel
 

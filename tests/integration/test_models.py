@@ -4,8 +4,9 @@ import pytest
 from httpx import AsyncClient
 from tortoise.exceptions import IntegrityError
 
-from h42pki.ca.pki_models import Extensions, Subject
+from h42pki.ca.pki_models import Extensions
 from h42pki.config import Settings
+from h42pki.core.names import Subject
 from h42pki.db import tortoise_config
 from h42pki.models import (
     AuditLog,
