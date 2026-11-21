@@ -40,6 +40,7 @@ def test_reads_secrets_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> N
 def test_reads_file_variable(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     secret = tmp_path / "passphrase.txt"
     secret.write_text(PASSPHRASE + "\n", encoding="utf-8")
+    os.chmod(secret, 0o600)  # private file: no B4 warning on POSIX
     monkeypatch.setenv(f"{ENV_PREFIX}CA_PASSPHRASE_FILE", str(secret))
 
     assert get_settings().ca_passphrase.get_secret_value() == PASSPHRASE
