@@ -103,7 +103,7 @@ async def test_audit_log_records_anonymous_actor(client: AsyncClient) -> None:
     unused_key_id = response.json()["id"]
     await client.delete(f"/api/v1/private-keys/{unused_key_id}")
 
-    entries = await AuditLog.all().order_by("timestamp")
+    entries = await AuditLog.exclude(object_type="profile").order_by("timestamp")
 
     assert [(entry.action, entry.object_id) for entry in entries] == [
         ("private_key.generate", key_id),
@@ -161,19 +161,18 @@ async def test_audit_of_certificate_without_key_has_null_key_id(client: AsyncCli
     assert entry.details["private_key_id"] is None
 
 
-async def test_profile_round_trips_a_builtin_spec(client: AsyncClient) -> None:
-    spec = BUILTIN_PROFILES["tls_server"]
-    values = spec.model_dump(exclude={"name"})
-    await Profile.create(name=spec.name, builtin=True, **values)
+async def test_builtin_profiles_are_stored_at_start_up(client: AsyncClient) -> None:
+    names = [profile.name for profile in await Profile.all()]
 
-    stored = await Profile.get(name="tls_server")
-
-    assert ProfileSpec.model_validate(stored.spec_values()) == spec
+    assert names == sorted(BUILTIN_PROFILES)
+    for name in names:
+        stored = await Profile.get(name=name)
+        assert stored.builtin
+        assert ProfileSpec.model_validate(stored.spec_values()) == BUILTIN_PROFILES[name]
 
 
 async def test_certificate_request_relations(client: AsyncClient) -> None:
-    spec = BUILTIN_PROFILES["tls_client"]
-    profile = await Profile.create(name=spec.name, **spec.model_dump(exclude={"name"}))
+    profile = await Profile.get(name="tls_client")
     request = await CertificateRequest.create(
         csr_der=b"\x30\x00",
         profile=profile,

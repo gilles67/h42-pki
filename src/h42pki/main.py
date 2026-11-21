@@ -11,6 +11,7 @@ from h42pki.api import admin, health
 from h42pki.api.problems import exception_handlers
 from h42pki.config import Settings, get_settings
 from h42pki.db import ensure_sqlite_directory, tortoise_config
+from h42pki.services.profiles import ProfileService
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -26,6 +27,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             config=tortoise_config(app_settings),
             generate_schemas=True,
         ):
+            await ProfileService().sync_builtin()
             yield
 
     app = FastAPI(

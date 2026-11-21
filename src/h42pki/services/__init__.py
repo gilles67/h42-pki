@@ -1,6 +1,8 @@
 """Async orchestration: transactions, audit, calls to core and keystore."""
 
+from h42pki.services.authority import AuthorityService
 from h42pki.services.certificates import CertificateService
 from h42pki.services.keys import KeyService
+from h42pki.services.profiles import ProfileService
 
-__all__ = ["CertificateService", "KeyService"]
+__all__ = ["AuthorityService", "CertificateService", "KeyService", "ProfileService"]

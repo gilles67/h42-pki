@@ -7,6 +7,7 @@ deployment would, and returns the resulting settings; ``client`` builds the app 
 import os
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 from asgi_lifespan import LifespanManager
@@ -21,8 +22,11 @@ from h42pki.core.keys import (
     generate_private_key,
     serialize_encrypted,
 )
+from h42pki.core.names import Subject
+from h42pki.keystore import KeyStore, get_keystore
 from h42pki.main import create_app
-from h42pki.models import PrivateKey
+from h42pki.models import Authority, PrivateKey
+from h42pki.services import AuthorityService
 
 PrivateKeyFactory = Callable[[], Awaitable[PrivateKey]]
 
@@ -110,3 +114,33 @@ def key_for(
         return session_keys[algorithm]
 
     return get
+
+
+RootFactory = Callable[..., Awaitable[Authority]]
+
+
+@pytest.fixture
+def keystore(settings: Settings) -> KeyStore:
+    return get_keystore(settings)
+
+
+@pytest.fixture
+def make_root(client: AsyncClient, keystore: KeyStore) -> RootFactory:
+    """Create the local root CA through AuthorityService.init_root (as the CLI does)."""
+
+    async def factory(
+        algorithm: KeyAlgorithm = KeyAlgorithm.EC_P256,
+        *,
+        name: str = "test-root",
+        common_name: str = "h42 Test Root CA",
+        **options: Any,
+    ) -> Authority:
+        return await AuthorityService(keystore).init_root(
+            name=name,
+            subject=Subject(common_name=common_name, organization_name="Home42"),
+            key_algorithm=algorithm,
+            actor="anonymous",
+            **options,
+        )
+
+    return factory

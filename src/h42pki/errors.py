@@ -36,3 +36,14 @@ class Unprocessable(H42Error):
 
 class InvalidRequest(Unprocessable):
     """The request is well-formed but violates a domain rule (base of the core errors)."""
+
+
+class ServiceUnavailable(H42Error):
+    """The service cannot work right now (e.g. no active certificate authority)."""
+
+    status_code = 503
+    title = "Service Unavailable"
+
+
+class NoActiveAuthority(ServiceUnavailable):
+    title = "No Active Certificate Authority"
