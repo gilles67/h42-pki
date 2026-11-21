@@ -32,3 +32,7 @@ class Conflict(H42Error):
 class Unprocessable(H42Error):
     status_code = 422
     title = "Unprocessable Content"
+
+
+class InvalidRequest(Unprocessable):
+    """The request is well-formed but violates a domain rule (base of the core errors)."""

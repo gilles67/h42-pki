@@ -6,9 +6,9 @@ from typing import Any
 
 import pytest
 from cryptography import x509
-from cryptography.hazmat.primitives.asymmetric import rsa
 from httpx import AsyncClient
 
+from h42pki.core import keys
 from tests.conftest import PrivateKeyFactory
 from tests.integration.test_smoke_ca import EXTENSIONS, SUBJECT
 
@@ -85,4 +85,4 @@ async def test_crypto_operations_run_in_worker_threads(
     response = await client.post("/api/v1/private-keys", json={"algorithm": "rsa2048"})
     assert response.status_code == 201, response.text
 
-    assert rsa.generate_private_key in called
+    assert keys.generate_private_key in called

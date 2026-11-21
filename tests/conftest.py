@@ -16,8 +16,14 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from httpx import ASGITransport, AsyncClient
 
 from h42pki.config import ENV_PREFIX, Settings, get_settings
+from h42pki.core.keys import (
+    KeyAlgorithm,
+    SupportedPrivateKey,
+    generate_private_key,
+    serialize_encrypted,
+)
 from h42pki.main import create_app
-from h42pki.models import KeyAlgorithm, PrivateKey
+from h42pki.models import PrivateKey
 
 PrivateKeyFactory = Callable[[], Awaitable[PrivateKey]]
 
@@ -64,11 +70,7 @@ def rsa2048_key() -> rsa.RSAPrivateKey:
 @pytest.fixture
 def make_private_key(client: AsyncClient, rsa2048_key: rsa.RSAPrivateKey) -> PrivateKeyFactory:
     """Store the session key in the database, encrypted like the application does."""
-    encrypted = rsa2048_key.private_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PrivateFormat.TraditionalOpenSSL,
-        encryption_algorithm=serialization.BestAvailableEncryption(TEST_PASSPHRASE.encode()),
-    )
+    encrypted = serialize_encrypted(rsa2048_key, TEST_PASSPHRASE.encode())
     public_key_der = rsa2048_key.public_key().public_bytes(
         encoding=serialization.Encoding.DER,
         format=serialization.PublicFormat.SubjectPublicKeyInfo,
@@ -82,3 +84,30 @@ def make_private_key(client: AsyncClient, rsa2048_key: rsa.RSAPrivateKey) -> Pri
         )
 
     return factory
+
+
+_SLOW_ALGORITHMS = {KeyAlgorithm.RSA4096}
+
+# Every algorithm, with RSA 4096 marked slow (docs/testing.md section 4).
+ALL_ALGORITHMS = [
+    pytest.param(alg, marks=pytest.mark.slow) if alg in _SLOW_ALGORITHMS else alg
+    for alg in KeyAlgorithm
+]
+
+
+@pytest.fixture(scope="session")
+def session_keys() -> dict[KeyAlgorithm, SupportedPrivateKey]:
+    """Cache of keys generated once per session and per algorithm."""
+    return {}
+
+
+@pytest.fixture
+def key_for(
+    session_keys: dict[KeyAlgorithm, SupportedPrivateKey],
+) -> Callable[[KeyAlgorithm], SupportedPrivateKey]:
+    def get(algorithm: KeyAlgorithm) -> SupportedPrivateKey:
+        if algorithm not in session_keys:
+            session_keys[algorithm] = generate_private_key(algorithm)
+        return session_keys[algorithm]
+
+    return get

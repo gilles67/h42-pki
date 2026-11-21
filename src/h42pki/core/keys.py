@@ -1,0 +1,112 @@
+"""Key algorithms, generation and PKCS#8 serialization (B8, B18).
+
+Only ``h42pki.keystore`` calls the generation and (de)serialization functions: it is the
+component that holds the passphrase (ADR-0004).
+"""
+
+from enum import StrEnum
+from typing import assert_never
+
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec, ed25519, rsa
+from cryptography.hazmat.primitives.asymmetric.types import PrivateKeyTypes
+
+from h42pki.core.errors import InvalidPassphrase, UnsupportedAlgorithm
+
+RSA_PUBLIC_EXPONENT = 65537
+
+# Private key types this project generates and accepts.
+SupportedPrivateKey = rsa.RSAPrivateKey | ec.EllipticCurvePrivateKey | ed25519.Ed25519PrivateKey
+
+
+class KeyAlgorithm(StrEnum):
+    RSA2048 = "rsa2048"
+    RSA3072 = "rsa3072"
+    RSA4096 = "rsa4096"
+    EC_P256 = "ec_p256"
+    EC_P384 = "ec_p384"
+    ED25519 = "ed25519"
+
+
+def generate_private_key(algorithm: KeyAlgorithm) -> SupportedPrivateKey:
+    """Generate a new private key (slow for RSA: call it from a worker thread)."""
+    match algorithm:
+        case KeyAlgorithm.RSA2048:
+            return rsa.generate_private_key(public_exponent=RSA_PUBLIC_EXPONENT, key_size=2048)
+        case KeyAlgorithm.RSA3072:
+            return rsa.generate_private_key(public_exponent=RSA_PUBLIC_EXPONENT, key_size=3072)
+        case KeyAlgorithm.RSA4096:
+            return rsa.generate_private_key(public_exponent=RSA_PUBLIC_EXPONENT, key_size=4096)
+        case KeyAlgorithm.EC_P256:
+            return ec.generate_private_key(ec.SECP256R1())
+        case KeyAlgorithm.EC_P384:
+            return ec.generate_private_key(ec.SECP384R1())
+        case KeyAlgorithm.ED25519:
+            return ed25519.Ed25519PrivateKey.generate()
+        case _:  # pragma: no cover - exhaustive
+            assert_never(algorithm)
+
+
+def _supported(key: PrivateKeyTypes) -> SupportedPrivateKey:
+    if isinstance(key, rsa.RSAPrivateKey | ec.EllipticCurvePrivateKey | ed25519.Ed25519PrivateKey):
+        return key
+    raise UnsupportedAlgorithm(f"unsupported private key type {type(key).__name__}")
+
+
+def algorithm_of(key: PrivateKeyTypes) -> KeyAlgorithm:
+    """Return the :class:`KeyAlgorithm` of a private key."""
+    key = _supported(key)
+    if isinstance(key, rsa.RSAPrivateKey):
+        try:
+            return KeyAlgorithm(f"rsa{key.key_size}")
+        except ValueError:
+            raise UnsupportedAlgorithm(f"unsupported RSA key size {key.key_size}") from None
+    if isinstance(key, ec.EllipticCurvePrivateKey):
+        if isinstance(key.curve, ec.SECP256R1):
+            return KeyAlgorithm.EC_P256
+        if isinstance(key.curve, ec.SECP384R1):
+            return KeyAlgorithm.EC_P384
+        raise UnsupportedAlgorithm(f"unsupported elliptic curve {key.curve.name}")
+    return KeyAlgorithm.ED25519
+
+
+def signature_hash(key: PrivateKeyTypes) -> hashes.SHA256 | hashes.SHA384 | None:
+    """Hash to sign with ``key``: SHA-256 (RSA, P-256), SHA-384 (P-384), None (Ed25519)."""
+    match algorithm_of(key):
+        case KeyAlgorithm.RSA2048 | KeyAlgorithm.RSA3072 | KeyAlgorithm.RSA4096:
+            return hashes.SHA256()
+        case KeyAlgorithm.EC_P256:
+            return hashes.SHA256()
+        case KeyAlgorithm.EC_P384:
+            return hashes.SHA384()
+        case KeyAlgorithm.ED25519:
+            return None
+        case _ as unreachable:  # pragma: no cover - exhaustive
+            assert_never(unreachable)
+
+
+def serialize_encrypted(key: PrivateKeyTypes, passphrase: bytes) -> bytes:
+    """Serialize ``key`` as encrypted PKCS#8 DER (B18)."""
+    return key.private_bytes(
+        encoding=serialization.Encoding.DER,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.BestAvailableEncryption(passphrase),
+    )
+
+
+def load_encrypted(data: bytes, passphrase: bytes) -> SupportedPrivateKey:
+    """Load an encrypted PKCS#8 DER key; any failure gives a generic error without details."""
+    try:
+        key = serialization.load_der_private_key(data, password=passphrase)
+    except (ValueError, TypeError):
+        # The underlying message may describe the data; keep it out (and out of the chain).
+        raise InvalidPassphrase("the private key cannot be decrypted") from None
+    return _supported(key)
+
+
+def public_key_der(key: PrivateKeyTypes) -> bytes:
+    """SubjectPublicKeyInfo of ``key``, DER encoded."""
+    return key.public_key().public_bytes(
+        encoding=serialization.Encoding.DER,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    )

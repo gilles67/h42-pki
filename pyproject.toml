@@ -75,6 +75,8 @@ module = [
     "h42pki.api.admin.*",
     "h42pki.models",
     "h42pki.models.*",
+    "h42pki.core",
+    "h42pki.core.*",
 ]
 strict = true
 

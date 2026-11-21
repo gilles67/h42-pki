@@ -11,7 +11,8 @@ from cryptography.hazmat.primitives import serialization
 from pydantic import BaseModel, ConfigDict, Field
 
 from h42pki.ca.pki_models import Extensions, Subject
-from h42pki.models import Certificate, CertificateStatus, KeyAlgorithm, KeyBackend, PrivateKey
+from h42pki.core.keys import KeyAlgorithm
+from h42pki.models import Certificate, CertificateStatus, KeyBackend, PrivateKey
 
 
 class Schema(BaseModel):

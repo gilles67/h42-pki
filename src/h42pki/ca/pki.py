@@ -1,25 +1,28 @@
-# Legacy CA operations, adapted to the lot 3 data model; split into core/, keystore/ and
-# services/ in lot 4. The cryptography is unchanged on purpose: TraditionalOpenSSL keys (B18),
-# RSA only (B8), fixed validity, SHA-512 and no AKI (B12), naive utcnow() (B17).
+# Legacy CA operations, being split into core/, keystore/ and services/ during lot 4.
+# Keys now come from h42pki.core.keys (B8, B18); signing is still the legacy one.
 import asyncio
 import datetime
 from uuid import UUID
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.asymmetric.types import PrivateKeyTypes
 from tortoise.transactions import in_transaction
 
 from h42pki.ca.pki_models import Extensions, Subject
 from h42pki.config import get_settings
+from h42pki.core.keys import (
+    KeyAlgorithm,
+    generate_private_key,
+    load_encrypted,
+    serialize_encrypted,
+)
 from h42pki.errors import Conflict, Unprocessable
 from h42pki.models import (
     AuditLog,
     Authority,
     Certificate,
     CertificateStatus,
-    KeyAlgorithm,
     PrivateKey,
 )
 
@@ -43,18 +46,8 @@ class PkiPrivateKey:
     async def generate(cls, algorithm: KeyAlgorithm, *, actor: str) -> PrivateKey:
         passphrase = _ca_passphrase()
 
-        if algorithm.value.startswith("rsa"):
-            pvkey = await asyncio.to_thread(
-                rsa.generate_private_key,
-                public_exponent=65537,
-                key_size=algorithm.key_size,
-            )
-            key_data = await asyncio.to_thread(
-                pvkey.private_bytes,
-                encoding=serialization.Encoding.PEM,
-                format=serialization.PrivateFormat.TraditionalOpenSSL,
-                encryption_algorithm=serialization.BestAvailableEncryption(passphrase),
-            )
+        pvkey = await asyncio.to_thread(generate_private_key, algorithm)
+        key_data = await asyncio.to_thread(serialize_encrypted, pvkey, passphrase)
 
         async with in_transaction():
             key = await PrivateKey.create(
@@ -80,9 +73,7 @@ class PkiPrivateKey:
         passphrase = _ca_passphrase()
 
         datakey = await PrivateKey.get(id=key_id)
-        pvkey = await asyncio.to_thread(
-            serialization.load_pem_private_key, datakey.encrypted_key, password=passphrase
-        )
+        pvkey = await asyncio.to_thread(load_encrypted, datakey.encrypted_key, passphrase)
 
         return (datakey, pvkey)
 

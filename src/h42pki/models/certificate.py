@@ -5,21 +5,16 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
-from cryptography import x509
 from cryptography.x509 import ReasonFlags
 from tortoise import fields
 
 from h42pki.ca.pki_models import Extensions, Subject
+from h42pki.core.serial import new_serial_hex
 from h42pki.models.base import TimestampedModel
 
 if TYPE_CHECKING:
     from h42pki.models.authority import Authority
     from h42pki.models.private_key import PrivateKey
-
-
-def new_serial_hex() -> str:
-    """Return a fresh random 159-bit serial number as lowercase hex (B1)."""
-    return format(x509.random_serial_number(), "x")
 
 
 class CertificateStatus(StrEnum):
