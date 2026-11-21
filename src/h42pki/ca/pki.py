@@ -1,6 +1,6 @@
-import json 
-import os
 import datetime
+from h42pki.config import get_settings
+
 from .models import PrivateKeyCreateMixin, PrivateKeyOutput, PrivateKeyType, PrivateKey, CertificateCreateMixin, Certificate
 from cryptography import x509
 from cryptography.x509.oid import NameOID, AuthorityInformationAccessOID
@@ -10,35 +10,23 @@ from uuid import UUID
 
 DEFAULT_ENCODING = "utf-8"
 
-class PkiConfiguration:
-    def __init__(self, data):
-        self.data = data
+def _ca_passphrase() -> bytes:
+    # Replaces the former PkiConfiguration (config/pki.json): same passphrase, same encoding.
+    return get_settings().ca_passphrase.get_secret_value().encode(DEFAULT_ENCODING)
 
-    @property
-    def passphrase(self):
-        return bytes(self.data["passphrase"],DEFAULT_ENCODING)
-
-    @classmethod
-    def load(cls, filename="config/pki.json"):
-        st = os.stat(filename)
-        if oct(st.st_mode) != 0o100600:
-            Exception("Connfiguration file config/pki.json wrong premission set 600 !")
-        with open(filename) as file:
-            return cls(json.load(file))
-    
 
 class PkiPrivateKey: 
 
     @classmethod
     async def generate(cls, query: PrivateKeyCreateMixin):
-        config = PkiConfiguration.load()
+        passphrase = _ca_passphrase()
 
         if PrivateKeyType.gettype(query.key_type) == "rsa":
             pvkey = rsa.generate_private_key(public_exponent=65537, key_size=PrivateKeyType.getsize(query.key_type))
             key_data = pvkey.private_bytes(
               encoding=serialization.Encoding.PEM,
               format=serialization.PrivateFormat.TraditionalOpenSSL,
-              encryption_algorithm=serialization.BestAvailableEncryption(config.passphrase)  
+              encryption_algorithm=serialization.BestAvailableEncryption(passphrase)  
             )
         
         return await PrivateKey.create(key_type=query.key_type, key=key_data)
@@ -46,10 +34,10 @@ class PkiPrivateKey:
 
     @classmethod
     async def load_key(cls, key_id: UUID):
-        config = PkiConfiguration.load()
+        passphrase = _ca_passphrase()
 
         datakey = await PrivateKey.get(uid=key_id)
-        pvkey = serialization.load_pem_private_key(datakey.key, password=config.passphrase)
+        pvkey = serialization.load_pem_private_key(datakey.key, password=passphrase)
 
         return (datakey, pvkey)
 
