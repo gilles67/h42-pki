@@ -36,8 +36,8 @@ Les numéros `B…` renvoient à `docs/etat-des-lieux.md`.
 - Modèles Tortoise cibles (ARCHITECTURE §4) avec `ForeignKeyField` (B13, B14, B21), sans migration (ADR-0007).
 - `IssuanceService` (chemin d'émission unique, sans recopie d'extensions du CSR — B2), `AuditLog`.
 - Profils par défaut fournis : `sub_ca`, `tls_server`, `tls_client`, `ocsp_signer`, `device`.
-- API admin `/api/v1` : clés, profils, demandes (approve/reject), certificats (liste, détail, PEM/DER), jetons d'API (B6, B7).
-- CLI : `h42pki authority init|status|export`, `h42pki token create`, `h42pki profile list`.
+- API admin `/api/v1` : clés, profils, demandes (approve/reject), certificats (liste, détail, PEM/DER), **sans authentification** (ADR-0008) (B6, B7).
+- CLI : `h42pki authority init|status|export`, `h42pki profile list`.
 - AIA public : `/ca/{name}.crt|.pem`, `/ca/chain.pem`.
 
 **Fait quand** : une AC racine s'initialise par CLI, émet un certificat serveur via l'API, vérifiable par
@@ -93,6 +93,8 @@ Prérequis bloquants avant de taguer une version déployable avec des données �
 
 - Migrations de base en place (ADR-0007) : choix de l'outil, migration initiale, `generate_schemas` réservé aux
   tests, test de migration en CI.
+- Authentification de l'API d'administration (ADR-0008) : jetons Bearer hachés en base, portées
+  `admin` / `operator` / `read`, `h42pki token create`, identité réelle dans l'`AuditLog`.
 - Runbook de sauvegarde/restauration (cf. phase 7).
 
 ## Décisions ouvertes (à trancher par le mainteneur)
@@ -104,3 +106,4 @@ Prérequis bloquants avant de taguer une version déployable avec des données �
 5. Interface web d'administration : hors périmètre v1 confirmé ?
 6. ~~Casse des champs JSON~~ → **snake_case** (ADR-0006, 2026-11-21).
 7. ~~Migrations~~ → aucune avant la première release (ADR-0007, 2026-11-21).
+8. ~~Authentification de l'API admin~~ → aucune avant la première release (ADR-0008, 2026-11-21).

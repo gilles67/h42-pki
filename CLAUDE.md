@@ -61,7 +61,7 @@ src/h42pki/
   services/          # orchestration async : authority, issuance, revocation, crl, ocsp, federation
   api/
     deps.py          # dépendances FastAPI (auth, session, autorité courante)
-    admin/           # /api/v1/...        (JSON, authentifié)
+    admin/           # /api/v1/...        (JSON ; sans authentification jusqu'à la release, ADR-0008)
     public/          # /ca/*, /crl/*      (HTTP public, AIA + CRL)
     ocsp/  est/  scep/  acme/  federation/
   tasks/             # tâches périodiques (CRL, purge nonces ACME, expirations)
@@ -119,6 +119,10 @@ Avant de déclarer une tâche terminée : `ruff check`, `ruff format --check`, `
   (`CharField(max_length=40)`) — un entier SQLite 64 bits déborde. Unicité par AC émettrice.
 
 ## 6. Règles de sécurité (non négociables)
+
+> **API d'administration sans authentification** jusqu'à la première release (ADR-0008) : ne pas en ajouter,
+> mais ne jamais exposer le service hors de `127.0.0.1` / réseau Docker interne. Les mécanismes propres aux
+> protocoles (JWS ACME, challenge SCEP, invitation de fédération, auth EST) sont, eux, implémentés normalement.
 
 1. **Jamais** de clé privée, passphrase, mot de passe de challenge, secret EAB ou jeton dans les logs,
    les exceptions, les réponses d'API ou les tests imprimés.

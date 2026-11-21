@@ -47,6 +47,7 @@ Gravité : 🔴 sécurité / perte de données · 🟠 fonctionnel · 🟡 quali
 | B21 | 🟡 | `models.py` | `model_config = ConfigDict(...)` sur des modèles Tortoise : sans effet. | Retirer |
 | B22 | 🟡 | `api.py` | `register_tortoise(..., generate_schemas=True)` en dur, base SQLite dans le répertoire courant. | Config + migrations — **Partiellement résolu** (lot 1) : URL de base dans `Settings` (`H42_PKI_DATABASE_URL`), `create_app()` + lifespan `RegisterTortoise` ; migrations reportées à la première release (ADR-0007), `generate_schemas=True` conservé d'ici là |
 | B23 | ✅ | `PkiConfiguration` | `config/pki.json` relu à chaque appel. | Résolu (lot 1) : `Settings` (pydantic-settings) chargés une fois par `get_settings()` (cache) |
+| B24 | 🔴 | `h42pki/api/admin.py` | API d'administration sans aucune authentification : quiconque atteint le port peut générer des clés et auto-signer une AC. | **Accepté temporairement** (ADR-0008) : écoute locale uniquement, authentification avant la première release |
 
 ## 3. Ce qui est bon et à garder
 

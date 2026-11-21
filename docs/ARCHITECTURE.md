@@ -253,7 +253,7 @@ la fille génère clé + CSR et appelle `POST /api/v1/federation/enroll` → la 
 | `/.well-known/est/[{label}/]...` | **HTTPS** | mTLS ou Basic | PKCS#10 / PKCS#7 base64 |
 | `/scep[/{profile}]` (`pkiclient.exe` accepté) | HTTP | challenge password | CMS (`application/x-pki-message`) |
 | `/api/v1/federation/...` | HTTPS | jeton puis mTLS | JSON |
-| `/api/v1/...` | HTTPS | jeton d'API (Bearer) | JSON |
+| `/api/v1/...` | HTTPS | aucune avant la release (ADR-0008), puis jeton d'API (Bearer) | JSON |
 | `/metrics` | HTTP interne | aucune / réseau privé | Prometheus (phase 7) |
 
 **TLS et mTLS.** Le serveur ASGI (Granian ou Uvicorn) peut terminer TLS lui-même, mais l'accès au certificat client
@@ -352,7 +352,7 @@ coexistent. Règle : une AC n'émet pas de certificat dont `not_after` dépasse 
 
 | Canal | Mécanisme |
 |---|---|
-| API admin | jetons Bearer (hachés en base, portée `admin` / `operator` / `read`), créés par CLI |
+| API admin | **aucune jusqu'à la première release (ADR-0008)** ; ensuite jetons Bearer (hachés en base, portée `admin` / `operator` / `read`), créés par CLI |
 | Fédération | jeton d'inscription à usage unique, puis mTLS avec le certificat d'AC de la fille |
 | EST | certificat client (réenrôlement, ou certificat émis par une AC de confiance configurée) ou HTTP Basic |
 | SCEP | challenge password (à usage unique, expirant, lié à un profil) ; renouvellement signé par l'ancien certificat |
