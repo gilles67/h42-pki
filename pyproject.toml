@@ -77,6 +77,8 @@ module = [
     "h42pki.models.*",
     "h42pki.core",
     "h42pki.core.*",
+    "h42pki.keystore",
+    "h42pki.keystore.*",
 ]
 strict = true
 
