@@ -1,8 +1,7 @@
 """Shared fixtures.
 
-The legacy ``h42pki.ca.pki`` module reads the passphrase through ``get_settings()``, so the
-``settings`` fixture configures the test environment through ``H42_PKI_*`` variables and
-returns the cached settings: the app and the legacy code then see the same values.
+The ``settings`` fixture configures the test environment through ``H42_PKI_*`` variables, as a
+deployment would, and returns the resulting settings; ``client`` builds the app from them.
 """
 
 import os

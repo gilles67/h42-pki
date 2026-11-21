@@ -59,33 +59,8 @@ python_version = "3.12"
 mypy_path = "src"
 packages = ["h42pki"]
 plugins = ["pydantic.mypy"]
-warn_unused_configs = true
-
-[[tool.mypy.overrides]]
-module = [
-    "h42pki",
-    "h42pki.config",
-    "h42pki.db",
-    "h42pki.main",
-    "h42pki.cli",
-    "h42pki.errors",
-    "h42pki.api.health",
-    "h42pki.api.problems",
-    "h42pki.api.admin",
-    "h42pki.api.admin.*",
-    "h42pki.models",
-    "h42pki.models.*",
-    "h42pki.core",
-    "h42pki.core.*",
-    "h42pki.keystore",
-    "h42pki.keystore.*",
-]
 strict = true
-
-[[tool.mypy.overrides]]
-# legacy, rewritten in lot 4
-module = ["h42pki.ca.*"]
-ignore_errors = true
+warn_unused_configs = true
 
 # --- pytest -----------------------------------------------------------------
 [tool.pytest.ini_options]
