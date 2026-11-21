@@ -49,10 +49,12 @@ class Certificate(TimestampedModel):
     )
     channel = fields.CharEnumField(Channel, default=Channel.API, max_length=16)
     serial_hex = fields.CharField(max_length=40, default=new_serial_hex)
-    subject: fields.JSONField[Subject] = fields.JSONField(field_type=Subject)
+    subject: fields.JSONField[Subject | None] = fields.JSONField(field_type=Subject, null=True)
     subject_dn = fields.TextField(null=True)  # RFC 4514, set when signed
     # Requested extensions, until profiles exist.
-    extensions: fields.JSONField[Extensions] = fields.JSONField(field_type=Extensions)
+    extensions: fields.JSONField[Extensions | None] = fields.JSONField(
+        field_type=Extensions, null=True
+    )
     private_key: fields.ForeignKeyNullableRelation[PrivateKey] = fields.ForeignKeyField(
         "models.PrivateKey",
         related_name="certificates",

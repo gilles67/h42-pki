@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
+from uuid import UUID
 
 from tortoise import fields
 
@@ -46,6 +47,10 @@ class CertificateRequest(TimestampedModel):
     decided_at = fields.DatetimeField(null=True)
     # e.g. ignored_extensions (never copied, B2), validity_truncated, failure reason.
     metadata: fields.JSONField[dict[str, Any]] = fields.JSONField(default=dict)
+
+    # Foreign key columns created by Tortoise, declared for type checkers.
+    profile_id: UUID
+    certificate_id: UUID | None
 
     class Meta:
         table = "certificate_request"

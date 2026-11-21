@@ -68,6 +68,8 @@ class CertificateService:
         stored_key = cert.private_key
         if stored_key is None:
             raise Unprocessable("the certificate has no private key to self-sign with")
+        if cert.subject is None or cert.extensions is None:  # pragma: no cover - removed in 5a
+            raise Unprocessable("only certificates created for self-signing can be self-signed")
         # Cheap checks before decrypting the key.
         check_validity_days(validity_days)
         check_root_ca(cert.extensions)
