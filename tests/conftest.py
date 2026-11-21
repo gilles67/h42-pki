@@ -6,15 +6,20 @@ returns the cached settings: the app and the legacy code then see the same value
 """
 
 import os
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from pathlib import Path
 
 import pytest
 from asgi_lifespan import LifespanManager
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 from httpx import ASGITransport, AsyncClient
 
 from h42pki.config import ENV_PREFIX, Settings, get_settings
 from h42pki.main import create_app
+from h42pki.models import KeyAlgorithm, PrivateKey
+
+PrivateKeyFactory = Callable[[], Awaitable[PrivateKey]]
 
 TEST_PASSPHRASE = "test-only-passphrase"  # noqa: S105 - not a real secret
 
@@ -48,3 +53,32 @@ async def client(settings: Settings) -> AsyncIterator[AsyncClient]:
         AsyncClient(transport=ASGITransport(app=manager.app), base_url="http://testserver") as ac,
     ):
         yield ac
+
+
+@pytest.fixture(scope="session")
+def rsa2048_key() -> rsa.RSAPrivateKey:
+    """One RSA 2048 key for the whole session (key generation is slow)."""
+    return rsa.generate_private_key(public_exponent=65537, key_size=2048)
+
+
+@pytest.fixture
+def make_private_key(client: AsyncClient, rsa2048_key: rsa.RSAPrivateKey) -> PrivateKeyFactory:
+    """Store the session key in the database, encrypted like the application does."""
+    encrypted = rsa2048_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.TraditionalOpenSSL,
+        encryption_algorithm=serialization.BestAvailableEncryption(TEST_PASSPHRASE.encode()),
+    )
+    public_key_der = rsa2048_key.public_key().public_bytes(
+        encoding=serialization.Encoding.DER,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+
+    async def factory() -> PrivateKey:
+        return await PrivateKey.create(
+            algorithm=KeyAlgorithm.RSA2048,
+            encrypted_key=encrypted,
+            public_key_der=public_key_der,
+        )
+
+    return factory

@@ -71,12 +71,16 @@ module = [
     "h42pki.errors",
     "h42pki.api.health",
     "h42pki.api.problems",
+    "h42pki.api.admin",
+    "h42pki.api.admin.*",
+    "h42pki.models",
+    "h42pki.models.*",
 ]
 strict = true
 
 [[tool.mypy.overrides]]
 # legacy, rewritten in lot 4
-module = ["h42pki.ca.*", "h42pki.api.admin"]
+module = ["h42pki.ca.*"]
 ignore_errors = true
 
 # --- pytest -----------------------------------------------------------------

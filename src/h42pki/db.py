@@ -7,7 +7,7 @@ from tortoise.backends.base.config_generator import expand_db_url
 
 from h42pki.config import Settings
 
-MODEL_MODULES = ["h42pki.ca.models"]
+MODEL_MODULES = ["h42pki.models"]
 
 
 def tortoise_config(settings: Settings) -> dict[str, Any]:
