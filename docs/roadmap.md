@@ -17,7 +17,7 @@ Les numéros `B…` renvoient à `docs/etat-des-lieux.md`.
   (fixtures `settings`, `client` avec lifespan), tests `/health`, config et fumée du parcours legacy.
 - ✅ Supprimer `src/test.py` (B5).
 - ✅ `config.py` avec `pydantic-settings` + `*_FILE` + secrets Docker (B4 partiel, B23) ; `create_app()` + lifespan
-  Tortoise (B22 partiel : migrations au lot 3) ; `GET /health`.
+  Tortoise (B22 partiel : migrations avant la première release, ADR-0007) ; `GET /health`.
 - ✅ Nouveau `Dockerfile` (`python:3.12-slim`, uv, non-root, healthcheck, Granian) et `Makefile` cohérent (B16).
 - ✅ CI GitHub Actions (lint + tests, Python 3.12 / 3.13).
 
@@ -33,7 +33,7 @@ Les numéros `B…` renvoient à `docs/etat-des-lieux.md`.
   construction de certificat avec AKI/SKI/CDP/AIA (B12), validation de CSR, algorithmes RSA/EC/Ed25519 (B8).
   Renommage de tous les champs en snake_case (ADR-0006).
 - `keystore/software.py` : PKCS#8 chiffré (B18), interface `KeyBackend` complète.
-- Modèles Tortoise cibles (ARCHITECTURE §4) avec `ForeignKeyField` (B13, B14, B21) ; migrations.
+- Modèles Tortoise cibles (ARCHITECTURE §4) avec `ForeignKeyField` (B13, B14, B21), sans migration (ADR-0007).
 - `IssuanceService` (chemin d'émission unique, sans recopie d'extensions du CSR — B2), `AuditLog`.
 - Profils par défaut fournis : `sub_ca`, `tls_server`, `tls_client`, `ocsp_signer`, `device`.
 - API admin `/api/v1` : clés, profils, demandes (approve/reject), certificats (liste, détail, PEM/DER), jetons d'API (B6, B7).
@@ -87,6 +87,14 @@ de l'émettrice se vérifie jusqu'à la racine.
 - Rollover de clé d'AC (`GetNextCACert`, coexistence des générations).
 - Runbook d'exploitation : sauvegarde/restauration, perte de passphrase, compromission de clé.
 
+## Jalon « Première release »
+
+Prérequis bloquants avant de taguer une version déployable avec des données à conserver :
+
+- Migrations de base en place (ADR-0007) : choix de l'outil, migration initiale, `generate_schemas` réservé aux
+  tests, test de migration en CI.
+- Runbook de sauvegarde/restauration (cf. phase 7).
+
 ## Décisions ouvertes (à trancher par le mainteneur)
 
 1. Publication CRL/certificat d'une racine arrêtée (miroir sur les filles ?) — federation.md §6.
@@ -95,3 +103,4 @@ de l'émettrice se vérifie jusqu'à la racine.
 4. Approbation manuelle par défaut pour les AC filles, ou auto-approbation avec invitation ?
 5. Interface web d'administration : hors périmètre v1 confirmé ?
 6. ~~Casse des champs JSON~~ → **snake_case** (ADR-0006, 2026-11-21).
+7. ~~Migrations~~ → aucune avant la première release (ADR-0007, 2026-11-21).

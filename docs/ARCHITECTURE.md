@@ -192,8 +192,8 @@ Tables spécifiques aux protocoles (détails dans `docs/protocols/`) :
 ### 4.3 Choix de persistance
 
 - **Tortoise ORM** (déjà adopté). SQLite par défaut (`/data/h42pki.sqlite3`), PostgreSQL via `asyncpg` en option.
-- Migrations : **Aerich** ou outil de migration natif de Tortoise 1.x — **À vérifier** quel mécanisme la version 1.1.x
-  fournit ; `generate_schemas=True` reste réservé aux tests.
+- Migrations : **aucune avant la première release** (ADR-0007), le schéma est créé par `generate_schemas=True`.
+  Avant la release : **Aerich** ou outil natif de Tortoise 1.x (**À vérifier**), puis `generate_schemas` réservé aux tests.
 - Les objets cryptographiques sont stockés en **DER** ; le PEM n'est produit qu'en sortie.
 - Toute émission se fait dans une **transaction** (`in_transaction()`) : réservation du numéro de série, insertion,
   audit. Le numéro de CRL est incrémenté sous verrou (`select_for_update` en PostgreSQL ; processus unique en SQLite).

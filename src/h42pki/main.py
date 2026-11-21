@@ -19,7 +19,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         ensure_sqlite_directory(app_settings.database_url)
-        # TODO(lot3): migrations instead of generate_schemas.
+        # TODO(release): migrations instead of generate_schemas (ADR-0007).
         async with RegisterTortoise(
             app,
             config=tortoise_config(app_settings),

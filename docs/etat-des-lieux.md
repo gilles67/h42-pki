@@ -45,7 +45,7 @@ Gravité : 🔴 sécurité / perte de données · 🟠 fonctionnel · 🟡 quali
 | B19 | ✅ | `src/requirements.txt` vs `pyproject.toml` | Deux listes de dépendances divergentes (`tortoise-orm` absent de l'une, `PyKCS11`/`granian` de l'autre). `requests` retiré des deux le 2026-11-21 (`uv.lock` à régénérer). | Résolu (lot 1) : `pyproject.toml` + `uv.lock` seule source, `src/requirements.txt` supprimé, extra `pkcs11` |
 | B20 | ✅ | imports | `api.py` fait `from ca import …` : dépend du répertoire courant. | Résolu (lot 1) : paquet `h42pki` installable (layout `src/`, hatchling), imports `h42pki.*` |
 | B21 | 🟡 | `models.py` | `model_config = ConfigDict(...)` sur des modèles Tortoise : sans effet. | Retirer |
-| B22 | 🟡 | `api.py` | `register_tortoise(..., generate_schemas=True)` en dur, base SQLite dans le répertoire courant. | Config + migrations — **Partiellement résolu** (lot 1) : URL de base dans `Settings` (`H42_PKI_DATABASE_URL`), `create_app()` + lifespan `RegisterTortoise` ; reste les migrations au lot 3 (`generate_schemas=True` conservé) |
+| B22 | 🟡 | `api.py` | `register_tortoise(..., generate_schemas=True)` en dur, base SQLite dans le répertoire courant. | Config + migrations — **Partiellement résolu** (lot 1) : URL de base dans `Settings` (`H42_PKI_DATABASE_URL`), `create_app()` + lifespan `RegisterTortoise` ; migrations reportées à la première release (ADR-0007), `generate_schemas=True` conservé d'ici là |
 | B23 | ✅ | `PkiConfiguration` | `config/pki.json` relu à chaque appel. | Résolu (lot 1) : `Settings` (pydantic-settings) chargés une fois par `get_settings()` (cache) |
 
 ## 3. Ce qui est bon et à garder

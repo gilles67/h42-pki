@@ -32,7 +32,7 @@ Phase 0 (lot 1) terminée : paquet installable `h42pki` (layout `src/`), outilla
 
 - **Socle définitif** : `config.py` (`Settings`, variables `H42_PKI_*`, `H42_PKI_*_FILE`, secrets Docker dans
   `/run/secrets` ou `H42_PKI_SECRETS_DIR`), `db.py` (config Tortoise), `main.py` (`create_app()` + lifespan
-  `RegisterTortoise`, `generate_schemas=True` en attendant les migrations du lot 3), `cli.py` (`version`, `serve`),
+  `RegisterTortoise`, `generate_schemas=True` jusqu'à la première release, cf. ADR-0007), `cli.py` (`version`, `serve`),
   `api/health.py` (`GET /health`).
 - **Code legacy** (Tortoise, logique inchangée, à réécrire au lot 4) : `h42pki/ca/models.py`, `h42pki/ca/pki.py`,
   `h42pki/ca/pki_models.py` et les routes `h42pki/api/admin.py` (ex-`src/api.py`, mêmes chemins). Exemptés de mypy
@@ -105,6 +105,8 @@ Avant de déclarer une tâche terminée : `ruff check`, `ruff format --check`, `
 - **Commits** : Conventional Commits (`feat:`, `fix:`, `refactor:`, `test:`, `docs:`, `chore:`), comme l'historique.
 - Typage complet (`mypy --strict` visé sur `core/` et `keystore/`). Pydantic v2 pour toutes les entrées/sorties d'API.
 - **Ne pas** exposer directement les modèles Tortoise dans l'API : schémas Pydantic dédiés dans `api/*/schemas.py`.
+- **Schéma de base** : aucune migration avant la première release (ADR-0007). Les modèles peuvent changer
+  librement, sans code de compatibilité ; après un changement, supprimer `data/h42pki.sqlite3*`.
 - **Dates** : toujours `datetime.now(timezone.utc)` (aware). `datetime.utcnow()` est interdit.
 - **Opérations crypto coûteuses** (génération RSA, signature en masse) : `await asyncio.to_thread(...)`
   depuis le code async, pour ne pas bloquer la boucle.
