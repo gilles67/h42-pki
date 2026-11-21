@@ -99,6 +99,9 @@ Avant de déclarer une tâche terminée : `ruff check`, `ruff format --check`, `
 
 - **Langue** : identifiants, docstrings, commentaires, messages de log et de commit en **anglais** ;
   documentation dans `docs/` en **français**.
+- **Champs JSON** (API, base, configuration TOML) en **snake_case**, noms alignés sur `cryptography`
+  (`common_name`, `path_length`, `key_cert_sign`…). Seules exceptions : les formats imposés par une RFC
+  (ACME en camelCase, via `Field(alias=...)`). Voir ADR-0006.
 - **Commits** : Conventional Commits (`feat:`, `fix:`, `refactor:`, `test:`, `docs:`, `chore:`), comme l'historique.
 - Typage complet (`mypy --strict` visé sur `core/` et `keystore/`). Pydantic v2 pour toutes les entrées/sorties d'API.
 - **Ne pas** exposer directement les modèles Tortoise dans l'API : schémas Pydantic dédiés dans `api/*/schemas.py`.

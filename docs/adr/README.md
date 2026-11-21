@@ -7,5 +7,6 @@
 | [0003](0003-protocole-federation-dedie.md) | Protocole de fédération dédié plutôt qu'EST entre AC | proposé |
 | [0004](0004-abstraction-keystore.md) | Toute signature passe par un keystore abstrait (préparation PKCS#11) | proposé |
 | [0005](0005-tls-par-reverse-proxy.md) | TLS et mTLS terminés par un reverse-proxy | proposé |
+| [0006](0006-snake-case-json.md) | snake_case pour les champs JSON de l'API et de la configuration | accepté |
 
 Nouvelle décision : copier `0000-template.md`, numéro suivant, mettre à jour ce tableau.

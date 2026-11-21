@@ -280,9 +280,9 @@ validity_days = 3650
 path_length = 0
 
 [authority.subject]
-C = "FR"
-O = "Home42"
-CN = "Home42 Issuing CA - Servers"
+country_name = "FR"
+organization_name = "Home42"
+common_name = "Home42 Issuing CA - Servers"
 
 [parent]                        # mode subordinate uniquement
 federation_url = "https://pki-int.home42.lan"

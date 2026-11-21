@@ -31,6 +31,7 @@ Les numéros `B…` renvoient à `docs/etat-des-lieux.md`.
 
 - `core/` : noms (sujet RFC 4514 ↔ JSON, champs optionnels — B11), extensions (B9, B10), profils, numéros de série (B1),
   construction de certificat avec AKI/SKI/CDP/AIA (B12), validation de CSR, algorithmes RSA/EC/Ed25519 (B8).
+  Renommage de tous les champs en snake_case (ADR-0006).
 - `keystore/software.py` : PKCS#8 chiffré (B18), interface `KeyBackend` complète.
 - Modèles Tortoise cibles (ARCHITECTURE §4) avec `ForeignKeyField` (B13, B14, B21) ; migrations.
 - `IssuanceService` (chemin d'émission unique, sans recopie d'extensions du CSR — B2), `AuditLog`.
@@ -89,7 +90,8 @@ de l'émettrice se vérifie jusqu'à la racine.
 ## Décisions ouvertes (à trancher par le mainteneur)
 
 1. Publication CRL/certificat d'une racine arrêtée (miroir sur les filles ?) — federation.md §6.
-2. Nom du paquet Python : `h42pki` proposé.
+2. ~~Nom du paquet Python~~ → `h42pki` (adopté au lot 1).
 3. Base de production visée : SQLite suffit-elle, ou PostgreSQL dès la phase 1 ?
 4. Approbation manuelle par défaut pour les AC filles, ou auto-approbation avec invitation ?
 5. Interface web d'administration : hors périmètre v1 confirmé ?
+6. ~~Casse des champs JSON~~ → **snake_case** (ADR-0006, 2026-11-21).
