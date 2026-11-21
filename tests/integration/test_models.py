@@ -7,13 +7,18 @@ from tortoise.exceptions import IntegrityError
 from h42pki.config import Settings
 from h42pki.core.extensions import Extensions
 from h42pki.core.names import Subject
+from h42pki.core.profiles import BUILTIN_PROFILES, ProfileSpec
 from h42pki.db import tortoise_config
 from h42pki.models import (
     AuditLog,
     Authority,
     AuthorityKind,
     Certificate,
+    CertificateRequest,
+    Channel,
     PrivateKey,
+    Profile,
+    RequestStatus,
 )
 from tests.conftest import PrivateKeyFactory
 from tests.integration.test_smoke_ca import EXTENSIONS, SUBJECT
@@ -154,3 +159,33 @@ async def test_audit_of_certificate_without_key_has_null_key_id(client: AsyncCli
     entry = await AuditLog.get(object_id=response.json()["id"])
 
     assert entry.details["private_key_id"] is None
+
+
+async def test_profile_round_trips_a_builtin_spec(client: AsyncClient) -> None:
+    spec = BUILTIN_PROFILES["tls_server"]
+    values = spec.model_dump(exclude={"name"})
+    await Profile.create(name=spec.name, builtin=True, **values)
+
+    stored = await Profile.get(name="tls_server")
+
+    assert ProfileSpec.model_validate(stored.spec_values()) == spec
+
+
+async def test_certificate_request_relations(client: AsyncClient) -> None:
+    spec = BUILTIN_PROFILES["tls_client"]
+    profile = await Profile.create(name=spec.name, **spec.model_dump(exclude={"name"}))
+    request = await CertificateRequest.create(
+        csr_der=b"\x30\x00",
+        profile=profile,
+        requester="anonymous",
+        channel=Channel.API,
+        subject_dn="CN=alice",
+    )
+
+    fetched = await CertificateRequest.get(id=request.id).prefetch_related("profile")
+
+    assert fetched.status is RequestStatus.PENDING
+    assert fetched.profile.name == "tls_client"
+    assert fetched.certificate_id is None
+    with pytest.raises(IntegrityError):  # RESTRICT: a profile with requests stays
+        await profile.delete()

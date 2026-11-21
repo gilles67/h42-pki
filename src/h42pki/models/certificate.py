@@ -12,10 +12,12 @@ from h42pki.core.extensions import Extensions
 from h42pki.core.names import Subject
 from h42pki.core.serial import new_serial_hex
 from h42pki.models.base import TimestampedModel
+from h42pki.models.request import Channel
 
 if TYPE_CHECKING:
     from h42pki.models.authority import Authority
     from h42pki.models.private_key import PrivateKey
+    from h42pki.models.profile import Profile
 
 
 class CertificateStatus(StrEnum):
@@ -41,6 +43,11 @@ class Certificate(TimestampedModel):
         null=True,
         on_delete=fields.SET_NULL,
     )
+    # NULL for the root CA certificate, which no profile describes.
+    profile: fields.ForeignKeyNullableRelation[Profile] = fields.ForeignKeyField(
+        "models.Profile", related_name="certificates", null=True, on_delete=fields.RESTRICT
+    )
+    channel = fields.CharEnumField(Channel, default=Channel.API, max_length=16)
     serial_hex = fields.CharField(max_length=40, default=new_serial_hex)
     subject: fields.JSONField[Subject] = fields.JSONField(field_type=Subject)
     subject_dn = fields.TextField(null=True)  # RFC 4514, set when signed
