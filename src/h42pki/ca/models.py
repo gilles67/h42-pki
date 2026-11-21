@@ -7,7 +7,7 @@ from tortoise import fields
 from tortoise.contrib.pydantic import pydantic_model_creator
 from tortoise.models import Model
 
-from .pki_models import Extension, Subject
+from .pki_models import Extensions, Subject
 
 
 class PrivateKeyType(StrEnum):
@@ -36,7 +36,7 @@ class Certificate(Model):
     serial_hex = fields.CharField(unique=True, default=new_serial_hex, max_length=40)
 
     subject = fields.JSONField(field_type=Subject)
-    extension = fields.JSONField(field_type=Extension)
+    extensions = fields.JSONField(field_type=Extensions)
 
     key = fields.BinaryField(null=True)
     csr = fields.BinaryField(null=True)

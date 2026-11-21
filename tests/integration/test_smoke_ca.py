@@ -5,17 +5,17 @@ from cryptography.x509.oid import NameOID
 from httpx import AsyncClient
 
 SUBJECT = {
-    "CountryName": "FR",
-    "ProvinceName": "Ile-de-France",
-    "LocalityName": "Paris",
-    "OrganizationName": "Home42",
-    "OrganizationUnitName": "PKI",
-    "CommonName": "h42 Test Root CA",
-    "Email": "pki@example.test",
+    "country_name": "FR",
+    "state_or_province_name": "Ile-de-France",
+    "locality_name": "Paris",
+    "organization_name": "Home42",
+    "organizational_unit_name": "PKI",
+    "common_name": "h42 Test Root CA",
+    "email_address": "pki@example.test",
 }
-EXTENSION = {
-    "BasicConstraints": {"CertificateAuthority": True, "PathLength": 1},
-    "KeyUsage": {"KeyCertSign": True, "CrlSign": True, "DigitalSignature": True},
+EXTENSIONS = {
+    "basic_constraints": {"ca": True, "path_length": 1},
+    "key_usage": {"key_cert_sign": True, "crl_sign": True, "digital_signature": True},
 }
 
 
@@ -28,7 +28,7 @@ async def test_self_signed_ca(client: AsyncClient) -> None:
 
     response = await client.post(
         "/certificate/generate",
-        json={"privatekey": key["uid"], "subject": SUBJECT, "extension": EXTENSION},
+        json={"privatekey": key["uid"], "subject": SUBJECT, "extensions": EXTENSIONS},
     )
     assert response.status_code == 200, response.text
     cert_id = response.json()["uid"]

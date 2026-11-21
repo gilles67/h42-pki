@@ -69,7 +69,7 @@ class PkiCertificate:
     @classmethod
     async def generate(cls, query: CertificateCreateMixin):
         cert = await Certificate.create(
-            privatekey=query.privatekey, subject=query.subject, extension=query.extension
+            privatekey=query.privatekey, subject=query.subject, extensions=query.extensions
         )
         return cert
 
@@ -90,7 +90,7 @@ class PkiCertificate:
         x509_cert = x509_cert.not_valid_before(datetime.datetime.utcnow())
         x509_cert = x509_cert.not_valid_after(expire_at)
 
-        x509_cert = cert.extension.append_extension(x509_cert)
+        x509_cert = cert.extensions.append_extension(x509_cert)
 
         x509_cert = x509_cert.add_extension(
             x509.SubjectKeyIdentifier.from_public_key(pvkey.public_key()), critical=False

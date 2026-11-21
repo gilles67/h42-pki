@@ -9,7 +9,7 @@ from cryptography import x509
 from cryptography.hazmat.primitives.asymmetric import rsa
 from httpx import AsyncClient
 
-from tests.integration.test_smoke_ca import EXTENSION, SUBJECT
+from tests.integration.test_smoke_ca import EXTENSIONS, SUBJECT
 
 
 async def test_regression_B1_unique_serials(client: AsyncClient) -> None:
@@ -20,7 +20,7 @@ async def test_regression_B1_unique_serials(client: AsyncClient) -> None:
     for _ in range(3):
         response = await client.post(
             "/certificate/generate",
-            json={"privatekey": key_id, "subject": SUBJECT, "extension": EXTENSION},
+            json={"privatekey": key_id, "subject": SUBJECT, "extensions": EXTENSIONS},
         )
         assert response.status_code == 200, response.text
         certificates.append(response.json())
@@ -53,7 +53,7 @@ async def test_regression_B7_delete_used_private_key_conflicts(client: AsyncClie
     key_id = response.json()["uid"]
     await client.post(
         "/certificate/generate",
-        json={"privatekey": key_id, "subject": SUBJECT, "extension": EXTENSION},
+        json={"privatekey": key_id, "subject": SUBJECT, "extensions": EXTENSIONS},
     )
 
     response = await client.delete(f"/private_key/{key_id}")

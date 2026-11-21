@@ -1,86 +1,89 @@
+# Legacy request models, renamed to snake_case (ADR-0006); moved to core/ in lot 4.
+from typing import Literal
+
 from cryptography import x509
 from cryptography.x509.oid import NameOID
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
-SUBJET_MAPPER = {
-    "CountryName": NameOID.COUNTRY_NAME,
-    "ProvinceName": NameOID.STATE_OR_PROVINCE_NAME,
-    "LocalityName": NameOID.LOCALITY_NAME,
-    "OrganizationName": NameOID.ORGANIZATION_NAME,
-    "OrganizationUnitName": NameOID.ORGANIZATIONAL_UNIT_NAME,
-    "CommonName": NameOID.COMMON_NAME,
-    "Email": NameOID.EMAIL_ADDRESS,
+SUBJECT_OIDS = {
+    "country_name": NameOID.COUNTRY_NAME,
+    "state_or_province_name": NameOID.STATE_OR_PROVINCE_NAME,
+    "locality_name": NameOID.LOCALITY_NAME,
+    "organization_name": NameOID.ORGANIZATION_NAME,
+    "organizational_unit_name": NameOID.ORGANIZATIONAL_UNIT_NAME,
+    "common_name": NameOID.COMMON_NAME,
+    "email_address": NameOID.EMAIL_ADDRESS,
 }
+
+ExtendedKeyUsageName = Literal[
+    "server_auth",
+    "client_auth",
+    "code_signing",
+    "email_protection",
+    "time_stamping",
+    "ocsp_signing",
+]
 
 
 class Subject(BaseModel):
-    CountryName: str
-    ProvinceName: str
-    LocalityName: str
-    OrganizationName: str
-    OrganizationUnitName: str
-    CommonName: str
-    Email: str
+    model_config = ConfigDict(extra="forbid")
 
-    def x509_subject(self):
-        attributes = []
-        for field, value in self:
-            attributes.append(x509.NameAttribute(SUBJET_MAPPER[field], value))
-        return x509.Name(attributes)
+    # All attributes are still mandatory (B11, lot 4).
+    country_name: str
+    state_or_province_name: str
+    locality_name: str
+    organization_name: str
+    organizational_unit_name: str
+    common_name: str
+    email_address: str
 
-
-class X509BasicConstraints(BaseModel):
-    CertificateAuthority: bool = Field(default=False)
-    PathLength: int = Field(default=0)
+    def x509_subject(self) -> x509.Name:
+        return x509.Name([x509.NameAttribute(SUBJECT_OIDS[field], value) for field, value in self])
 
 
-class X509KeyUsage(BaseModel):
-    DigitalSignature: bool = Field(default=False)
-    ContentCommitment: bool = Field(default=False)
-    KeyEncipherment: bool = Field(default=False)
-    DataEncipherment: bool = Field(default=False)
-    KeyAgreement: bool = Field(default=False)
-    KeyCertSign: bool = Field(default=False)
-    CrlSign: bool = Field(default=False)
-    EncipherOnly: bool = Field(default=False)
-    DecipherOnly: bool = Field(default=False)
+class BasicConstraints(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ca: bool = False
+    path_length: int = 0  # legacy default kept (B10, lot 4)
 
 
-class X509ExtendedKeyUsage(BaseModel):
-    ServerAuthentication: bool = Field(default=False)
-    ClientAuthentication: bool = Field(default=False)
-    CodeSigning: bool = Field(default=False)
-    EmailProtection: bool = Field(default=False)
-    TimeStamping: bool = Field(default=False)
+class KeyUsage(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    digital_signature: bool = False
+    content_commitment: bool = False
+    key_encipherment: bool = False
+    data_encipherment: bool = False
+    key_agreement: bool = False
+    key_cert_sign: bool = False
+    crl_sign: bool = False
+    encipher_only: bool = False
+    decipher_only: bool = False
 
 
-class Extension(BaseModel):
-    BasicConstraints: X509BasicConstraints | None = None
-    KeyUsage: X509KeyUsage | None = None
-    ExtendedKeyUsage: X509ExtendedKeyUsage | None = None
+class Extensions(BaseModel):
+    """Extensions requested for a certificate (until profiles exist)."""
 
-    def append_extension(self, cert):
-        if self.BasicConstraints is not None:
+    model_config = ConfigDict(extra="forbid")
+
+    basic_constraints: BasicConstraints | None = None
+    key_usage: KeyUsage | None = None
+    extended_key_usage: list[ExtendedKeyUsageName] = Field(default_factory=list)
+
+    def append_extension(self, cert: x509.CertificateBuilder) -> x509.CertificateBuilder:
+        if self.basic_constraints is not None:
             cert = cert.add_extension(
                 x509.BasicConstraints(
-                    ca=self.BasicConstraints.CertificateAuthority,
-                    path_length=self.BasicConstraints.PathLength,
+                    ca=self.basic_constraints.ca,
+                    path_length=self.basic_constraints.path_length,
                 ),
                 critical=True,
             )
-        if self.KeyUsage is not None:
+        if self.key_usage is not None:
             cert = cert.add_extension(
-                x509.KeyUsage(
-                    digital_signature=self.KeyUsage.DigitalSignature,
-                    content_commitment=self.KeyUsage.ContentCommitment,
-                    key_encipherment=self.KeyUsage.KeyEncipherment,
-                    data_encipherment=self.KeyUsage.DataEncipherment,
-                    key_agreement=self.KeyUsage.KeyAgreement,
-                    key_cert_sign=self.KeyUsage.KeyCertSign,
-                    crl_sign=self.KeyUsage.CrlSign,
-                    encipher_only=self.KeyUsage.EncipherOnly,
-                    decipher_only=self.KeyUsage.DecipherOnly,
-                ),
+                x509.KeyUsage(**self.key_usage.model_dump()),
                 critical=True,
             )
+        # TODO(lot4): B9 - extended_key_usage is stored but not added to the certificate.
         return cert
