@@ -1,0 +1,73 @@
+# Stratégie de test
+
+## 1. Pyramide
+
+| Niveau | Dossier | Marqueur | Portée | Exécution |
+|---|---|---|---|---|
+| Unitaire | `tests/unit/` | — | `core/`, `keystore/`, schémas, fonctions pures ; pas de DB ni réseau | chaque commit, < 30 s |
+| Intégration | `tests/integration/` | — | services + API via `httpx.ASGITransport`, Tortoise SQLite en mémoire | chaque commit |
+| Interopérabilité | `tests/interop/` | `@pytest.mark.interop` | vrais clients : `openssl`, `sscep`, `curl`, `lego`/`certbot` | manuel / CI nocturne, nécessite Docker |
+
+`pytest` sans option exclut `interop` (`addopts = "-m 'not interop'"`).
+
+## 2. Dépendances de dev (à ajouter en phase 0)
+
+```toml
+[dependency-groups]
+dev = [
+  "pytest", "pytest-asyncio", "pytest-cov", "time-machine",
+  "ruff", "mypy", "asn1crypto",   # asn1crypto aussi en prod à partir de la phase SCEP
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+addopts = "-m 'not interop' --strict-markers"
+markers = ["interop: requires external tools / docker", "slow: long-running"]
+```
+
+## 3. Fixtures de base (`tests/conftest.py`)
+
+- `settings` : `Settings` de test (passphrase fixe, `environment = "test"`, URLs `http://testserver`).
+- `db` (function scope) : `Tortoise.init(db_url="sqlite://:memory:", modules=…)` + `generate_schemas()`, fermeture
+  après le test. **À vérifier** : utilitaires de test fournis par Tortoise 1.x (`tortoise.contrib.test`) — les utiliser
+  s'ils sont compatibles avec pytest-asyncio.
+- Clés `scope="session"` : `rsa2048_key`, `ec_p256_key`, `ec_p384_key`, `ed25519_key`.
+- Fabriques : `root_ca` (AC racine active), `issuing_ca` (fille signée par `root_ca`), `make_csr(**subject, sans=…)`,
+  `issued_cert(profile=…)`, `revoked_cert(reason=…)`.
+- `client` : `httpx.AsyncClient(transport=ASGITransport(app=create_app(settings)), base_url="http://testserver")`
+  avec lifespan géré (tâches planifiées **désactivées** en test, appelées explicitement).
+- `admin_headers` : jeton d'admin créé en base.
+- `proxy_client_cert(cert)` : en-têtes simulant le reverse-proxy mTLS (pour EST/fédération).
+
+## 4. Règles
+
+1. Chaque module de `core/` a son fichier de test miroir (`core/crl.py` → `tests/unit/core/test_crl.py`).
+2. Vérifier les sorties **en les relisant** : parser le DER produit avec `cryptography` et contrôler extensions,
+   criticité, validité, signature (`cert.verify_directly_issued_by(issuer)`).
+3. Tester les refus autant que les succès (profils, authentification, CSR malformés, rejeu).
+4. Temps figé avec `time_machine.travel(...)` pour : expirations, `next_update` CRL/OCSP, nonces et commandes ACME.
+5. Aucun secret réel, aucun appel réseau sortant hors `interop` (le validateur ACME est injecté).
+6. Bug corrigé ⇒ test de non-régression nommé `test_regression_<id>` (ex. `test_regression_B1_unique_serials`).
+7. Pas de RSA 4096 hors `@pytest.mark.slow`.
+
+## 5. Interopérabilité (`deploy/compose.interop.yaml`)
+
+Services : `root`, `intermediate`, `issuing` (h42-pki), `traefik` (TLS/mTLS), `web` (cible http-01),
+`dns` (cible dns-01), `tools` (openssl, sscep, curl, lego). Les tests `interop` pilotent `docker compose exec tools …`
+et vérifient les codes de retour. Scénarios minimum :
+
+| Scénario | Outil |
+|---|---|
+| Chaîne racine → intermédiaire → émettrice valide | `openssl verify` |
+| Révocation visible dans la CRL et en OCSP | `openssl crl`, `openssl ocsp` |
+| Enrôlement / réenrôlement EST | `curl` + `openssl pkcs7` |
+| Enrôlement SCEP | `sscep getca`, `sscep enroll` |
+| Émission ACME http-01 et dns-01, révocation | `lego` |
+
+## 6. Couverture et qualité
+
+- `core/` ≥ 90 %, `keystore/` ≥ 90 %, global ≥ 80 % (`--cov-fail-under=80` en CI une fois la phase 1 terminée).
+- `ruff check`, `ruff format --check`, `mypy src` bloquants en CI (GitHub Actions : job `lint`, job `test`
+  matrice Python 3.12/3.13, job `interop` nocturne).
