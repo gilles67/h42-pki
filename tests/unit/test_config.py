@@ -1,3 +1,4 @@
+import os
 import warnings
 from pathlib import Path
 
@@ -78,3 +79,93 @@ def test_passphrase_not_in_repr(monkeypatch: pytest.MonkeyPatch) -> None:
     assert PASSPHRASE not in repr(settings)
     assert PASSPHRASE not in str(settings)
     assert PASSPHRASE not in settings.model_dump_json()
+
+
+posix_only = pytest.mark.skipif(os.name == "nt", reason="POSIX file modes")
+
+
+def _secret_file(directory: Path, name: str, mode: int) -> Path:
+    path = directory / name
+    path.write_text(PASSPHRASE, encoding="utf-8")
+    os.chmod(path, mode)
+    return path
+
+
+@posix_only
+def test_regression_B4_writable_file_rejected_in_production(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    secret = _secret_file(tmp_path, "passphrase", 0o620)
+    monkeypatch.setenv(f"{ENV_PREFIX}CA_PASSPHRASE_FILE", str(secret))
+
+    with pytest.raises(ValueError, match="writable by group or others") as excinfo:
+        get_settings()
+    assert PASSPHRASE not in str(excinfo.value)
+
+
+@posix_only
+def test_regression_B4_writable_secrets_dir_file_rejected_in_production(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _secret_file(tmp_path, "h42_pki_ca_passphrase", 0o666)
+    monkeypatch.setenv(f"{ENV_PREFIX}SECRETS_DIR", str(tmp_path))
+
+    with pytest.raises(ValueError, match="writable by group or others") as excinfo:
+        get_settings()
+    assert PASSPHRASE not in str(excinfo.value)
+
+
+@posix_only
+def test_regression_B4_writable_file_warns_outside_production(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    secret = _secret_file(tmp_path, "passphrase", 0o602)
+    monkeypatch.setenv(f"{ENV_PREFIX}CA_PASSPHRASE_FILE", str(secret))
+    monkeypatch.setenv(f"{ENV_PREFIX}ENVIRONMENT", "dev")
+
+    with pytest.warns(UserWarning, match="writable by group or others") as record:
+        settings = get_settings()
+
+    assert settings.ca_passphrase.get_secret_value() == PASSPHRASE
+    assert all(PASSPHRASE not in str(w.message) for w in record)
+
+
+@posix_only
+def test_regression_B4_world_readable_file_variable_warns(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    secret = _secret_file(tmp_path, "passphrase", 0o644)
+    monkeypatch.setenv(f"{ENV_PREFIX}CA_PASSPHRASE_FILE", str(secret))
+
+    with pytest.warns(UserWarning, match="readable by others"):
+        settings = get_settings()  # production: readable is only a warning
+
+    assert settings.ca_passphrase.get_secret_value() == PASSPHRASE
+
+
+@posix_only
+def test_regression_B4_docker_secret_0444_accepted_silently(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _secret_file(tmp_path, "h42_pki_ca_passphrase", 0o444)
+    monkeypatch.setenv(f"{ENV_PREFIX}SECRETS_DIR", str(tmp_path))
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        settings = get_settings()
+
+    assert settings.ca_passphrase.get_secret_value() == PASSPHRASE
+
+
+@posix_only
+def test_regression_B4_private_file_accepted_silently(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    secret = _secret_file(tmp_path, "passphrase", 0o600)
+    monkeypatch.setenv(f"{ENV_PREFIX}CA_PASSPHRASE_FILE", str(secret))
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        settings = get_settings()
+
+    assert settings.ca_passphrase.get_secret_value() == PASSPHRASE
