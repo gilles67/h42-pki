@@ -99,7 +99,7 @@ async def test_invalid_uuid_does_not_hit_download_route(client: AsyncClient) -> 
     assert response.status_code == 422
 
 
-async def test_validation_errors_are_problem_json(client: AsyncClient) -> None:
+async def test_regression_B29_validation_errors_are_problem_json(client: AsyncClient) -> None:
     submitted = "do-not-echo-this-value"
     response = await client.post(
         "/api/v1/certificates",
