@@ -62,7 +62,16 @@ plugins = ["pydantic.mypy"]
 warn_unused_configs = true
 
 [[tool.mypy.overrides]]
-module = ["h42pki", "h42pki.config", "h42pki.db", "h42pki.main", "h42pki.cli", "h42pki.api.health"]
+module = [
+    "h42pki",
+    "h42pki.config",
+    "h42pki.db",
+    "h42pki.main",
+    "h42pki.cli",
+    "h42pki.errors",
+    "h42pki.api.health",
+    "h42pki.api.problems",
+]
 strict = true
 
 [[tool.mypy.overrides]]

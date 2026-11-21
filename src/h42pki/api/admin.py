@@ -27,7 +27,7 @@ async def get_private_key(key_id: UUID):
 
 @router.delete("/private_key/{key_id}")
 async def delete_private_key(key_id: UUID):
-    await pki.PkiPrivateKey.delete(key_id)
+    await pki.PkiPrivateKey.delete_key(key_id)
     return {"Done"}
 
 

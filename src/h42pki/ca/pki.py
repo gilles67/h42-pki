@@ -6,6 +6,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
 from h42pki.config import get_settings
+from h42pki.errors import Conflict
 
 from .models import (
     Certificate,
@@ -52,7 +53,9 @@ class PkiPrivateKey:
     @classmethod
     async def delete_key(cls, key_id: UUID):
         datakey = await PrivateKey.get(uid=key_id)
-        datakey.delete()
+        if await Certificate.filter(privatekey=key_id).exists():
+            raise Conflict("the private key is used by at least one certificate")
+        await datakey.delete()
         return datakey
 
 
