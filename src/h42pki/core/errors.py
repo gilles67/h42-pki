@@ -23,3 +23,23 @@ class InvalidValidity(InvalidRequest):
 
 class NotARootCA(InvalidRequest):
     title = "Not A Root CA"
+
+
+class InvalidSubject(InvalidRequest):
+    title = "Invalid Subject"
+
+
+class InvalidSan(InvalidRequest):
+    title = "Invalid Subject Alternative Name"
+
+
+class InvalidCsr(InvalidRequest):
+    title = "Invalid CSR"
+
+
+class ProfileViolation(InvalidRequest):
+    title = "Profile Violation"
+
+
+class PathLengthExceeded(InvalidRequest):
+    title = "Path Length Exceeded"

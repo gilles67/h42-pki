@@ -1,27 +1,32 @@
-"""Certificate construction (self-signed root CA for now; issuance from a CA comes in lot 5)."""
+"""Certificate construction: the root CA certificate and certificates issued by a CA."""
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime
 
 from cryptography import x509
 
-from h42pki.core.errors import InvalidValidity, NotARootCA
+from h42pki.core.errors import NotARootCA
 from h42pki.core.extensions import Extensions, validate_for_key
 from h42pki.core.keys import SupportedPrivateKey, algorithm_of, signature_hash
 from h42pki.core.names import Subject
+from h42pki.core.validity import (
+    CLOCK_SKEW,
+    DEFAULT_CA_VALIDITY_DAYS,
+    MAX_VALIDITY_DAYS,
+    MIN_VALIDITY_DAYS,
+    check_validity_days,
+    validity_window,
+)
 
-# Single source of truth, also used by the API request schema.
-DEFAULT_CA_VALIDITY_DAYS = 3650
-MIN_VALIDITY_DAYS = 1
-MAX_VALIDITY_DAYS = 10950  # 30 years
-# not_before is backdated to tolerate relying parties whose clock is slightly behind.
-CLOCK_SKEW = timedelta(minutes=5)
-
-
-def check_validity_days(validity_days: int) -> None:
-    if not MIN_VALIDITY_DAYS <= validity_days <= MAX_VALIDITY_DAYS:
-        raise InvalidValidity(
-            f"validity_days must be between {MIN_VALIDITY_DAYS} and {MAX_VALIDITY_DAYS}"
-        )
+__all__ = [
+    "CLOCK_SKEW",
+    "DEFAULT_CA_VALIDITY_DAYS",
+    "MAX_VALIDITY_DAYS",
+    "MIN_VALIDITY_DAYS",
+    "build_self_signed",
+    "check_root_ca",
+    "check_validity_days",
+    "validity_window",
+]
 
 
 def check_root_ca(extensions: Extensions) -> None:
@@ -32,19 +37,6 @@ def check_root_ca(extensions: Extensions) -> None:
         raise NotARootCA(
             "self-signing requires basic_constraints.ca = true and key_usage.key_cert_sign = true"
         )
-
-
-def validity_window(now: datetime, validity_days: int) -> tuple[datetime, datetime]:
-    """``(not_before, not_after)`` for a certificate issued at ``now``.
-
-    X.509 encodes times to the second, so ``now`` is truncated: the stored values then equal
-    the certificate's, and ``not_after - not_before`` is exactly ``validity_days``.
-    """
-    if now.tzinfo is None or now.utcoffset() is None:
-        raise ValueError("now must be a timezone-aware datetime")  # B17
-    check_validity_days(validity_days)
-    not_before = now.astimezone(UTC).replace(microsecond=0) - CLOCK_SKEW
-    return not_before, not_before + timedelta(days=validity_days)
 
 
 def build_self_signed(

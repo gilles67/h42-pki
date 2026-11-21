@@ -1,8 +1,10 @@
 import pytest
+from cryptography import x509
 from cryptography.x509.oid import NameOID
 from pydantic import ValidationError
 
-from h42pki.core.names import Subject, rfc4514
+from h42pki.core.errors import InvalidSubject
+from h42pki.core.names import Subject, name_attributes, rfc4514
 
 FULL_SUBJECT = {
     "country_name": "FR",
@@ -101,3 +103,55 @@ def test_pascal_case_rejected() -> None:
     with pytest.raises(ValidationError) as excinfo:
         Subject.model_validate({**legacy, "common_name": "x"})
     assert {error["type"] for error in excinfo.value.errors()} == {"extra_forbidden"}
+
+
+def test_name_attributes_reads_a_name() -> None:
+    name = Subject.model_validate(FULL_SUBJECT).x509_name()
+
+    assert name_attributes(name).model_dump(exclude_none=True) == FULL_SUBJECT
+
+
+def test_name_attributes_may_be_empty() -> None:
+    attributes = name_attributes(x509.Name([]))
+
+    assert attributes.present() == set()
+    assert attributes.x509_name() == x509.Name([])
+
+
+def test_name_attributes_refuses_unknown_attribute() -> None:
+    name = x509.Name([x509.NameAttribute(NameOID.SERIAL_NUMBER, "42")])
+
+    with pytest.raises(InvalidSubject, match=r"2\.5\.4\.5 is not supported"):
+        name_attributes(name)
+
+
+def test_name_attributes_refuses_repeated_attribute() -> None:
+    name = x509.Name(
+        [
+            x509.NameAttribute(NameOID.ORGANIZATIONAL_UNIT_NAME, "a"),
+            x509.NameAttribute(NameOID.ORGANIZATIONAL_UNIT_NAME, "b"),
+        ]
+    )
+
+    with pytest.raises(InvalidSubject, match="more than once"):
+        name_attributes(name)
+
+
+def test_name_attributes_refuses_multi_valued_rdn() -> None:
+    rdn = x509.RelativeDistinguishedName(
+        [
+            x509.NameAttribute(NameOID.COMMON_NAME, "a"),
+            x509.NameAttribute(NameOID.ORGANIZATION_NAME, "b"),
+        ]
+    )
+
+    with pytest.raises(InvalidSubject, match="multi-valued"):
+        name_attributes(x509.Name([rdn]))
+
+
+def test_name_attributes_checks_bounds() -> None:
+    # cryptography refuses to build it, but a CSR from elsewhere may carry it.
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "x" * 65, _validate=False)])
+
+    with pytest.raises(InvalidSubject, match="common_name"):
+        name_attributes(name)

@@ -4,7 +4,9 @@ from typing import Annotated
 
 from cryptography import x509
 from cryptography.x509.oid import NameOID
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError
+
+from h42pki.core.errors import InvalidSubject
 
 # Upper bounds from RFC 5280 appendix A.1 (ub-*).
 UB_STATE_NAME = 128
@@ -42,8 +44,8 @@ CommonName = Annotated[str, _bounded(UB_COMMON_NAME)]
 EmailAddress = Annotated[str, _bounded(UB_EMAILADDRESS_LENGTH)]
 
 
-class Subject(BaseModel):
-    """Subject attributes; only ``common_name`` is mandatory (B11)."""
+class NameAttributes(BaseModel):
+    """Distinguished name attributes, all optional (a TLS server certificate may have none)."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -52,8 +54,12 @@ class Subject(BaseModel):
     locality_name: LocalityName | None = None
     organization_name: OrganizationName | None = None
     organizational_unit_name: OrganizationalUnitName | None = None
-    common_name: CommonName
+    common_name: CommonName | None = None
     email_address: EmailAddress | None = None
+
+    def present(self) -> set[str]:
+        """Names of the attributes that have a value."""
+        return {field for field in SUBJECT_OIDS if getattr(self, field) is not None}
 
     def x509_name(self) -> x509.Name:
         """Encode as a Name in the order C, ST, L, O, OU, CN, emailAddress; skip absent values."""
@@ -64,6 +70,42 @@ class Subject(BaseModel):
                 if (value := getattr(self, field)) is not None
             ]
         )
+
+
+class Subject(NameAttributes):
+    """Subject of a CA certificate: only ``common_name`` is mandatory (B11)."""
+
+    common_name: CommonName
+
+
+_FIELDS_BY_OID = {oid: field for field, oid in SUBJECT_OIDS.items()}
+
+
+def name_attributes(name: x509.Name) -> NameAttributes:
+    """Read a Name (e.g. from a CSR) into :class:`NameAttributes`.
+
+    Unknown attribute types, multi-valued RDNs and repeated attributes are refused rather than
+    dropped: the requester must know exactly what will be certified.
+    """
+    values: dict[str, str] = {}
+    for rdn in name.rdns:
+        if len(rdn) != 1:
+            raise InvalidSubject("multi-valued RDNs are not supported")
+        attribute = next(iter(rdn))
+        field = _FIELDS_BY_OID.get(attribute.oid)
+        if field is None:
+            label = attribute.rfc4514_attribute_name
+            raise InvalidSubject(f"subject attribute {label} is not supported")
+        if field in values:
+            raise InvalidSubject(f"subject attribute {field} appears more than once")
+        if not isinstance(attribute.value, str):
+            raise InvalidSubject(f"subject attribute {field} must be a string")
+        values[field] = attribute.value
+    try:
+        return NameAttributes.model_validate(values)
+    except ValidationError as exc:
+        messages = "; ".join(f"{'.'.join(map(str, e['loc']))}: {e['msg']}" for e in exc.errors())
+        raise InvalidSubject(f"invalid subject: {messages}") from None
 
 
 def rfc4514(name: x509.Name) -> str:
