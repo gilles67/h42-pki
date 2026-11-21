@@ -1,36 +1,44 @@
 import datetime
-from h42pki.config import get_settings
-
-from .models import PrivateKeyCreateMixin, PrivateKeyOutput, PrivateKeyType, PrivateKey, CertificateCreateMixin, Certificate
-from cryptography import x509
-from cryptography.x509.oid import NameOID, AuthorityInformationAccessOID
-from cryptography.hazmat.primitives import serialization, hashes
-from cryptography.hazmat.primitives.asymmetric import rsa
 from uuid import UUID
 
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+
+from h42pki.config import get_settings
+
+from .models import (
+    Certificate,
+    CertificateCreateMixin,
+    PrivateKey,
+    PrivateKeyCreateMixin,
+    PrivateKeyType,
+)
+
 DEFAULT_ENCODING = "utf-8"
+
 
 def _ca_passphrase() -> bytes:
     # Replaces the former PkiConfiguration (config/pki.json): same passphrase, same encoding.
     return get_settings().ca_passphrase.get_secret_value().encode(DEFAULT_ENCODING)
 
 
-class PkiPrivateKey: 
-
+class PkiPrivateKey:
     @classmethod
     async def generate(cls, query: PrivateKeyCreateMixin):
         passphrase = _ca_passphrase()
 
         if PrivateKeyType.gettype(query.key_type) == "rsa":
-            pvkey = rsa.generate_private_key(public_exponent=65537, key_size=PrivateKeyType.getsize(query.key_type))
-            key_data = pvkey.private_bytes(
-              encoding=serialization.Encoding.PEM,
-              format=serialization.PrivateFormat.TraditionalOpenSSL,
-              encryption_algorithm=serialization.BestAvailableEncryption(passphrase)  
+            pvkey = rsa.generate_private_key(
+                public_exponent=65537, key_size=PrivateKeyType.getsize(query.key_type)
             )
-        
-        return await PrivateKey.create(key_type=query.key_type, key=key_data)
+            key_data = pvkey.private_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PrivateFormat.TraditionalOpenSSL,
+                encryption_algorithm=serialization.BestAvailableEncryption(passphrase),
+            )
 
+        return await PrivateKey.create(key_type=query.key_type, key=key_data)
 
     @classmethod
     async def load_key(cls, key_id: UUID):
@@ -41,7 +49,6 @@ class PkiPrivateKey:
 
         return (datakey, pvkey)
 
-
     @classmethod
     async def delete_key(cls, key_id: UUID):
         datakey = await PrivateKey.get(uid=key_id)
@@ -49,14 +56,11 @@ class PkiPrivateKey:
         return datakey
 
 
-class PkiCertificate: 
-
+class PkiCertificate:
     @classmethod
     async def generate(cls, query: CertificateCreateMixin):
         cert = await Certificate.create(
-            privatekey = query.privatekey,
-            subject = query.subject,
-            extension = query.extension
+            privatekey=query.privatekey, subject=query.subject, extension=query.extension
         )
         return cert
 
@@ -79,7 +83,9 @@ class PkiCertificate:
 
         x509_cert = cert.extension.append_extension(x509_cert)
 
-        x509_cert = x509_cert.add_extension(x509.SubjectKeyIdentifier.from_public_key(pvkey.public_key()), critical=False)
+        x509_cert = x509_cert.add_extension(
+            x509.SubjectKeyIdentifier.from_public_key(pvkey.public_key()), critical=False
+        )
 
         x509_cert_sign = x509_cert.sign(pvkey, hashes.SHA512())
 
@@ -87,7 +93,7 @@ class PkiCertificate:
         cert.expire_at = expire_at
         cert.key = pvkey.public_key().public_bytes(
             encoding=serialization.Encoding.PEM,
-            format=serialization.PublicFormat.SubjectPublicKeyInfo
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
         )
 
         await cert.save()

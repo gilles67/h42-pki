@@ -40,3 +40,48 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/h42pki"]
+
+# --- ruff -------------------------------------------------------------------
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC", "S"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]
+
+# --- mypy -------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.12"
+mypy_path = "src"
+packages = ["h42pki"]
+plugins = ["pydantic.mypy"]
+warn_unused_configs = true
+
+[[tool.mypy.overrides]]
+module = ["h42pki", "h42pki.config", "h42pki.db", "h42pki.main", "h42pki.cli", "h42pki.api.health"]
+strict = true
+
+[[tool.mypy.overrides]]
+# legacy, rewritten in lot 4
+module = ["h42pki.ca.*", "h42pki.api.admin"]
+ignore_errors = true
+
+# --- pytest -----------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+addopts = "-m 'not interop' --strict-markers"
+markers = [
+    "interop: requires external tools / docker",
+    "slow: long-running",
+]
+
+[tool.coverage.run]
+source = ["h42pki"]
+branch = true

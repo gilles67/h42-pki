@@ -1,7 +1,6 @@
-from pydantic import BaseModel, Field
 from cryptography import x509
 from cryptography.x509.oid import NameOID
-
+from pydantic import BaseModel, Field
 
 SUBJET_MAPPER = {
     "CountryName": NameOID.COUNTRY_NAME,
@@ -25,7 +24,7 @@ class Subject(BaseModel):
 
     def x509_subject(self):
         attributes = []
-        for (field, value) in self: 
+        for field, value in self:
             attributes.append(x509.NameAttribute(SUBJET_MAPPER[field], value))
         return x509.Name(attributes)
 
@@ -34,9 +33,10 @@ class X509BasicConstraints(BaseModel):
     CertificateAuthority: bool = Field(default=False)
     PathLength: int = Field(default=0)
 
+
 class X509KeyUsage(BaseModel):
     DigitalSignature: bool = Field(default=False)
-    ContentCommitment: bool = Field(default=False) 
+    ContentCommitment: bool = Field(default=False)
     KeyEncipherment: bool = Field(default=False)
     DataEncipherment: bool = Field(default=False)
     KeyAgreement: bool = Field(default=False)
@@ -45,11 +45,12 @@ class X509KeyUsage(BaseModel):
     EncipherOnly: bool = Field(default=False)
     DecipherOnly: bool = Field(default=False)
 
+
 class X509ExtendedKeyUsage(BaseModel):
     ServerAuthentication: bool = Field(default=False)
     ClientAuthentication: bool = Field(default=False)
     CodeSigning: bool = Field(default=False)
-    EmailProtection: bool = Field(default=False) 
+    EmailProtection: bool = Field(default=False)
     TimeStamping: bool = Field(default=False)
 
 
@@ -58,15 +59,14 @@ class Extension(BaseModel):
     KeyUsage: X509KeyUsage | None = None
     ExtendedKeyUsage: X509ExtendedKeyUsage | None = None
 
-
-    def append_extension(self, cert): 
+    def append_extension(self, cert):
         if self.BasicConstraints is not None:
             cert = cert.add_extension(
                 x509.BasicConstraints(
                     ca=self.BasicConstraints.CertificateAuthority,
-                    path_length=self.BasicConstraints.PathLength
+                    path_length=self.BasicConstraints.PathLength,
                 ),
-                critical=True
+                critical=True,
             )
         if self.KeyUsage is not None:
             cert = cert.add_extension(
@@ -79,8 +79,8 @@ class Extension(BaseModel):
                     key_cert_sign=self.KeyUsage.KeyCertSign,
                     crl_sign=self.KeyUsage.CrlSign,
                     encipher_only=self.KeyUsage.EncipherOnly,
-                    decipher_only=self.KeyUsage.DecipherOnly
+                    decipher_only=self.KeyUsage.DecipherOnly,
                 ),
-                critical=True
+                critical=True,
             )
         return cert

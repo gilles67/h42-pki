@@ -1,28 +1,26 @@
-from tortoise import fields
-from tortoise.models import Model
-from uuid import UUID
-
-from tortoise.contrib.pydantic import pydantic_model_creator
-from pydantic import ConfigDict, SkipValidation, field_serializer, BaseModel
+from enum import StrEnum
 
 from cryptography import x509
 from cryptography.x509.extensions import ReasonFlags
+from pydantic import ConfigDict
+from tortoise import fields
+from tortoise.contrib.pydantic import pydantic_model_creator
+from tortoise.models import Model
 
-from enum import StrEnum
+from .pki_models import Extension, Subject
 
-from .pki_models import Subject, Extension
 
 class PrivateKeyType(StrEnum):
-    RSA2048 = 'rsa_2048'
-    RSA3072 = 'rsa_3072'
-    RSA4096 = 'rsa_4096'
+    RSA2048 = "rsa_2048"
+    RSA3072 = "rsa_3072"
+    RSA4096 = "rsa_4096"
 
     @classmethod
     def getsize(cls, key_type: str):
         return int(key_type.split("_")[1])
 
     @classmethod
-    def gettype(cls, key_type:str):
+    def gettype(cls, key_type: str):
         return key_type.split("_")[0]
 
 
@@ -39,7 +37,7 @@ class Certificate(Model):
     csr = fields.BinaryField(null=True)
     crt = fields.BinaryField(null=True)
 
-    revoked_flag = fields.CharEnumField(ReasonFlags,null=True)
+    revoked_flag = fields.CharEnumField(ReasonFlags, null=True)
 
     privatekey = fields.UUIDField(null=True)
 
@@ -48,14 +46,14 @@ class Certificate(Model):
     signed_at = fields.DatetimeField(null=True)
     expire_at = fields.DatetimeField(null=True)
     revoked_at = fields.DatetimeField(null=True)
-    
+
     signed_by = fields.UUIDField(null=True)
 
-    class Meta: 
+    class Meta:
         table = "pki_certificate"
 
 
-class Authority(Model): 
+class Authority(Model):
     model_config = ConfigDict(from_attributes=True, arbitrary_types_allowed=True)
 
     uid = fields.UUIDField(primary_key=True)
@@ -67,8 +65,9 @@ class Authority(Model):
     created_at = fields.DatetimeField(auto_now_add=True)
     updated_at = fields.DatetimeField(auto_now=True)
 
-    class Meta: 
+    class Meta:
         table = "pki_authority"
+
 
 class PrivateKey(Model):
     model_config = ConfigDict(from_attributes=True, arbitrary_types_allowed=True)
@@ -80,11 +79,35 @@ class PrivateKey(Model):
     created_at = fields.DatetimeField(auto_now_add=True)
     updated_at = fields.DatetimeField(auto_now=True)
 
-    class Meta: 
+    class Meta:
         table = "pki_privatekey"
 
 
-PrivateKeyCreateMixin = pydantic_model_creator(PrivateKey,exclude=("uid","key","created_at", "updated_at",))
-PrivateKeyOutput = pydantic_model_creator(PrivateKey,exclude=("key",))
+PrivateKeyCreateMixin = pydantic_model_creator(
+    PrivateKey,
+    exclude=(
+        "uid",
+        "key",
+        "created_at",
+        "updated_at",
+    ),
+)
+PrivateKeyOutput = pydantic_model_creator(PrivateKey, exclude=("key",))
 
-CertificateCreateMixin = pydantic_model_creator(Certificate,exclude=("uid","sn","key","csr","crt","revoked_flag","created_at","updated_at","signed_at","expire_at","revoked_at","signed_by",))
+CertificateCreateMixin = pydantic_model_creator(
+    Certificate,
+    exclude=(
+        "uid",
+        "sn",
+        "key",
+        "csr",
+        "crt",
+        "revoked_flag",
+        "created_at",
+        "updated_at",
+        "signed_at",
+        "expire_at",
+        "revoked_at",
+        "signed_by",
+    ),
+)
