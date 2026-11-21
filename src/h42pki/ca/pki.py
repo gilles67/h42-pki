@@ -9,8 +9,8 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric.types import PrivateKeyTypes
 from tortoise.transactions import in_transaction
 
-from h42pki.ca.pki_models import Extensions
 from h42pki.config import get_settings
+from h42pki.core.extensions import Extensions
 from h42pki.core.keys import (
     KeyAlgorithm,
     generate_private_key,
@@ -147,7 +147,7 @@ class PkiCertificate:
         x509_cert = x509_cert.not_valid_before(datetime.datetime.utcnow())
         x509_cert = x509_cert.not_valid_after(expire_at)
 
-        x509_cert = cert.extensions.append_extension(x509_cert)
+        x509_cert = cert.extensions.apply(x509_cert)
 
         x509_cert = x509_cert.add_extension(
             x509.SubjectKeyIdentifier.from_public_key(pvkey.public_key()), critical=False
