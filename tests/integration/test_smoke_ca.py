@@ -1,5 +1,6 @@
 """Smoke test of the key -> certificate -> self-sign -> download flow on /api/v1."""
 
+import pytest
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes
 from cryptography.x509.oid import NameOID
@@ -23,11 +24,12 @@ EXTENSIONS = {
 }
 
 
-async def test_self_signed_ca(client: AsyncClient) -> None:
-    response = await client.post("/api/v1/private-keys", json={"algorithm": "rsa2048"})
+@pytest.mark.parametrize("algorithm", ["rsa2048", "ec_p384", "ed25519"])
+async def test_self_signed_ca(client: AsyncClient, algorithm: str) -> None:
+    response = await client.post("/api/v1/private-keys", json={"algorithm": algorithm})
     assert response.status_code == 201, response.text
     key = response.json()
-    assert key["algorithm"] == "rsa2048"
+    assert key["algorithm"] == algorithm
     assert key["backend"] == "software"
     assert key["public_key_pem"].startswith("-----BEGIN PUBLIC KEY-----")
     assert set(key) == {"id", "algorithm", "backend", "public_key_pem", "created_at"}

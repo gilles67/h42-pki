@@ -11,6 +11,7 @@ from cryptography.hazmat.primitives import serialization
 from pydantic import BaseModel, ConfigDict, Field
 
 from h42pki.core.extensions import Extensions
+from h42pki.core.issuance import DEFAULT_CA_VALIDITY_DAYS, MAX_VALIDITY_DAYS, MIN_VALIDITY_DAYS
 from h42pki.core.keys import KeyAlgorithm
 from h42pki.core.names import Subject
 from h42pki.models import Certificate, CertificateStatus, KeyBackend, PrivateKey
@@ -51,6 +52,21 @@ class CertificateCreate(Schema):
     private_key_id: UUID | None = None
     subject: Subject
     extensions: Extensions = Field(default_factory=Extensions)
+
+
+class SelfSignRequest(Schema):
+    """Optional body of the self-sign request; an absent body uses the defaults."""
+
+    validity_days: int = Field(
+        default=DEFAULT_CA_VALIDITY_DAYS,
+        ge=MIN_VALIDITY_DAYS,
+        le=MAX_VALIDITY_DAYS,
+        description=(
+            f"Validity of the root CA certificate in days, from {MIN_VALIDITY_DAYS} to "
+            f"{MAX_VALIDITY_DAYS} (30 years). Defaults to {DEFAULT_CA_VALIDITY_DAYS} (10 years)."
+        ),
+        examples=[365],
+    )
 
 
 class CertificateOut(Schema):

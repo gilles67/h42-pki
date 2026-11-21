@@ -1,8 +1,9 @@
 """Admin API ``/api/v1`` (no authentication until the first release, ADR-0008)."""
 
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Response, status
+from fastapi import APIRouter, Body, Response, status
 
 from h42pki.api.admin.deps import Actor, CertificateServiceDep, KeyServiceDep
 from h42pki.api.admin.schemas import (
@@ -10,6 +11,7 @@ from h42pki.api.admin.schemas import (
     CertificateOut,
     PrivateKeyCreate,
     PrivateKeyOut,
+    SelfSignRequest,
     certificate_pem,
 )
 from h42pki.errors import Conflict
@@ -59,9 +61,16 @@ async def create_certificate(
 
 @router.post("/certificates/{certificate_id}/self-sign")
 async def self_sign_certificate(
-    certificate_id: UUID, actor: Actor, certificates: CertificateServiceDep
+    certificate_id: UUID,
+    actor: Actor,
+    certificates: CertificateServiceDep,
+    body: Annotated[SelfSignRequest | None, Body()] = None,
 ) -> CertificateOut:
-    cert = await certificates.self_sign(certificate_id, actor=actor)
+    """Self-sign a root CA certificate (``ca`` and ``key_cert_sign`` required)."""
+    request = body or SelfSignRequest()
+    cert = await certificates.self_sign(
+        certificate_id, validity_days=request.validity_days, actor=actor
+    )
     return CertificateOut.from_model(cert)
 
 
