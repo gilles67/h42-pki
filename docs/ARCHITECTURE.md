@@ -85,8 +85,8 @@ flowchart LR
 |---|---|---|
 | `api/` | HTTP : parsing, content-types, authentification, codes d'erreur | Aucune logique métier, aucun accès direct au keystore |
 | `services/` | Orchestration : transactions DB, application des profils, audit | Async ; appelle `core` via `asyncio.to_thread` si coûteux |
-| `core/` | Construction/vérification d'objets X.509, CRL, OCSP, CMS | Pur, synchrone, testable sans DB ni réseau |
-| `keystore/` | Détention des clés privées, opérations de signature/déchiffrement | Seul composant qui touche une clé privée |
+| `core/` | Construction/vérification d'objets X.509, CRL, OCSP, CMS | Pur, synchrone, testable sans DB ni réseau (vérifié par `tests/unit/core/test_purity.py`) ; ses fonctions de clés (`core/keys.py`) ne sont appelées que par `keystore` |
+| `keystore/` | Détention des clés privées, opérations de signature/déchiffrement | Seul composant qui détient la passphrase et (dé)chiffre une clé ; en v1 il remet l'objet `cryptography` au service, qui le passe aux builders de `core` (ADR-0004, cf. §8.1) |
 | `models/` | Persistance Tortoise | Aucun import de `api` |
 | `tasks/` | Tâches planifiées (lifespan FastAPI) | Idempotentes |
 
@@ -145,14 +145,16 @@ erDiagram
 
 Toutes les tables ont `id` (UUID), `created_at`, `updated_at` (UTC aware).
 
-> **État d'implémentation (lot 3).** Les tables `PrivateKey`, `Authority`, `Certificate` et `AuditLog` existent
+> **État d'implémentation (lot 4).** Les tables `PrivateKey`, `Authority`, `Certificate` et `AuditLog` existent
 > (`src/h42pki/models/`). Les champs marqués *(plus tard)* ne sont pas encore implémentés. Les autres tables
 > (`Profile`, `CertificateRequest`, `Crl`, …) arrivent avec leur phase.
 
 **`PrivateKey`** — clé détenue par ce conteneur.
-Implémenté : `algorithm` (enum : `rsa2048|rsa3072|rsa4096` ; `ec_p256|ec_p384|ed25519` *(plus tard, B8)*),
-`backend` (`software` ; `pkcs11` prévu dans l'enum), `encrypted_key` (binaire chiffré par la passphrase de l'AC, encore
-au format TraditionalOpenSSL : renommé `encrypted_pkcs8` avec B18 au lot 4), `public_key_der`.
+Implémenté : `algorithm` (`core.keys.KeyAlgorithm` : `rsa2048|rsa3072|rsa4096|ec_p256|ec_p384|ed25519`),
+`backend` (`software` ; `pkcs11` prévu dans l'enum), `encrypted_key` (forme protégée de la clé produite par le
+keystore : pour le backend logiciel, **PKCS#8 DER chiffré** par la passphrase de l'AC avec `BestAvailableEncryption`),
+`public_key_der`. Le nom `encrypted_key` est conservé (et non `encrypted_pkcs8`) parce que la colonne décrit la forme
+propre au backend, pas un format.
 *(plus tard)* : `pkcs11_uri` (backend pkcs11), `purpose` (`ca|ocsp|scep_ra|tls|serverkeygen`), `status`.
 
 **`Authority`** — une AC connue de ce conteneur. Aucune route ne l'utilise encore.
@@ -273,9 +275,10 @@ la fille génère clé + CSR et appelle `POST /api/v1/federation/enroll` → la 
 | `/` | HTTP | aucune | `{"name", "version"}` |
 | `/metrics` | HTTP interne | aucune / réseau privé | Prometheus (phase 7) |
 
-**API d'administration implémentée (lot 3).** Schémas écrits à la main (`extra="forbid"`, snake_case), aucune
-réponse ne contient de clé privée ; erreurs métier en `application/problem+json` (RFC 9457) : 404 objet inconnu,
-409 conflit, 422 requête invalide.
+**API d'administration implémentée (lot 4).** Schémas écrits à la main (`extra="forbid"`, snake_case), aucune
+réponse ne contient de clé privée ; toutes les erreurs en `application/problem+json` (RFC 9457) : 404 objet inconnu,
+409 conflit, 422 requête invalide (les erreurs de validation ajoutent une extension `errors` : `loc`, `msg`, `type`,
+jamais la valeur soumise), 500 si une clé stockée ne peut pas être déchiffrée.
 
 | Méthode | Chemin | Réponse |
 |---|---|---|
@@ -283,7 +286,7 @@ réponse ne contient de clé privée ; erreurs métier en `application/problem+j
 | GET | `/api/v1/private-keys/{id}` | 200, 404 |
 | DELETE | `/api/v1/private-keys/{id}` | 204, 404, 409 (clé utilisée par un certificat ou une AC) |
 | POST | `/api/v1/certificates` `{private_key_id?, subject, extensions}` | 201, statut `pending` ; 422 si la clé n'existe pas |
-| POST | `/api/v1/certificates/{id}/self-sign` | 200 ; 409 si déjà signé ; 422 sans clé |
+| POST | `/api/v1/certificates/{id}/self-sign` `{validity_days?}` (corps optionnel) | 200 ; réservé aux AC racines (`basic_constraints.ca` et `key_usage.key_cert_sign`, sinon 422) ; `validity_days` 3650 par défaut, de 1 à 10950 (30 ans), sinon 422 ; 409 si déjà signé ; 422 sans clé |
 | GET | `/api/v1/certificates/{id}` | 200 `{id, serial_hex, subject, subject_dn, status, not_before, not_after, sha256_fingerprint, extensions}` |
 | GET | `/api/v1/certificates/{id}.pem` | `application/x-pem-file` ; 409 si non signé |
 | GET | `/api/v1/certificates/{id}.crt` | `application/pkix-cert` (DER) ; 409 si non signé |
@@ -357,10 +360,15 @@ trusted_proxies = ["172.16.0.0/12"]
 
 ### 8.1 Clés privées
 
-- Interface `KeyBackend` (`keystore/base.py`) : `generate(algorithm, purpose)`, `sign(key_ref, data, hash)`,
-  `decrypt(key_ref, data, padding)` (SCEP), `public_key(key_ref)`, `load_for_cryptography(key_ref)`.
-- **Backend logiciel (v1)** : PKCS#8 chiffré (`BestAvailableEncryption`) avec la passphrase du conteneur, stocké en base.
-  La passphrase ne réside qu'en mémoire.
+- **Interface implémentée** (`keystore/base.py`, lot 4) : protocole `KeyStore` avec `async generate(algorithm) ->
+  StoredKey` (`encrypted_key`, `public_key_der`) et `async load(encrypted_key)` qui renvoie l'objet clé `cryptography`.
+  Obtenue par `keystore.get_keystore(settings)` et passée explicitement aux services (dépendance FastAPI, pas de
+  singleton). Le nom `KeyStore` évite la confusion avec l'enum `KeyBackend` (`software|pkcs11`) de `PrivateKey`.
+- **À venir** (ADR-0004, phase 7) : `generate(algorithm, purpose)`, `sign(key_ref, data, hash)`,
+  `decrypt(key_ref, data, padding)` (SCEP), `public_key(key_ref)`. `load()` n'aura pas d'équivalent PKCS#11.
+- **Backend logiciel (v1)** : `SoftwareKeyStore`, PKCS#8 DER chiffré (`BestAvailableEncryption`) avec la passphrase
+  du conteneur, stocké en base ; génération, chiffrement et déchiffrement dans des threads (`asyncio.to_thread`).
+  La passphrase ne réside qu'en mémoire, n'apparaît ni dans les `repr` ni dans les messages d'erreur.
 - **Backend PKCS#11 (phase 7)** : l'image contient déjà OpenSC et `PyKCS11`. **Risque identifié** : `cryptography`
   n'accepte pas d'objet clé externe pour `CertificateBuilder.sign()` / `CertificateRevocationListBuilder.sign()` /
   `OCSPResponseBuilder.sign()`. Il faudra soit construire le TBS avec `asn1crypto`/`pyasn1` et y injecter la signature

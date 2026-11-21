@@ -79,7 +79,7 @@ CI (GitHub Actions) runs lint, type checking and tests on Python 3.12 and 3.13.
 | Phase | Content | Status |
 |---|---|---|
 | 0 | Clean-up: installable package, settings, tooling, tests, Docker image, CI | ✅ done |
-| 1 | CA core: key store, certificate profiles, single issuance path, data model, admin API, CLI, AIA publication | 🚧 next |
+| 1 | CA core: key store, certificate profiles, single issuance path, data model, admin API, CLI, AIA publication | 🚧 in progress: data model, key store (RSA/EC/Ed25519, encrypted PKCS#8), self-signed root CA and admin API done; profiles, issuance from a CSR, CLI and AIA next |
 | 2 | Hierarchy: subordinate CA enrolment with its parent (federation), multi-level `docker compose` | ⏳ |
 | 3 | Revocation: CRL (full/delta) and OCSP responder | ⏳ |
 | 4 | EST enrolment (RFC 7030) | ⏳ |

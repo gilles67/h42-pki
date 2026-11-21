@@ -30,3 +30,11 @@ passer un objet qui délègue la signature à un jeton PKCS#11.
 - Les builders de `core` doivent accepter « un signataire » plutôt qu'une clé, ou disposer d'un double chemin
   (`cryptography` direct / assemblage `asn1crypto`).
 - Avec PKCS#11, préférer le répondeur OCSP délégué (clé logicielle) pour ne pas solliciter le jeton à chaque requête.
+
+## Mise en œuvre (lot 4, 2026-11-21)
+
+- L'interface est implémentée sous le nom **`KeyStore`** (`keystore/base.py`), pour ne pas la confondre avec l'enum
+  `KeyBackend` (`software|pkcs11`) du modèle `PrivateKey`. Version v1 : `generate(algorithm)` et `load(stored)`.
+- Comme prévu pour la v1, le backend logiciel remet l'objet `cryptography` au service, qui le passe aux builders de
+  `core`. Les fonctions de (dé)chiffrement de `core/keys.py` ne sont appelées que par `keystore`, seul détenteur de la
+  passphrase. `sign`, `decrypt` et `purpose` arrivent avec le spike PKCS#11 (phase 7). Détails : ARCHITECTURE §8.1.
