@@ -28,16 +28,22 @@ Stack : **Python ≥ 3.12, FastAPI, Tortoise ORM (async), `cryptography`, Pydant
 
 Le dépôt est en transition. **Ne pas considérer le code existant comme la référence d'architecture.**
 
-Phase 0 (lot 1) terminée : paquet installable `h42pki` (layout `src/`), outillage, tests de base, Docker, CI.
+Phase 0 (lot 1) terminée ; lots 2 et 3 (sécurité, intégrité, modèle de données, API `/api/v1`) terminés.
 
 - **Socle définitif** : `config.py` (`Settings`, variables `H42_PKI_*`, `H42_PKI_*_FILE`, secrets Docker dans
-  `/run/secrets` ou `H42_PKI_SECRETS_DIR`), `db.py` (config Tortoise), `main.py` (`create_app()` + lifespan
-  `RegisterTortoise`, `generate_schemas=True` jusqu'à la première release, cf. ADR-0007), `cli.py` (`version`, `serve`),
-  `api/health.py` (`GET /health`).
-- **Code legacy** (Tortoise, logique inchangée, à réécrire au lot 4) : `h42pki/ca/models.py`, `h42pki/ca/pki.py`,
-  `h42pki/ca/pki_models.py` et les routes `h42pki/api/admin.py` (ex-`src/api.py`, mêmes chemins). Exemptés de mypy
-  (`ignore_errors`) ; ne pas s'en inspirer pour la structure cible. La passphrase vient de
-  `get_settings().ca_passphrase` (plus de `config/pki.json`).
+  `/run/secrets` ou `H42_PKI_SECRETS_DIR`, contrôle des permissions des fichiers de secrets), `db.py` (config
+  Tortoise), `main.py` (`create_app()` + lifespan `RegisterTortoise`, `generate_schemas=True` jusqu'à la première
+  release, cf. ADR-0007), `errors.py` (erreurs métier typées), `cli.py` (`version`, `serve`).
+- **Modèles** `models/` (un fichier par agrégat : `private_key`, `authority`, `certificate`, `audit`, base
+  `TimestampedModel`) : FK, stockage DER, `AuditLog.record()`. Le certificat propre d'une AC est
+  `Certificate.authority` (OneToOne, inverse `authority.certificate`) : Tortoise ne sait pas créer un cycle de FK.
+- **API** : `api/admin/` (`routes.py`, `schemas.py` écrits à la main, `extra="forbid"`, préfixe `/api/v1`),
+  `api/problems.py` (handlers `application/problem+json`), `api/health.py` (`GET /`, `GET /health`).
+  L'appelant est fourni par la dépendance `current_actor` (`"anonymous"`, ADR-0008).
+- **Code legacy restant** (à réécrire au lot 4 dans `core/`, `keystore/`, `services/`) : `h42pki/ca/pki.py`
+  (opérations sur clés et certificats, appelé directement par les routes en guise de service ; crypto inchangée :
+  RSA seul, TraditionalOpenSSL, SHA-512, validité fixe) et `h42pki/ca/pki_models.py` (`Subject`, `Extensions`
+  en snake_case). Seul `h42pki.ca.*` reste exempté de mypy (`ignore_errors`).
 - Les expérimentations précédentes (`certold.py`, `certdb.py`, `certapp.py`, `main.py`, `cli.py` : stockage en
   fichiers JSON + config TOML, routes `/api/pki/ca/*`) et `src/test.py` ont été **supprimées** le 2026-11-21. Ne pas
   les recréer ni s'en inspirer : la hiérarchie d'AC se fait via la fédération (`docs/protocols/federation.md`).
@@ -57,15 +63,18 @@ src/h42pki/
     names.py  extensions.py  profiles.py  serial.py  keys.py
     issuance.py  csr.py  crl.py  ocsp.py  cms.py  chain.py
   keystore/          # abstraction des clés privées : base.py, software.py, (pkcs11.py plus tard)
-  models/            # modèles Tortoise (un fichier par agrégat)
+  errors.py          # erreurs métier typées (NotFound, Conflict, Unprocessable)
+  models/            # modèles Tortoise (un fichier par agrégat)  — en place (lot 3)
   services/          # orchestration async : authority, issuance, revocation, crl, ocsp, federation
   api/
     deps.py          # dépendances FastAPI (auth, session, autorité courante)
-    admin/           # /api/v1/...        (JSON ; sans authentification jusqu'à la release, ADR-0008)
+    problems.py      # handlers application/problem+json (RFC 9457)        — en place
+    admin/           # /api/v1/...        (JSON ; sans authentification jusqu'à la release, ADR-0008) — en place
     public/          # /ca/*, /crl/*      (HTTP public, AIA + CRL)
     ocsp/  est/  scep/  acme/  federation/
   tasks/             # tâches périodiques (CRL, purge nonces ACME, expirations)
   cli/               # commandes Typer : init, status, export, rotate...
+  ca/                # LEGACY (pki.py, pki_models.py) : absorbé par core/, keystore/, services/ au lot 4
 tests/
   unit/  integration/  interop/  conftest.py
 docs/
@@ -110,7 +119,8 @@ Avant de déclarer une tâche terminée : `ruff check`, `ruff format --check`, `
 - **Dates** : toujours `datetime.now(timezone.utc)` (aware). `datetime.utcnow()` est interdit.
 - **Opérations crypto coûteuses** (génération RSA, signature en masse) : `await asyncio.to_thread(...)`
   depuis le code async, pour ne pas bloquer la boucle.
-- Références entre tables : `ForeignKeyField`, pas de `UUIDField` "manuel" comme dans le code actuel.
+- Références entre tables : `ForeignKeyField` / `OneToOneField`, jamais de `UUIDField` "manuel" (B14, corrigé au lot 3).
+  Pas de cycle de FK : `generate_schemas` de Tortoise le refuse (B27).
 - Erreurs métier : exceptions typées dans `h42pki/errors.py`, traduites en HTTP par des handlers
   (format `application/problem+json`, RFC 9457 ; ACME impose son propre format de problème).
 - Pas de logique dans les routes : une route valide l'entrée, appelle un service, formate la sortie.

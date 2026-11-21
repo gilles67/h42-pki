@@ -145,16 +145,24 @@ erDiagram
 
 Toutes les tables ont `id` (UUID), `created_at`, `updated_at` (UTC aware).
 
-**`PrivateKey`** — clé détenue par ce conteneur.
-`algorithm` (enum : `rsa2048|rsa3072|rsa4096|ec_p256|ec_p384|ed25519`), `backend` (`software|pkcs11`),
-`encrypted_pkcs8` (binaire, backend software), `pkcs11_uri` (backend pkcs11), `public_key_der`,
-`purpose` (`ca|ocsp|scep_ra|tls|serverkeygen`), `status`.
+> **État d'implémentation (lot 3).** Les tables `PrivateKey`, `Authority`, `Certificate` et `AuditLog` existent
+> (`src/h42pki/models/`). Les champs marqués *(plus tard)* ne sont pas encore implémentés. Les autres tables
+> (`Profile`, `CertificateRequest`, `Crl`, …) arrivent avec leur phase.
 
-**`Authority`** — une AC connue de ce conteneur.
-`kind` (`local|parent|child`), `name`, `status` (cf. §3), `certificate` → `Certificate`,
-`private_key` → `PrivateKey` (local uniquement), `parent` → `Authority` (FK sur soi),
-`path_length`, `public_base_url` (préfixe des URLs AIA/CDP/OCSP inscrites dans les certificats),
-`federation_url` (pour `parent`/`child`), `name_constraints` (JSON).
+**`PrivateKey`** — clé détenue par ce conteneur.
+Implémenté : `algorithm` (enum : `rsa2048|rsa3072|rsa4096` ; `ec_p256|ec_p384|ed25519` *(plus tard, B8)*),
+`backend` (`software` ; `pkcs11` prévu dans l'enum), `encrypted_key` (binaire chiffré par la passphrase de l'AC, encore
+au format TraditionalOpenSSL : renommé `encrypted_pkcs8` avec B18 au lot 4), `public_key_der`.
+*(plus tard)* : `pkcs11_uri` (backend pkcs11), `purpose` (`ca|ocsp|scep_ra|tls|serverkeygen`), `status`.
+
+**`Authority`** — une AC connue de ce conteneur. Aucune route ne l'utilise encore.
+Implémenté : `kind` (`local|parent|child`), `name` (unique), `status` (cf. §3 : `uninitialized|pending_signature|
+active|rolling_over|retired|revoked`), `private_key` → `PrivateKey` (local uniquement, `RESTRICT`),
+`parent` → `Authority` (FK sur soi, `RESTRICT`), `path_length`, `public_base_url` (préfixe des URLs AIA/CDP/OCSP
+inscrites dans les certificats). Le **certificat de l'AC** est l'inverse de `Certificate.authority`
+(`authority.certificate`) : une FK `Authority.certificate` formerait un cycle avec `Certificate.issuer`, que Tortoise
+1.1.7 ne sait pas créer (B27). Un renouvellement de certificat d'AC passe donc par une nouvelle `Authority`.
+*(plus tard)* : `federation_url` (pour `parent`/`child`), `name_constraints` (JSON).
 
 **`Profile`** — gabarit d'émission (remplace l'actuel `Extension` libre).
 `name` (unique), `kind` (`sub_ca|tls_server|tls_client|email|code_signing|ocsp_signer|device|custom`),
@@ -164,10 +172,15 @@ Toutes les tables ont `id` (UUID), `created_at`, `updated_at` (UTC aware).
 `must_staple`, `enabled_channels` (`api|est|scep|acme|federation`).
 
 **`Certificate`**
-`issuer` → `Authority` (null = auto-signé), `serial_hex` (unique avec `issuer`), `subject_dn` (texte RFC 4514),
-`subject` (JSON), `sans` (JSON), `profile` → `Profile`, `not_before`, `not_after`, `der`, `sha256_fingerprint` (unique),
-`ski`, `aki`, `status` (`valid|revoked|expired|on_hold`), `revoked_at`, `revocation_reason` (enum RFC 5280),
-`invalidity_date`, `private_key` → `PrivateKey` (null sauf certificats détenus localement),
+Implémenté : `issuer` → `Authority` (null = auto-signé, `RESTRICT`), `authority` → `Authority` (OneToOne, renseigné
+quand le certificat est celui d'une AC), `serial_hex` (unique avec `issuer` ; les auto-signés ne sont pas couverts
+par la contrainte, B26), `subject_dn` (texte RFC 4514, renseigné à la signature), `subject` (JSON), `extensions`
+(JSON : extensions **demandées**, tant que les profils n'existent pas), `private_key` → `PrivateKey` (null sauf
+certificats détenus localement, `RESTRICT`), `public_key_der`, `der` (null tant que non signé),
+`sha256_fingerprint` (unique), `status` (`pending|valid|revoked|expired` ; `pending` est transitoire jusqu'à
+`CertificateRequest`), `not_before`, `not_after`, `revoked_at`, `revocation_reason` (enum RFC 5280),
+`invalidity_date`.
+*(plus tard)* : `sans` (JSON), `profile` → `Profile`, `ski`, `aki`, `status` `on_hold` (phase 3),
 `request` → `CertificateRequest`, `channel` (`api|est|scep|acme|federation|self`).
 
 **`CertificateRequest`**
@@ -183,7 +196,10 @@ La CRL courante = la plus récente non expirée ; les anciennes sont conservées
 pour `acme_eab`, clé HMAC chiffrée car elle doit être relue), `profile`, `expires_at`, `max_uses`, `use_count`,
 `allowed_subjects` (motif).
 
-**`AuditLog`** — `timestamp`, `actor`, `action`, `object_type`, `object_id`, `details` (JSON, sans secret), `source_ip`.
+**`AuditLog`** — `timestamp`, `actor`, `action`, `object_type`, `object_id`, `details` (JSON, sans secret) ;
+`source_ip` *(plus tard)*. Actions enregistrées : `private_key.generate`, `private_key.delete`, `certificate.create`,
+`certificate.self_sign`, dans la même transaction que l'opération ; `actor="anonymous"` jusqu'à l'authentification
+(ADR-0008).
 
 Tables spécifiques aux protocoles (détails dans `docs/protocols/`) :
 `ScepTransaction`, `AcmeAccount`, `AcmeOrder`, `AcmeAuthorization`, `AcmeChallenge`, `AcmeNonce`,
@@ -254,7 +270,25 @@ la fille génère clé + CSR et appelle `POST /api/v1/federation/enroll` → la 
 | `/scep[/{profile}]` (`pkiclient.exe` accepté) | HTTP | challenge password | CMS (`application/x-pki-message`) |
 | `/api/v1/federation/...` | HTTPS | jeton puis mTLS | JSON |
 | `/api/v1/...` | HTTPS | aucune avant la release (ADR-0008), puis jeton d'API (Bearer) | JSON |
+| `/` | HTTP | aucune | `{"name", "version"}` |
 | `/metrics` | HTTP interne | aucune / réseau privé | Prometheus (phase 7) |
+
+**API d'administration implémentée (lot 3).** Schémas écrits à la main (`extra="forbid"`, snake_case), aucune
+réponse ne contient de clé privée ; erreurs métier en `application/problem+json` (RFC 9457) : 404 objet inconnu,
+409 conflit, 422 requête invalide.
+
+| Méthode | Chemin | Réponse |
+|---|---|---|
+| POST | `/api/v1/private-keys` `{algorithm}` | 201 `{id, algorithm, backend, public_key_pem, created_at}` |
+| GET | `/api/v1/private-keys/{id}` | 200, 404 |
+| DELETE | `/api/v1/private-keys/{id}` | 204, 404, 409 (clé utilisée par un certificat ou une AC) |
+| POST | `/api/v1/certificates` `{private_key_id?, subject, extensions}` | 201, statut `pending` ; 422 si la clé n'existe pas |
+| POST | `/api/v1/certificates/{id}/self-sign` | 200 ; 409 si déjà signé ; 422 sans clé |
+| GET | `/api/v1/certificates/{id}` | 200 `{id, serial_hex, subject, subject_dn, status, not_before, not_after, sha256_fingerprint, extensions}` |
+| GET | `/api/v1/certificates/{id}.pem` | `application/x-pem-file` ; 409 si non signé |
+| GET | `/api/v1/certificates/{id}.crt` | `application/pkix-cert` (DER) ; 409 si non signé |
+
+Profils, demandes, liste des certificats et jetons d'API viennent en phase 1 (suite) et avant la release.
 
 **TLS et mTLS.** Le serveur ASGI (Granian ou Uvicorn) peut terminer TLS lui-même, mais l'accès au certificat client
 dans FastAPI dépend du serveur — **À vérifier**. Choix retenu pour v1 (cf. ADR-0005) : un **reverse-proxy**

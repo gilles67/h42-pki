@@ -31,12 +31,19 @@ Les numéros `B…` renvoient à `docs/etat-des-lieux.md`.
 
 - `core/` : noms (sujet RFC 4514 ↔ JSON, champs optionnels — B11), extensions (B9, B10), profils, numéros de série (B1),
   construction de certificat avec AKI/SKI/CDP/AIA (B12), validation de CSR, algorithmes RSA/EC/Ed25519 (B8).
-  Renommage de tous les champs en snake_case (ADR-0006).
+  ✅ Renommage de tous les champs en snake_case (ADR-0006, lot 3, `extra="forbid"`). ✅ Numéros de série uniques (B1, lot 2 ;
+  le module `core/serial.py` reste à écrire).
 - `keystore/software.py` : PKCS#8 chiffré (B18), interface `KeyBackend` complète.
-- Modèles Tortoise cibles (ARCHITECTURE §4) avec `ForeignKeyField` (B13, B14, B21), sans migration (ADR-0007).
-- `IssuanceService` (chemin d'émission unique, sans recopie d'extensions du CSR — B2), `AuditLog`.
+- ✅ (partiel, lot 3) Modèles Tortoise cibles (ARCHITECTURE §4) avec `ForeignKeyField` (B13, B14, B21), sans migration
+  (ADR-0007) : `PrivateKey`, `Authority`, `Certificate`, `AuditLog` en place, stockage DER ; `Profile` et
+  `CertificateRequest` restent à faire.
+- `IssuanceService` (chemin d'émission unique, sans recopie d'extensions du CSR — B2), `AuditLog` (✅ table et
+  entrées pour clés et certificats, lot 3).
 - Profils par défaut fournis : `sub_ca`, `tls_server`, `tls_client`, `ocsp_signer`, `device`.
 - API admin `/api/v1` : clés, profils, demandes (approve/reject), certificats (liste, détail, PEM/DER), **sans authentification** (ADR-0008) (B6, B7).
+  ✅ (partiel, lots 2-3) : clés (création, lecture, suppression — B6, B7), certificats (création, auto-signature,
+  détail, téléchargement `.pem` / `.crt`), erreurs `problem+json`, opérations crypto via `asyncio.to_thread`.
+  Restent : profils, demandes, liste des certificats.
 - CLI : `h42pki authority init|status|export`, `h42pki profile list`.
 - AIA public : `/ca/{name}.crt|.pem`, `/ca/chain.pem`.
 

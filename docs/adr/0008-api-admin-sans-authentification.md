@@ -11,7 +11,7 @@ réelles : aucune AC de production n'existe avant la première release (ADR-0007
 
 ## Décision
 
-- L'**API d'administration** (`/api/v1/...` et les routes legacy de `h42pki/api/admin.py`) n'a **aucune
+- L'**API d'administration** (`/api/v1/...`, paquet `h42pki/api/admin/`) n'a **aucune
   authentification** jusqu'à la première release. On n'ajoute ni jeton statique, ni dépendance `require_admin`
   provisoire.
 - Les mécanismes d'authentification **propres aux protocoles** ne sont pas concernés et s'implémentent avec leur
@@ -19,7 +19,8 @@ réelles : aucune AC de production n'existe avant la première release (ADR-0007
   fédération, Basic ou certificat client pour EST.
 - Les routes d'administration sont écrites de façon à pouvoir recevoir une dépendance d'authentification
   sans être réécrites : toutes sur un même `APIRouter`, et l'identité de l'appelant passée explicitement aux services
-  (`actor="anonymous"` pour l'`AuditLog` d'ici là).
+  (`actor="anonymous"` pour l'`AuditLog` d'ici là, fourni par la dépendance `current_actor` de
+  `api/admin/routes.py`).
 - Implémenter l'authentification de l'API d'administration est un **prérequis bloquant de la première release**.
 
 ## Mesures compensatoires (obligatoires tant que la décision est en vigueur)
