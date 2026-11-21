@@ -28,13 +28,20 @@ Stack : **Python ≥ 3.12, FastAPI, Tortoise ORM (async), `cryptography`, Pydant
 
 Le dépôt est en transition. **Ne pas considérer le code existant comme la référence d'architecture.**
 
-- `src/ca/models.py`, `src/ca/pki.py`, `src/ca/pki_models.py`, `src/api.py` : **seul code restant** (Tortoise).
-  C'est la base à faire évoluer vers la structure cible.
+Phase 0 (lot 1) terminée : paquet installable `h42pki` (layout `src/`), outillage, tests de base, Docker, CI.
+
+- **Socle définitif** : `config.py` (`Settings`, variables `H42_PKI_*`, `H42_PKI_*_FILE`, secrets Docker dans
+  `/run/secrets` ou `H42_PKI_SECRETS_DIR`), `db.py` (config Tortoise), `main.py` (`create_app()` + lifespan
+  `RegisterTortoise`, `generate_schemas=True` en attendant les migrations du lot 3), `cli.py` (`version`, `serve`),
+  `api/health.py` (`GET /health`).
+- **Code legacy** (Tortoise, logique inchangée, à réécrire au lot 4) : `h42pki/ca/models.py`, `h42pki/ca/pki.py`,
+  `h42pki/ca/pki_models.py` et les routes `h42pki/api/admin.py` (ex-`src/api.py`, mêmes chemins). Exemptés de mypy
+  (`ignore_errors`) ; ne pas s'en inspirer pour la structure cible. La passphrase vient de
+  `get_settings().ca_passphrase` (plus de `config/pki.json`).
 - Les expérimentations précédentes (`certold.py`, `certdb.py`, `certapp.py`, `main.py`, `cli.py` : stockage en
-  fichiers JSON + config TOML, routes `/api/pki/ca/*`) ont été **supprimées** le 2026-11-21. Ne pas les recréer ni
-  s'en inspirer : la hiérarchie d'AC se fait via la fédération (`docs/protocols/federation.md`), la CLI est à réécrire.
-- `src/test.py` : script jetable (affiche la passphrase !) — à supprimer.
-- Aucun test, pas de dépendances de dev, Dockerfile cassé (`COPY app` n'existe pas).
+  fichiers JSON + config TOML, routes `/api/pki/ca/*`) et `src/test.py` ont été **supprimées** le 2026-11-21. Ne pas
+  les recréer ni s'en inspirer : la hiérarchie d'AC se fait via la fédération (`docs/protocols/federation.md`).
+- `cli.py` est un module unique pour l'instant ; il deviendra le paquet `cli/` de la structure cible.
 
 La liste des bogues connus et de la dette technique est dans `docs/etat-des-lieux.md`.
 Le plan de travail par phases est dans `docs/roadmap.md` — **suivre l'ordre des phases**.
@@ -44,8 +51,8 @@ Le plan de travail par phases est dans `docs/roadmap.md` — **suivre l'ordre de
 ```
 src/h42pki/
   main.py            # create_app() : factory FastAPI + lifespan (Tortoise, tâches planifiées)
-  config.py          # Settings (pydantic-settings) : TOML + variables H42_PKI_*
-  db.py              # configuration Tortoise (TORTOISE_ORM)
+  config.py          # Settings (pydantic-settings) : variables H42_PKI_*, *_FILE, secrets (TOML à venir)
+  db.py              # configuration Tortoise (tortoise_config(settings))
   core/              # DOMAINE CRYPTO PUR : synchrone, sans I/O, sans ORM, sans FastAPI
     names.py  extensions.py  profiles.py  serial.py  keys.py
     issuance.py  csr.py  crl.py  ocsp.py  cms.py  chain.py
@@ -69,8 +76,8 @@ Règle de dépendance (stricte) : `api → services → (core, keystore, models)
 
 ## 4. Commandes
 
-> Les dépendances de dev et la config des outils sont à mettre en place en phase 0 (`docs/roadmap.md`).
-> Une fois en place, ces commandes doivent fonctionner :
+Configuration des outils (ruff, mypy, pytest) dans `pyproject.toml`. Raccourcis équivalents dans le `Makefile`
+(`make install|fmt|lint|typecheck|test|check|run|docker-build`), utilisable depuis Git Bash.
 
 ```bash
 uv sync --all-groups                      # installer (prod + dev)
@@ -80,9 +87,10 @@ uv run pytest -m interop                  # interopérabilité (openssl, sscep, 
 uv run pytest --cov=h42pki --cov-report=term-missing
 uv run ruff check . && uv run ruff format --check .
 uv run mypy src
-uv run fastapi dev src/h42pki/main.py     # serveur de dev (rechargement auto)
+H42_PKI_CA_PASSPHRASE=... uv run h42pki serve --reload   # serveur de dev (uvicorn, rechargement auto)
 uv run h42pki --help                      # CLI
-docker compose -f deploy/compose.yaml up  # hiérarchie racine + intermédiaire + émettrice
+docker build -t h42-pki:dev .            # image (Granian, non-root, /data)
+docker compose -f deploy/compose.yaml up  # hiérarchie racine + intermédiaire + émettrice (phase 2)
 ```
 
 Avant de déclarer une tâche terminée : `ruff check`, `ruff format --check`, `mypy src` et `pytest` passent.

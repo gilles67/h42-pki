@@ -6,16 +6,26 @@ Les numéros `B…` renvoient à `docs/etat-des-lieux.md`.
 ## Phase 0 — Assainissement (prérequis à tout le reste)
 
 - ✅ Suppression des expérimentations `certold.py`, `certdb.py`, `certapp.py`, `main.py`, `cli.py` et de la
-  dépendance `requests` (2026-11-21). Reste : régénérer `uv.lock` (`uv lock`).
-- Layout paquet `src/h42pki/` installable, script `h42pki` (Typer) déclaré dans `pyproject.toml` (B20).
-- `pyproject.toml` seule source de dépendances ; supprimer `src/requirements.txt` ; extra `pkcs11` (B19).
-- Groupe `dev`, configuration pytest / ruff / mypy (`docs/testing.md` §2) ; `tests/conftest.py` de base.
-- Supprimer `src/test.py` (B5).
-- `config.py` avec `pydantic-settings` + `*_FILE` (B4, B23) ; `create_app()` + lifespan Tortoise (B22).
-- Nouveau `Dockerfile` (`python:3.12-slim`, uv, non-root, healthcheck) et `Makefile` cohérent (B16).
-- CI GitHub Actions (lint + tests).
+  dépendance `requests` (2026-11-21) ; `uv.lock` régénéré.
+- ✅ `.gitattributes` (fins de ligne LF) et renormalisation du dépôt.
+- ✅ Layout paquet `src/h42pki/` installable (hatchling), script `h42pki` (Typer : `version`, `serve`) déclaré dans
+  `pyproject.toml` (B20). Code legacy déplacé dans `h42pki/ca/` et `h42pki/api/admin.py`, logique inchangée.
+- ✅ `pyproject.toml` seule source de dépendances ; `src/requirements.txt` supprimé ; extra `pkcs11` (B19).
+  `src/Makefile` (paquets apt OpenSC/pcscd/libccid) supprimé aussi : ces paquets reviendront avec l'image
+  `-pkcs11` en phase 7.
+- ✅ Groupe `dev`, configuration pytest / ruff / mypy (`docs/testing.md` §2) ; `tests/conftest.py` de base
+  (fixtures `settings`, `client` avec lifespan), tests `/health`, config et fumée du parcours legacy.
+- ✅ Supprimer `src/test.py` (B5).
+- ✅ `config.py` avec `pydantic-settings` + `*_FILE` + secrets Docker (B4 partiel, B23) ; `create_app()` + lifespan
+  Tortoise (B22 partiel : migrations au lot 3) ; `GET /health`.
+- ✅ Nouveau `Dockerfile` (`python:3.12-slim`, uv, non-root, healthcheck, Granian) et `Makefile` cohérent (B16).
+- ✅ CI GitHub Actions (lint + tests, Python 3.12 / 3.13).
 
 **Fait quand** : `uv run pytest` passe (même avec peu de tests), l'image se construit et `/health` répond.
+
+> État au lot 1 (2026-11-21) : `pytest`, `ruff`, `mypy` verts et `/health` vérifié sous uvicorn et Granian.
+> **La construction de l'image Docker et son état `healthy` restent à valider** (Docker indisponible sur le poste
+> de développement) : `docker build -t h42-pki:dev .` puis `docker run -e H42_PKI_CA_PASSPHRASE=… h42-pki:dev`.
 
 ## Phase 1 — Noyau d'AC
 
@@ -70,7 +80,8 @@ de l'émettrice se vérifie jusqu'à la racine.
 
 ## Phase 7 — Durcissement
 
-- Spike puis backend **PKCS#11** (carte à puce / HSM via OpenSC) — cf. ADR-0004 ; image `-pkcs11`.
+- Spike puis backend **PKCS#11** (carte à puce / HSM via OpenSC) — cf. ADR-0004 ; image `-pkcs11` (paquets apt
+  `opensc`, `opensc-pkcs11`, `pcscd`, `libccid` de l'ancien `src/Makefile`, `PYKCS11LIB`, extra `pkcs11`).
 - PostgreSQL validé en CI ; `/metrics` Prometheus ; logs JSON structurés.
 - Rollover de clé d'AC (`GetNextCACert`, coexistence des générations).
 - Runbook d'exploitation : sauvegarde/restauration, perte de passphrase, compromission de clé.

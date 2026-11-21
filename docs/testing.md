@@ -10,19 +10,21 @@
 
 `pytest` sans option exclut `interop` (`addopts = "-m 'not interop'"`).
 
-## 2. Dépendances de dev (à ajouter en phase 0)
+## 2. Dépendances de dev (en place depuis la phase 0, cf. `pyproject.toml`)
 
 ```toml
 [dependency-groups]
 dev = [
   "pytest", "pytest-asyncio", "pytest-cov", "time-machine",
-  "ruff", "mypy", "asn1crypto",   # asn1crypto aussi en prod à partir de la phase SCEP
+  "ruff", "mypy", "asgi-lifespan",  # asgi-lifespan : exécute le lifespan de l'app en test
 ]
+# asn1crypto : ajouté (prod) avec la phase SCEP.
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"   # même boucle que les fixtures (connexions Tortoise)
 addopts = "-m 'not interop' --strict-markers"
 markers = ["interop: requires external tools / docker", "slow: long-running"]
 ```
