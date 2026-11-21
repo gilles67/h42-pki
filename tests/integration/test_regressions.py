@@ -1,6 +1,12 @@
 """Non-regression tests for the bugs listed in docs/etat-des-lieux.md."""
 
+import asyncio
+from collections.abc import Callable
+from typing import Any
+
+import pytest
 from cryptography import x509
+from cryptography.hazmat.primitives.asymmetric import rsa
 from httpx import AsyncClient
 
 from tests.integration.test_smoke_ca import EXTENSION, SUBJECT
@@ -57,3 +63,21 @@ async def test_regression_B7_delete_used_private_key_conflicts(client: AsyncClie
 
     response = await client.get(f"/private_key/{key_id}")
     assert response.status_code == 200
+
+
+async def test_crypto_operations_run_in_worker_threads(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    called: list[Callable[..., Any]] = []
+    real_to_thread = asyncio.to_thread
+
+    async def spy(func: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Any:
+        called.append(func)
+        return await real_to_thread(func, *args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "to_thread", spy)
+
+    response = await client.post("/private_key/generate", json={"key_type": "rsa_2048"})
+    assert response.status_code == 200, response.text
+
+    assert rsa.generate_private_key in called

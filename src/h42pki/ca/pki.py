@@ -1,3 +1,4 @@
+import asyncio
 import datetime
 from uuid import UUID
 
@@ -30,10 +31,13 @@ class PkiPrivateKey:
         passphrase = _ca_passphrase()
 
         if PrivateKeyType.gettype(query.key_type) == "rsa":
-            pvkey = rsa.generate_private_key(
-                public_exponent=65537, key_size=PrivateKeyType.getsize(query.key_type)
+            pvkey = await asyncio.to_thread(
+                rsa.generate_private_key,
+                public_exponent=65537,
+                key_size=PrivateKeyType.getsize(query.key_type),
             )
-            key_data = pvkey.private_bytes(
+            key_data = await asyncio.to_thread(
+                pvkey.private_bytes,
                 encoding=serialization.Encoding.PEM,
                 format=serialization.PrivateFormat.TraditionalOpenSSL,
                 encryption_algorithm=serialization.BestAvailableEncryption(passphrase),
@@ -46,7 +50,9 @@ class PkiPrivateKey:
         passphrase = _ca_passphrase()
 
         datakey = await PrivateKey.get(uid=key_id)
-        pvkey = serialization.load_pem_private_key(datakey.key, password=passphrase)
+        pvkey = await asyncio.to_thread(
+            serialization.load_pem_private_key, datakey.key, password=passphrase
+        )
 
         return (datakey, pvkey)
 
@@ -90,7 +96,7 @@ class PkiCertificate:
             x509.SubjectKeyIdentifier.from_public_key(pvkey.public_key()), critical=False
         )
 
-        x509_cert_sign = x509_cert.sign(pvkey, hashes.SHA512())
+        x509_cert_sign = await asyncio.to_thread(x509_cert.sign, pvkey, hashes.SHA512())
 
         cert.crt = x509_cert_sign.public_bytes(serialization.Encoding.PEM)
         cert.expire_at = expire_at
