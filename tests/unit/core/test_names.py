@@ -149,6 +149,7 @@ def test_name_attributes_refuses_multi_valued_rdn() -> None:
         name_attributes(x509.Name([rdn]))
 
 
+@pytest.mark.filterwarnings("ignore:Attribute's length must be:UserWarning")
 def test_name_attributes_checks_bounds() -> None:
     # cryptography refuses to build it, but a CSR from elsewhere may carry it.
     name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "x" * 65, _validate=False)])
