@@ -73,6 +73,7 @@ async def test_invalid_self_sign_body_rejected(
     response = await client.post(f"/api/v1/certificates/{cert_id}/self-sign", json=body)
 
     assert response.status_code == 422
+    assert response.headers["content-type"] == "application/problem+json"
     # Nothing was signed.
     assert (await client.get(f"/api/v1/certificates/{cert_id}")).json()["status"] == "pending"
 

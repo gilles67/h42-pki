@@ -79,7 +79,7 @@ async def test_pascal_case_certificate_payload_is_rejected(client: AsyncClient) 
     )
 
     assert response.status_code == 422
-    types = {error["type"] for error in response.json()["detail"]}
+    types = {error["type"] for error in response.json()["errors"]}
     assert types == {"extra_forbidden"}
 
 
@@ -97,3 +97,34 @@ async def test_invalid_uuid_does_not_hit_download_route(client: AsyncClient) -> 
     response = await client.get("/api/v1/certificates/not-a-uuid.pem")
 
     assert response.status_code == 422
+
+
+async def test_validation_errors_are_problem_json(client: AsyncClient) -> None:
+    submitted = "do-not-echo-this-value"
+    response = await client.post(
+        "/api/v1/certificates",
+        json={"subject": {"common_name": "x", "country_name": submitted}, "unexpected": submitted},
+    )
+
+    assert response.status_code == 422
+    assert response.headers["content-type"] == "application/problem+json"
+    body = response.json()
+    assert body["type"] == "about:blank"
+    assert body["title"] == "Unprocessable Content"
+    assert body["status"] == 422
+    assert body["detail"] == "the request is invalid (2 errors)"
+    assert {(tuple(error["loc"]), error["type"]) for error in body["errors"]} == {
+        (("body", "subject", "country_name"), "string_pattern_mismatch"),
+        (("body", "unexpected"), "extra_forbidden"),
+    }
+    for error in body["errors"]:
+        assert set(error) == {"loc", "msg", "type"}
+    assert submitted not in response.text
+
+
+async def test_invalid_path_parameter_is_problem_json(client: AsyncClient) -> None:
+    response = await client.get("/api/v1/certificates/not-a-uuid")
+
+    assert response.status_code == 422
+    assert response.headers["content-type"] == "application/problem+json"
+    assert response.json()["errors"][0]["loc"] == ["path", "certificate_id"]
