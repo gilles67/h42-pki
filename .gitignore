@@ -209,3 +209,9 @@ __marimo__/
 #Custom file 
 pki.json
 db.sqlite3*
+# h42-pki runtime data and key material (never commit)
+data/
+config/pki.json
+*.sqlite3*
+*.pem
+*.key
