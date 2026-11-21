@@ -1,0 +1,129 @@
+from collections.abc import Callable
+
+import pytest
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec, rsa
+
+from h42pki.core.csr import SanEntry, parse_csr
+from h42pki.core.errors import InvalidCsr, InvalidSan, InvalidSubject, UnsupportedAlgorithm
+from h42pki.core.keys import KeyAlgorithm, SupportedPrivateKey
+from tests.x509_helpers import csr_pem, make_csr, name
+
+KeyFor = Callable[[KeyAlgorithm], SupportedPrivateKey]
+
+
+@pytest.mark.parametrize(
+    "algorithm",
+    [KeyAlgorithm.RSA2048, KeyAlgorithm.EC_P256, KeyAlgorithm.EC_P384, KeyAlgorithm.ED25519],
+)
+def test_parse_pem_and_der(algorithm: KeyAlgorithm, key_for: KeyFor) -> None:
+    csr = make_csr(
+        key_for(algorithm),
+        name(CN="www.example.test", O="Home42"),
+        sans=["dns:www.example.test", "ip:192.0.2.10"],
+    )
+
+    for data in (csr_pem(csr), csr.public_bytes(serialization.Encoding.DER)):
+        parsed = parse_csr(data)
+        assert parsed.key_algorithm is algorithm
+        assert parsed.subject.common_name == "www.example.test"
+        assert parsed.subject.organization_name == "Home42"
+        assert parsed.sans == (SanEntry("dns", "www.example.test"), SanEntry("ip", "192.0.2.10"))
+        assert parsed.ignored_extensions == ()
+
+
+def test_invalid_signature_rejected(key_for: KeyFor) -> None:
+    der = bytearray(
+        make_csr(key_for(KeyAlgorithm.RSA2048), name(CN="x")).public_bytes(
+            serialization.Encoding.DER
+        )
+    )
+    der[-1] ^= 0x01  # flip a bit of the signature
+
+    with pytest.raises(InvalidCsr, match="signature is invalid"):
+        parse_csr(bytes(der))
+
+
+def test_rsa_1024_rejected() -> None:
+    weak = rsa.generate_private_key(public_exponent=65537, key_size=1024)  # noqa: S505 - on purpose
+
+    with pytest.raises(InvalidCsr, match="at least 2048 bits"):
+        parse_csr(csr_pem(make_csr(weak, name(CN="x"))))
+
+
+def test_unsupported_curve_rejected() -> None:
+    key = ec.generate_private_key(ec.SECP521R1())
+
+    with pytest.raises(UnsupportedAlgorithm, match="secp521r1"):
+        parse_csr(csr_pem(make_csr(key, name(CN="x"))))
+
+
+@pytest.mark.parametrize("data", [b"", b"garbage", "-----BEGIN CERTIFICATE REQUEST-----\nAAAA\n"])
+def test_garbage_rejected(data: bytes | str) -> None:
+    with pytest.raises(InvalidCsr, match="cannot be parsed"):
+        parse_csr(data)
+
+
+def test_other_extensions_are_listed_as_ignored(key_for: KeyFor) -> None:  # B2
+    csr = make_csr(
+        key_for(KeyAlgorithm.EC_P256),
+        name(CN="x"),
+        sans=["dns:x.example.test"],
+        extensions=[
+            (x509.BasicConstraints(ca=True, path_length=None), True),
+            (
+                x509.KeyUsage(
+                    digital_signature=True,
+                    content_commitment=False,
+                    key_encipherment=False,
+                    data_encipherment=False,
+                    key_agreement=False,
+                    key_cert_sign=True,
+                    crl_sign=True,
+                    encipher_only=False,
+                    decipher_only=False,
+                ),
+                True,
+            ),
+            (x509.ExtendedKeyUsage([x509.oid.ExtendedKeyUsageOID.CODE_SIGNING]), False),
+        ],
+    )
+
+    parsed = parse_csr(csr_pem(csr))
+
+    assert parsed.ignored_extensions == (
+        "BasicConstraints (2.5.29.19)",
+        "KeyUsage (2.5.29.15)",
+        "ExtendedKeyUsage (2.5.29.37)",
+    )
+    assert parsed.sans == (SanEntry("dns", "x.example.test"),)
+
+
+def test_unsupported_san_type_rejected(key_for: KeyFor) -> None:
+    csr = (
+        x509.CertificateSigningRequestBuilder()
+        .subject_name(name(CN="x"))
+        .add_extension(
+            x509.SubjectAlternativeName([x509.DirectoryName(name(CN="dir"))]), critical=False
+        )
+        .sign(key_for(KeyAlgorithm.EC_P256), hashes.SHA256())
+    )
+
+    with pytest.raises(InvalidSan, match="DirectoryName is not supported"):
+        parse_csr(csr_pem(csr))
+
+
+def test_unknown_subject_attribute_rejected(key_for: KeyFor) -> None:
+    subject = x509.Name([x509.NameAttribute(x509.oid.NameOID.SERIAL_NUMBER, "42")])
+
+    with pytest.raises(InvalidSubject):
+        parse_csr(csr_pem(make_csr(key_for(KeyAlgorithm.EC_P256), subject)))
+
+
+def test_empty_subject_is_parsed(key_for: KeyFor) -> None:
+    parsed = parse_csr(
+        csr_pem(make_csr(key_for(KeyAlgorithm.EC_P256), sans=["dns:only-san.example.test"]))
+    )
+
+    assert parsed.subject.present() == set()

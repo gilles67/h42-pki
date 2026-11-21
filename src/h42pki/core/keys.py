@@ -9,7 +9,7 @@ from typing import assert_never
 
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519, rsa
-from cryptography.hazmat.primitives.asymmetric.types import PrivateKeyTypes
+from cryptography.hazmat.primitives.asymmetric.types import PrivateKeyTypes, PublicKeyTypes
 
 from h42pki.core.errors import InvalidPassphrase, UnsupportedAlgorithm
 
@@ -53,21 +53,29 @@ def _supported(key: PrivateKeyTypes) -> SupportedPrivateKey:
     raise UnsupportedAlgorithm(f"unsupported private key type {type(key).__name__}")
 
 
+def public_key_algorithm(public_key: PublicKeyTypes) -> KeyAlgorithm:
+    """Return the :class:`KeyAlgorithm` of a public key (from a CSR or a certificate)."""
+    if isinstance(public_key, rsa.RSAPublicKey):
+        try:
+            return KeyAlgorithm(f"rsa{public_key.key_size}")
+        except ValueError:
+            raise UnsupportedAlgorithm(
+                f"unsupported RSA key size {public_key.key_size} (2048, 3072 or 4096)"
+            ) from None
+    if isinstance(public_key, ec.EllipticCurvePublicKey):
+        if isinstance(public_key.curve, ec.SECP256R1):
+            return KeyAlgorithm.EC_P256
+        if isinstance(public_key.curve, ec.SECP384R1):
+            return KeyAlgorithm.EC_P384
+        raise UnsupportedAlgorithm(f"unsupported elliptic curve {public_key.curve.name}")
+    if isinstance(public_key, ed25519.Ed25519PublicKey):
+        return KeyAlgorithm.ED25519
+    raise UnsupportedAlgorithm(f"unsupported public key type {type(public_key).__name__}")
+
+
 def algorithm_of(key: PrivateKeyTypes) -> KeyAlgorithm:
     """Return the :class:`KeyAlgorithm` of a private key."""
-    key = _supported(key)
-    if isinstance(key, rsa.RSAPrivateKey):
-        try:
-            return KeyAlgorithm(f"rsa{key.key_size}")
-        except ValueError:
-            raise UnsupportedAlgorithm(f"unsupported RSA key size {key.key_size}") from None
-    if isinstance(key, ec.EllipticCurvePrivateKey):
-        if isinstance(key.curve, ec.SECP256R1):
-            return KeyAlgorithm.EC_P256
-        if isinstance(key.curve, ec.SECP384R1):
-            return KeyAlgorithm.EC_P384
-        raise UnsupportedAlgorithm(f"unsupported elliptic curve {key.curve.name}")
-    return KeyAlgorithm.ED25519
+    return public_key_algorithm(_supported(key).public_key())
 
 
 def signature_hash(key: PrivateKeyTypes) -> hashes.SHA256 | hashes.SHA384 | None:
@@ -106,7 +114,12 @@ def load_encrypted(data: bytes, passphrase: bytes) -> SupportedPrivateKey:
 
 def public_key_der(key: PrivateKeyTypes) -> bytes:
     """SubjectPublicKeyInfo of ``key``, DER encoded."""
-    return key.public_key().public_bytes(
+    return spki_der(key.public_key())
+
+
+def spki_der(public_key: PublicKeyTypes) -> bytes:
+    """SubjectPublicKeyInfo of a public key, DER encoded."""
+    return public_key.public_bytes(
         encoding=serialization.Encoding.DER,
         format=serialization.PublicFormat.SubjectPublicKeyInfo,
     )
