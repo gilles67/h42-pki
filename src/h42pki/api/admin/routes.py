@@ -1,20 +1,16 @@
 """Admin API ``/api/v1`` (no authentication until the first release, ADR-0008)."""
 
-from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Body, Response, status
+from fastapi import APIRouter, Response, status
 
 from h42pki.api.admin.deps import Actor, CertificateServiceDep, KeyServiceDep
 from h42pki.api.admin.schemas import (
-    CertificateCreate,
     CertificateOut,
     PrivateKeyCreate,
     PrivateKeyOut,
-    SelfSignRequest,
     certificate_pem,
 )
-from h42pki.errors import Conflict
 
 PEM_MEDIA_TYPE = "application/x-pem-file"
 DER_CERT_MEDIA_TYPE = "application/pkix-cert"
@@ -46,39 +42,8 @@ async def delete_private_key(private_key_id: UUID, actor: Actor, keys: KeyServic
 # --- certificates ---------------------------------------------------------------------------
 
 
-@router.post("/certificates", status_code=status.HTTP_201_CREATED)
-async def create_certificate(
-    body: CertificateCreate, actor: Actor, certificates: CertificateServiceDep
-) -> CertificateOut:
-    cert = await certificates.create(
-        private_key_id=body.private_key_id,
-        subject=body.subject,
-        extensions=body.extensions,
-        actor=actor,
-    )
-    return CertificateOut.from_model(cert)
-
-
-@router.post("/certificates/{certificate_id}/self-sign")
-async def self_sign_certificate(
-    certificate_id: UUID,
-    actor: Actor,
-    certificates: CertificateServiceDep,
-    body: Annotated[SelfSignRequest | None, Body()] = None,
-) -> CertificateOut:
-    """Self-sign a root CA certificate (``ca`` and ``key_cert_sign`` required)."""
-    request = body or SelfSignRequest()
-    cert = await certificates.self_sign(
-        certificate_id, validity_days=request.validity_days, actor=actor
-    )
-    return CertificateOut.from_model(cert)
-
-
-async def _signed_der(certificates: CertificateServiceDep, certificate_id: UUID) -> bytes:
-    cert = await certificates.get(certificate_id)
-    if cert.der is None:
-        raise Conflict("the certificate is not signed yet")
-    return cert.der
+async def _der(certificates: CertificateServiceDep, certificate_id: UUID) -> bytes:
+    return (await certificates.get(certificate_id)).der
 
 
 # The download routes are declared before /certificates/{certificate_id}.
@@ -92,7 +57,7 @@ async def _signed_der(certificates: CertificateServiceDep, certificate_id: UUID)
 async def download_certificate_pem(
     certificate_id: UUID, certificates: CertificateServiceDep
 ) -> Response:
-    der = await _signed_der(certificates, certificate_id)
+    der = await _der(certificates, certificate_id)
     return Response(content=certificate_pem(der), media_type=PEM_MEDIA_TYPE)
 
 
@@ -104,7 +69,7 @@ async def download_certificate_pem(
 async def download_certificate_der(
     certificate_id: UUID, certificates: CertificateServiceDep
 ) -> Response:
-    der = await _signed_der(certificates, certificate_id)
+    der = await _der(certificates, certificate_id)
     return Response(content=der, media_type=DER_CERT_MEDIA_TYPE)
 
 

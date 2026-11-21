@@ -9,34 +9,30 @@ from cryptography import x509
 from httpx import AsyncClient
 
 from h42pki.core import keys
-from tests.conftest import PrivateKeyFactory
-from tests.integration.test_smoke_ca import EXTENSIONS, SUBJECT
+from h42pki.core.keys import KeyAlgorithm, SupportedPrivateKey
+from tests.conftest import IssueFactory, PrivateKeyFactory, RootFactory
+from tests.x509_helpers import csr_pem, make_csr, name
 
-
-async def _create_certificate(client: AsyncClient, private_key_id: str) -> dict[str, Any]:
-    response = await client.post(
-        "/api/v1/certificates",
-        json={"private_key_id": private_key_id, "subject": SUBJECT, "extensions": EXTENSIONS},
-    )
-    assert response.status_code == 201, response.text
-    body: dict[str, Any] = response.json()
-    return body
+KeyFor = Callable[[KeyAlgorithm], SupportedPrivateKey]
 
 
 async def test_regression_B1_unique_serials(
-    client: AsyncClient, make_private_key: PrivateKeyFactory
+    client: AsyncClient, make_root: RootFactory, issue: IssueFactory, key_for: KeyFor
 ) -> None:
-    key = await make_private_key()
-    certificates = [await _create_certificate(client, str(key.id)) for _ in range(3)]
+    await make_root()
+    key = key_for(KeyAlgorithm.EC_P256)
+    csr = csr_pem(make_csr(key, name(CN="a.example.test"), sans=["dns:a.example.test"]))
+    requests = [await issue("tls_server", csr) for _ in range(3)]
 
-    assert len({cert["serial_hex"] for cert in certificates}) == 3
-
-    for cert in certificates:
-        response = await client.post(f"/api/v1/certificates/{cert['id']}/self-sign")
-        assert response.status_code == 200, response.text
-        response = await client.get(f"/api/v1/certificates/{cert['id']}.crt")
+    bodies = [
+        (await client.get(f"/api/v1/certificates/{request.certificate_id}")).json()
+        for request in requests
+    ]
+    assert len({body["serial_hex"] for body in bodies}) == 3
+    for body in bodies:
+        response = await client.get(f"/api/v1/certificates/{body['id']}.crt")
         signed = x509.load_der_x509_certificate(response.content)
-        assert signed.serial_number == int(cert["serial_hex"], 16)
+        assert signed.serial_number == int(body["serial_hex"], 16)
 
 
 async def test_regression_B6_B7_delete_private_key(
@@ -57,17 +53,16 @@ async def test_regression_B6_B7_delete_private_key(
 
 
 async def test_regression_B7_delete_used_private_key_conflicts(
-    client: AsyncClient, make_private_key: PrivateKeyFactory
+    client: AsyncClient, make_root: RootFactory
 ) -> None:
-    key = await make_private_key()
-    await _create_certificate(client, str(key.id))
+    authority = await make_root()
 
-    response = await client.delete(f"/api/v1/private-keys/{key.id}")
+    response = await client.delete(f"/api/v1/private-keys/{authority.private_key_id}")
 
     assert response.status_code == 409
     assert response.headers["content-type"] == "application/problem+json"
     assert response.json()["detail"] == "the private key is used by at least one certificate"
-    assert (await client.get(f"/api/v1/private-keys/{key.id}")).status_code == 200
+    assert (await client.get(f"/api/v1/private-keys/{authority.private_key_id}")).status_code == 200
 
 
 async def test_crypto_operations_run_in_worker_threads(

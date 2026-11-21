@@ -8,13 +8,10 @@ from uuid import UUID
 
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
-from h42pki.core.extensions import Extensions
-from h42pki.core.issuance import DEFAULT_CA_VALIDITY_DAYS, MAX_VALIDITY_DAYS, MIN_VALIDITY_DAYS
 from h42pki.core.keys import KeyAlgorithm
-from h42pki.core.names import Subject
-from h42pki.models import Certificate, CertificateStatus, KeyBackend, PrivateKey
+from h42pki.models import Certificate, CertificateStatus, Channel, KeyBackend, PrivateKey
 
 
 class Schema(BaseModel):
@@ -48,50 +45,32 @@ class PrivateKeyOut(Schema):
         )
 
 
-class CertificateCreate(Schema):
-    private_key_id: UUID | None = None
-    subject: Subject
-    extensions: Extensions = Field(default_factory=Extensions)
-
-
-class SelfSignRequest(Schema):
-    """Optional body of the self-sign request; an absent body uses the defaults."""
-
-    validity_days: int = Field(
-        default=DEFAULT_CA_VALIDITY_DAYS,
-        ge=MIN_VALIDITY_DAYS,
-        le=MAX_VALIDITY_DAYS,
-        description=(
-            f"Validity of the root CA certificate in days, from {MIN_VALIDITY_DAYS} to "
-            f"{MAX_VALIDITY_DAYS} (30 years). Defaults to {DEFAULT_CA_VALIDITY_DAYS} (10 years)."
-        ),
-        examples=[365],
-    )
-
-
 class CertificateOut(Schema):
     id: UUID
     serial_hex: str
-    subject: Subject
-    subject_dn: str | None
+    subject_dn: str
     status: CertificateStatus
-    not_before: datetime | None
-    not_after: datetime | None
-    sha256_fingerprint: str | None
-    extensions: Extensions
+    not_before: datetime
+    not_after: datetime
+    sha256_fingerprint: str
+    profile: str | None  # None for the root CA certificate
+    channel: Channel
+    issuer_id: UUID | None  # None for the root CA certificate (issued by itself)
 
     @classmethod
     def from_model(cls, cert: Certificate) -> "CertificateOut":
+        """``cert.profile`` must be prefetched."""
         return cls(
             id=cert.id,
             serial_hex=cert.serial_hex,
-            subject=cert.subject,
             subject_dn=cert.subject_dn,
             status=cert.status,
             not_before=cert.not_before,
             not_after=cert.not_after,
             sha256_fingerprint=cert.sha256_fingerprint,
-            extensions=cert.extensions,
+            profile=cert.profile.name if cert.profile is not None else None,
+            channel=cert.channel,
+            issuer_id=cert.issuer_id,
         )
 
 

@@ -132,8 +132,6 @@ class IssuanceService:
 
     async def _issuer_certificate(self, authority: Authority, now: datetime) -> x509.Certificate:
         record = await self._authorities.certificate_of(authority)
-        if record.der is None or record.not_after is None:  # pragma: no cover - lot 5a transition
-            raise NoActiveAuthority("the local CA certificate is not signed")
         if record.not_after <= now:
             raise NoActiveAuthority("the certificate of the local CA has expired")
         return x509.load_der_x509_certificate(record.der)

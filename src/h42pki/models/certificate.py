@@ -4,12 +4,11 @@ from __future__ import annotations
 
 from enum import StrEnum
 from typing import TYPE_CHECKING
+from uuid import UUID
 
 from cryptography.x509 import ReasonFlags
 from tortoise import fields
 
-from h42pki.core.extensions import Extensions
-from h42pki.core.names import Subject
 from h42pki.core.serial import new_serial_hex
 from h42pki.models.base import TimestampedModel
 from h42pki.models.request import Channel
@@ -21,15 +20,14 @@ if TYPE_CHECKING:
 
 
 class CertificateStatus(StrEnum):
-    # `pending` lasts until CertificateRequest exists; `on_hold` comes with revocation (phase 3).
-    PENDING = "pending"
+    # A certificate is always stored already signed; `on_hold` comes with revocation (phase 3).
     VALID = "valid"
     REVOKED = "revoked"
     EXPIRED = "expired"
 
 
 class Certificate(TimestampedModel):
-    # NULL issuer = self-signed certificate.
+    # NULL issuer = the root CA certificate, issued by its own key (ADR-0010).
     issuer: fields.ForeignKeyNullableRelation[Authority] = fields.ForeignKeyField(
         "models.Authority",
         related_name="issued_certificates",
@@ -49,29 +47,26 @@ class Certificate(TimestampedModel):
     )
     channel = fields.CharEnumField(Channel, default=Channel.API, max_length=16)
     serial_hex = fields.CharField(max_length=40, default=new_serial_hex)
-    subject: fields.JSONField[Subject | None] = fields.JSONField(field_type=Subject, null=True)
-    subject_dn = fields.TextField(null=True)  # RFC 4514, set when signed
-    # Requested extensions, until profiles exist.
-    extensions: fields.JSONField[Extensions | None] = fields.JSONField(
-        field_type=Extensions, null=True
-    )
+    subject_dn = fields.TextField()  # RFC 4514 (core.names.rfc4514); the DER is the source
     private_key: fields.ForeignKeyNullableRelation[PrivateKey] = fields.ForeignKeyField(
         "models.PrivateKey",
         related_name="certificates",
         null=True,
         on_delete=fields.RESTRICT,
     )
-    public_key_der = fields.BinaryField(null=True)
-    der = fields.BinaryField(null=True)  # NULL until signed
-    sha256_fingerprint = fields.CharField(max_length=64, unique=True, null=True)
-    status = fields.CharEnumField(
-        CertificateStatus, default=CertificateStatus.PENDING, max_length=16
-    )
-    not_before = fields.DatetimeField(null=True)
-    not_after = fields.DatetimeField(null=True)
+    public_key_der = fields.BinaryField()
+    der = fields.BinaryField()
+    sha256_fingerprint = fields.CharField(max_length=64, unique=True)
+    status = fields.CharEnumField(CertificateStatus, default=CertificateStatus.VALID, max_length=16)
+    not_before = fields.DatetimeField()
+    not_after = fields.DatetimeField()
     revoked_at = fields.DatetimeField(null=True)
     revocation_reason = fields.CharEnumField(ReasonFlags, max_length=32, null=True)
     invalidity_date = fields.DatetimeField(null=True)
+
+    # Foreign key columns created by Tortoise, declared for type checkers.
+    issuer_id: UUID | None
+    profile_id: UUID | None
 
     class Meta:
         table = "certificate"

@@ -6,7 +6,6 @@ import pytest
 from httpx import AsyncClient
 
 from h42pki import __version__
-from tests.integration.test_smoke_ca import EXTENSIONS, SUBJECT
 
 
 async def test_index(client: AsyncClient) -> None:
@@ -69,28 +68,15 @@ async def test_extra_field_on_private_key_is_rejected(client: AsyncClient) -> No
     assert response.status_code == 422
 
 
-async def test_pascal_case_certificate_payload_is_rejected(client: AsyncClient) -> None:
-    response = await client.post(
-        "/api/v1/certificates",
-        json={
-            "subject": {**SUBJECT, "CommonName": "legacy"},
-            "extensions": {"BasicConstraints": {"CertificateAuthority": True, "PathLength": 0}},
-        },
-    )
+@pytest.mark.parametrize(
+    "path", ["/api/v1/certificates", f"/api/v1/certificates/{uuid.uuid4()}/self-sign"]
+)
+async def test_self_sign_and_certificate_creation_are_removed(
+    client: AsyncClient, path: str
+) -> None:  # ADR-0010
+    response = await client.post(path, json={})
 
-    assert response.status_code == 422
-    types = {error["type"] for error in response.json()["errors"]}
-    assert types == {"extra_forbidden"}
-
-
-async def test_certificate_with_unknown_private_key_is_unprocessable(client: AsyncClient) -> None:
-    response = await client.post(
-        "/api/v1/certificates",
-        json={"private_key_id": str(uuid.uuid4()), "subject": SUBJECT, "extensions": EXTENSIONS},
-    )
-
-    assert response.status_code == 422
-    assert response.headers["content-type"] == "application/problem+json"
+    assert response.status_code in (404, 405)
 
 
 async def test_invalid_uuid_does_not_hit_download_route(client: AsyncClient) -> None:
@@ -102,8 +88,7 @@ async def test_invalid_uuid_does_not_hit_download_route(client: AsyncClient) -> 
 async def test_regression_B29_validation_errors_are_problem_json(client: AsyncClient) -> None:
     submitted = "do-not-echo-this-value"
     response = await client.post(
-        "/api/v1/certificates",
-        json={"subject": {"common_name": "x", "country_name": submitted}, "unexpected": submitted},
+        "/api/v1/private-keys", json={"algorithm": submitted, "unexpected": submitted}
     )
 
     assert response.status_code == 422
@@ -114,7 +99,7 @@ async def test_regression_B29_validation_errors_are_problem_json(client: AsyncCl
     assert body["status"] == 422
     assert body["detail"] == "the request is invalid (2 errors)"
     assert {(tuple(error["loc"]), error["type"]) for error in body["errors"]} == {
-        (("body", "subject", "country_name"), "string_pattern_mismatch"),
+        (("body", "algorithm"), "enum"),
         (("body", "unexpected"), "extra_forbidden"),
     }
     for error in body["errors"]:

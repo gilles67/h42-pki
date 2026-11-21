@@ -25,8 +25,8 @@ from h42pki.core.keys import (
 from h42pki.core.names import Subject
 from h42pki.keystore import KeyStore, get_keystore
 from h42pki.main import create_app
-from h42pki.models import Authority, PrivateKey
-from h42pki.services import AuthorityService
+from h42pki.models import Authority, CertificateRequest, PrivateKey
+from h42pki.services import AuthorityService, IssuanceService
 
 PrivateKeyFactory = Callable[[], Awaitable[PrivateKey]]
 
@@ -141,6 +141,23 @@ def make_root(client: AsyncClient, keystore: KeyStore) -> RootFactory:
             key_algorithm=algorithm,
             actor="anonymous",
             **options,
+        )
+
+    return factory
+
+
+IssueFactory = Callable[..., Awaitable[CertificateRequest]]
+
+
+@pytest.fixture
+def issue(make_root: RootFactory, keystore: KeyStore) -> IssueFactory:
+    """Submit a CSR to IssuanceService (the root must exist) and return the request."""
+
+    async def factory(
+        profile: str, csr: str, *, validity_days: int | None = None
+    ) -> CertificateRequest:
+        return await IssuanceService(keystore).submit(
+            csr=csr, profile_name=profile, validity_days=validity_days, actor="anonymous"
         )
 
     return factory

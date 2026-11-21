@@ -27,8 +27,8 @@ def key_service(store: Annotated[KeyStore, Depends(keystore)]) -> KeyService:
     return KeyService(store)
 
 
-def certificate_service(store: Annotated[KeyStore, Depends(keystore)]) -> CertificateService:
-    return CertificateService(store)
+def certificate_service() -> CertificateService:
+    return CertificateService()
 
 
 Actor = Annotated[str, Depends(current_actor)]

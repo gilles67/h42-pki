@@ -94,8 +94,6 @@ class AuthorityService:
                 private_key=key,
                 channel=Channel.CLI,
                 status=CertificateStatus.VALID,
-                subject=subject,
-                extensions=extensions,
                 **fields,
             )
             await AuditLog.record(
@@ -136,8 +134,6 @@ class AuthorityService:
     ) -> tuple[x509.Certificate, SupportedPrivateKey]:
         """Certificate and private key of ``authority``; 503 if its certificate has expired."""
         record = await authority.certificate
-        if record.der is None or record.not_after is None:  # pragma: no cover - lot 5a transition
-            raise NoActiveAuthority("the local CA certificate is not signed")
         if record.not_after <= now:
             raise NoActiveAuthority("the certificate of the local CA has expired")
         if authority.private_key is None:  # pragma: no cover - set by init_root
