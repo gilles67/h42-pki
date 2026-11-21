@@ -24,11 +24,16 @@ class PrivateKeyType(StrEnum):
         return key_type.split("_")[0]
 
 
+def new_serial_hex() -> str:
+    """Return a fresh random 159-bit serial number as lowercase hex (B1)."""
+    return format(x509.random_serial_number(), "x")
+
+
 class Certificate(Model):
     model_config = ConfigDict(from_attributes=True, arbitrary_types_allowed=True)
 
     uid = fields.UUIDField(primary_key=True)
-    sn = fields.CharField(unique=True, default=x509.random_serial_number(), max_length=48)
+    serial_hex = fields.CharField(unique=True, default=new_serial_hex, max_length=40)
 
     subject = fields.JSONField(field_type=Subject)
     extension = fields.JSONField(field_type=Extension)
@@ -98,7 +103,7 @@ CertificateCreateMixin = pydantic_model_creator(
     Certificate,
     exclude=(
         "uid",
-        "sn",
+        "serial_hex",
         "key",
         "csr",
         "crt",

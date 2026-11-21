@@ -77,7 +77,7 @@ class PkiCertificate:
         x509_cert = x509_cert.issuer_name(issuer)
 
         x509_cert = x509_cert.public_key(pvkey.public_key())
-        x509_cert = x509_cert.serial_number(int(cert.sn))
+        x509_cert = x509_cert.serial_number(int(cert.serial_hex, 16))
         x509_cert = x509_cert.not_valid_before(datetime.datetime.utcnow())
         x509_cert = x509_cert.not_valid_after(expire_at)
 
