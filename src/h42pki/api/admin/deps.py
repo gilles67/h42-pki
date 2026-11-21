@@ -6,7 +6,13 @@ from fastapi import Depends, Request
 
 from h42pki.config import Settings
 from h42pki.keystore import KeyStore, get_keystore
-from h42pki.services import CertificateService, KeyService
+from h42pki.services import (
+    AuthorityService,
+    CertificateService,
+    IssuanceService,
+    KeyService,
+    ProfileService,
+)
 
 
 def current_actor() -> str:
@@ -31,6 +37,21 @@ def certificate_service() -> CertificateService:
     return CertificateService()
 
 
+def authority_service(store: Annotated[KeyStore, Depends(keystore)]) -> AuthorityService:
+    return AuthorityService(store)
+
+
+def issuance_service(store: Annotated[KeyStore, Depends(keystore)]) -> IssuanceService:
+    return IssuanceService(store)
+
+
+def profile_service() -> ProfileService:
+    return ProfileService()
+
+
 Actor = Annotated[str, Depends(current_actor)]
+AuthorityServiceDep = Annotated[AuthorityService, Depends(authority_service)]
+IssuanceServiceDep = Annotated[IssuanceService, Depends(issuance_service)]
+ProfileServiceDep = Annotated[ProfileService, Depends(profile_service)]
 KeyServiceDep = Annotated[KeyService, Depends(key_service)]
 CertificateServiceDep = Annotated[CertificateService, Depends(certificate_service)]

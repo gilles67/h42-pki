@@ -4,13 +4,27 @@ from uuid import UUID
 
 from fastapi import APIRouter, Response, status
 
-from h42pki.api.admin.deps import Actor, CertificateServiceDep, KeyServiceDep
+from h42pki.api.admin.deps import (
+    Actor,
+    AuthorityServiceDep,
+    CertificateServiceDep,
+    IssuanceServiceDep,
+    KeyServiceDep,
+    ProfileServiceDep,
+)
 from h42pki.api.admin.schemas import (
+    AuthorityOut,
     CertificateOut,
     PrivateKeyCreate,
     PrivateKeyOut,
+    ProfileOut,
+    RequestCreate,
+    RequestOut,
+    RequestReject,
     certificate_pem,
 )
+from h42pki.errors import NotFound
+from h42pki.models import RequestStatus
 
 PEM_MEDIA_TYPE = "application/x-pem-file"
 DER_CERT_MEDIA_TYPE = "application/pkix-cert"
@@ -78,3 +92,68 @@ async def get_certificate(
     certificate_id: UUID, certificates: CertificateServiceDep
 ) -> CertificateOut:
     return CertificateOut.from_model(await certificates.get(certificate_id))
+
+
+# --- authority ------------------------------------------------------------------------------
+
+
+@router.get("/authority")
+async def get_authority(authorities: AuthorityServiceDep) -> AuthorityOut:
+    """The local CA, created by `h42pki authority init`."""
+    authority = await authorities.find_local()
+    if authority is None:
+        raise NotFound("no local certificate authority: run `h42pki authority init` first")
+    return AuthorityOut.from_model(authority, await authorities.certificate_of(authority))
+
+
+# --- profiles (read-only, ADR-0009) ---------------------------------------------------------
+
+
+@router.get("/profiles")
+async def list_profiles(profiles: ProfileServiceDep) -> list[ProfileOut]:
+    return [ProfileOut.from_model(profile) for profile in await profiles.list()]
+
+
+@router.get("/profiles/{name}")
+async def get_profile(name: str, profiles: ProfileServiceDep) -> ProfileOut:
+    return ProfileOut.from_model(await profiles.get(name))
+
+
+# --- certificate requests -------------------------------------------------------------------
+
+
+@router.post("/requests", status_code=status.HTTP_201_CREATED)
+async def submit_request(
+    body: RequestCreate, actor: Actor, issuance: IssuanceServiceDep
+) -> RequestOut:
+    """Submit a CSR. Issued at once if the profile auto-approves, otherwise left pending."""
+    request = await issuance.submit(
+        csr=body.csr_pem, profile_name=body.profile, validity_days=body.validity_days, actor=actor
+    )
+    return RequestOut.from_model(request)
+
+
+@router.get("/requests")
+async def list_requests(
+    issuance: IssuanceServiceDep, status: RequestStatus | None = None
+) -> list[RequestOut]:
+    return [RequestOut.from_model(request) for request in await issuance.list(status)]
+
+
+@router.get("/requests/{request_id}")
+async def get_request(request_id: UUID, issuance: IssuanceServiceDep) -> RequestOut:
+    return RequestOut.from_model(await issuance.get(request_id))
+
+
+@router.post("/requests/{request_id}/approve")
+async def approve_request(
+    request_id: UUID, actor: Actor, issuance: IssuanceServiceDep
+) -> RequestOut:
+    return RequestOut.from_model(await issuance.approve(request_id, actor=actor))
+
+
+@router.post("/requests/{request_id}/reject")
+async def reject_request(
+    request_id: UUID, body: RequestReject, actor: Actor, issuance: IssuanceServiceDep
+) -> RequestOut:
+    return RequestOut.from_model(await issuance.reject(request_id, reason=body.reason, actor=actor))
