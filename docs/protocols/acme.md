@@ -82,7 +82,9 @@ Challenge : `pending → processing → valid | invalid`.
 
 - CSR (`base64url` DER) : signature valide, clé ≠ clé du compte, ensemble des SAN (et éventuel CN) **strictement égal**
   aux identifiants de la commande, sinon `badCSR`.
-- Émission via `IssuanceService.issue(channel="acme", profile=…)` ; le profil fixe EKU/validité (90 jours par défaut).
+- Émission via `IssuanceService` (`submit(channel="acme", profile=…)`) ; le profil fixe EKU/validité : **47 jours
+  par défaut et 100 au maximum** (suite de SC-081v3), puis **47 au maximum à partir du 15 mars 2029**. Le profil
+  `tls_server` du lot 5a est à 90 / 200 jours (règle en vigueur depuis le 15 mars 2026) et passe à 47 / 100 avec ACME.
 - `notBefore`/`notAfter` demandés dans `newOrder` : refusés (`malformed`) sauf si `acme.allow_custom_validity`.
 - Téléchargement : chaîne PEM (feuille + intermédiaires, sans racine).
 

@@ -49,13 +49,23 @@ Les numéros `B…` renvoient à `docs/etat-des-lieux.md`.
   auto-signature d'AC racine avec `validity_days`, détail, téléchargement `.pem` / `.crt`), toutes les erreurs en
   `problem+json` (B29), opérations crypto via `asyncio.to_thread`. Restent : profils, demandes, liste des certificats.
 
-**Reste pour le lot 5** : profils (`Profile`, profils par défaut), `CertificateRequest` et émission depuis un CSR
-(vérification de signature, filtrage du sujet et des SAN par le profil), `IssuanceService` complet (émission par une
-AC, validité ≤ validité restante de l'émetteur, `pathLen`), initialisation d'une `Authority` par CLI (une clé = une AC,
-B31), CDP/AIA dans les certificats et endpoints publics `/ca/*`, liste des certificats, schéma `Problem` dans
-l'OpenAPI (B30).
-- CLI : `h42pki authority init|status|export`, `h42pki profile list`.
-- AIA public : `/ca/{name}.crt|.pem`, `/ca/chain.pem`.
+**Lot 5a (fait, 2026-11-21)** :
+- ✅ Profils intégrés en base, en lecture seule, réalignés au démarrage (`Profile`, ADR-0009) : `sub_ca`,
+  `tls_server` (90 / 200 jours, SC-081v3), `tls_client`, `ocsp_signer`, `device` ; approbation selon `auto_approve`.
+- ✅ `CertificateRequest` et émission depuis un CSR : signature du CSR vérifiée, RSA < 2048 refusé, sujet et SAN
+  filtrés par le profil (refus explicites), extensions du CSR jamais recopiées (B2), validité plafonnée et ramenée au
+  `not_after` de l'émetteur, `pathLen` strictement décroissant.
+- ✅ `IssuanceService` (`submit` → `auto_approve` ou `approve` / `reject` → `_issue`) : seul chemin d'émission.
+- ✅ AC racine par CLI (`h42pki authority init --validity-days`, une clé = une AC, B31) ; auto-signature par API
+  supprimée (ADR-0010).
+- ✅ CLI : `h42pki authority init|status|export`, `h42pki profile list|show`.
+- ✅ API : `GET /authority`, `GET /profiles[/{name}]`, `POST/GET /requests`, `approve` / `reject`.
+
+**Lot 5b (à faire)** : publication `/ca/{name}.crt|.pem` et `/ca/chain.pem`, AIA caIssuers dans les certificats émis
+(à partir de `public_base_url`), liste des certificats, schéma `Problem` dans l'OpenAPI (B30).
+
+**Attend la phase 3** : CDP et OCSP dans les certificats émis (aucune URL vers un service qui n'existe pas encore).
+- AIA public : `/ca/{name}.crt|.pem`, `/ca/chain.pem` (lot 5b).
 
 **Fait quand** : une AC racine s'initialise par CLI, émet un certificat serveur via l'API, vérifiable par
 `openssl verify` ; couverture `core/` ≥ 90 %.
@@ -72,6 +82,7 @@ de l'émettrice se vérifie jusqu'à la racine.
 ## Phase 3 — Révocation : CRL + OCSP
 
 - `RevocationService`, raisons RFC 5280, suspension/levée.
+- CDP et AIA OCSP ajoutés aux certificats émis (absents jusque-là, lot 5a).
 - `core/crl.py`, `CrlService`, tâche périodique, endpoints `/crl/*` avec cache HTTP.
 - `core/ocsp.py`, répondeur délégué auto-renouvelé, endpoints POST/GET, nonce, cache.
 
@@ -93,6 +104,8 @@ de l'émettrice se vérifie jusqu'à la racine.
 
 - 6a : choix lib JWS, nonces, comptes, commandes, autorisations, http-01, dns-01, finalize, certificat, revokeCert.
 - 6b : tls-alpn-01, keyChange, EAB, ARI (RFC 9773).
+- Validité de `tls_server` alignée sur la suite de SC-081v3 : **47 jours par défaut et 100 au maximum**, puis **47 au
+  maximum au 15 mars 2029** (aujourd'hui 90 / 200, lot 5a).
 
 **Fait quand** : `lego` obtient puis révoque un certificat en http-01 et en dns-01.
 

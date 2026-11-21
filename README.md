@@ -38,14 +38,33 @@ uv run h42pki serve --reload              # http://127.0.0.1:8000, health check 
 
 The interactive API docs are then served at `http://127.0.0.1:8000/docs`.
 
+Create the root CA (once per container), then issue a TLS server certificate from a CSR:
+
+```bash
+uv run h42pki authority init --name home42-root --common-name "Home42 Root CA"   # 10 years by default
+uv run h42pki authority export --output root.pem
+openssl req -new -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes \
+  -keyout leaf.key -out leaf.csr -subj "/CN=www.home42.test" \
+  -addext "subjectAltName=DNS:www.home42.test"
+jq -n --rawfile csr leaf.csr '{csr_pem: $csr, profile: "tls_server"}' \
+  | curl -s -H 'content-type: application/json' -d @- http://127.0.0.1:8000/api/v1/requests
+# -> {"status": "issued", "certificate_id": "…", …}
+curl -s -o leaf.pem http://127.0.0.1:8000/api/v1/certificates/<certificate_id>.pem
+openssl verify -CAfile root.pem leaf.pem
+```
+
+Profiles decide what a certificate contains (`uv run h42pki profile list`): `tls_server` certificates last 90 days
+(200 at most). Give the subject with `-subj`: profiles only accept the attributes they list (no `ST` or `L`).
+
 ### Docker
 
 ```bash
 make docker-build
-docker run --rm -p 127.0.0.1:8000:8000 \
+docker run -d --name h42pki -p 127.0.0.1:8000:8000 \
   -e H42_PKI_CA_PASSPHRASE='change-me' \
   -v h42pki-data:/data \
   gilles67/h42-pki:latest
+docker exec h42pki h42pki authority init --name home42-root --common-name "Home42 Root CA"
 ```
 
 ### Configuration
@@ -79,7 +98,7 @@ CI (GitHub Actions) runs lint, type checking and tests on Python 3.12 and 3.13.
 | Phase | Content | Status |
 |---|---|---|
 | 0 | Clean-up: installable package, settings, tooling, tests, Docker image, CI | ✅ done |
-| 1 | CA core: key store, certificate profiles, single issuance path, data model, admin API, CLI, AIA publication | 🚧 in progress: data model, key store (RSA/EC/Ed25519, encrypted PKCS#8), self-signed root CA and admin API done; profiles, issuance from a CSR, CLI and AIA next |
+| 1 | CA core: key store, certificate profiles, single issuance path, data model, admin API, CLI, AIA publication | 🚧 in progress: root CA by CLI, profiles, requests and issuance from a CSR done (lot 5a); AIA publication and certificate listing next (lot 5b) |
 | 2 | Hierarchy: subordinate CA enrolment with its parent (federation), multi-level `docker compose` | ⏳ |
 | 3 | Revocation: CRL (full/delta) and OCSP responder | ⏳ |
 | 4 | EST enrolment (RFC 7030) | ⏳ |

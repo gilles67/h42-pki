@@ -26,35 +26,40 @@ Stack : **Python ≥ 3.12, FastAPI, Tortoise ORM (async), `cryptography`, Pydant
 
 ## 2. État actuel du code (important)
 
-Lots 1 à 4 terminés : outillage, sécurité, modèle de données, API `/api/v1`, et sortie du code legacy (le
-paquet `h42pki/ca/` n'existe plus). Le code suit la structure en couches cible ; ce qui n'existe pas encore est
-marqué « à venir » au §3.
+Lots 1 à 5a terminés : outillage, sécurité, modèle de données, API `/api/v1`, sortie du code legacy, AC racine par
+CLI, profils, demandes et émission depuis un CSR. Le code suit la structure en couches cible ; ce qui n'existe pas
+encore est marqué « à venir » au §3. Prochain lot : 5b (publication `/ca/*`, AIA caIssuers, liste des certificats).
 
 - **Socle** : `config.py` (`Settings`, variables `H42_PKI_*`, `H42_PKI_*_FILE`, secrets Docker dans `/run/secrets`
   ou `H42_PKI_SECRETS_DIR`, contrôle des permissions des fichiers de secrets), `db.py` (config Tortoise), `main.py`
-  (`create_app()` + lifespan `RegisterTortoise`, `generate_schemas=True` jusqu'à la première release, ADR-0007),
-  `errors.py` (erreurs métier typées), `cli.py` (`version`, `serve`).
+  (`create_app()` + lifespan `RegisterTortoise` puis synchronisation des profils, `generate_schemas=True` jusqu'à la
+  première release, ADR-0007), `errors.py` (erreurs métier typées, dont 503 `NoActiveAuthority`).
 - **`core/`** (pur, synchrone, testé par `tests/unit/core/test_purity.py`) : `keys.py` (`KeyAlgorithm` RSA/EC/Ed25519,
-  génération, PKCS#8 DER chiffré, hachage de signature), `names.py` (`Subject`, `rfc4514`), `extensions.py`
-  (`Extensions` et ses règles, `validate_for_key`), `issuance.py` (`build_self_signed`, bornes de validité),
-  `serial.py`, `errors.py` (sous-classes de `h42pki.errors`).
+  génération, PKCS#8 DER chiffré, hachage de signature), `names.py` (`NameAttributes`, `Subject`, `rfc4514`),
+  `extensions.py` (`Extensions`, `validate_for_key`), `profiles.py` (`ProfileSpec`, `BUILTIN_PROFILES`), `csr.py`
+  (`parse_csr`), `issuance.py` (`build_self_signed` pour la racine, `plan_issuance` / `build_issued` pour le reste),
+  `validity.py` (bornes de validité), `serial.py`, `errors.py`.
 - **`keystore/`** : `KeyStore` (protocole : `generate`, `load`), `SoftwareKeyStore` (seul détenteur de la
   passphrase), `get_keystore(settings)`. Seul `keystore` appelle les fonctions de (dé)chiffrement de `core.keys`.
-- **`services/`** : `KeyService`, `CertificateService` (transactions, audit, mise à jour conditionnelle de
-  l'auto-signature, crypto via `asyncio.to_thread`). Ils reçoivent le keystore explicitement.
-- **Modèles** `models/` (un fichier par agrégat : `private_key`, `authority`, `certificate`, `audit`, base
-  `TimestampedModel`) : FK, stockage DER, `AuditLog.record()`. Le certificat propre d'une AC est
-  `Certificate.authority` (OneToOne, inverse `authority.certificate`) : Tortoise ne sait pas créer un cycle de FK.
+- **`services/`** : `AuthorityService` (`init_root`, AC locale), `IssuanceService` (`submit` → `auto_approve` ou
+  `approve` / `reject` → `_issue`, **seul chemin d'émission**), `ProfileService` (synchronisation des profils
+  intégrés, lecture), `KeyService`, `CertificateService` (lecture seule). Transactions, audit, crypto via
+  `asyncio.to_thread` ; le keystore est passé explicitement.
+- **Modèles** `models/` (un fichier par agrégat : `private_key`, `authority`, `profile`, `certificate`, `request`,
+  `audit`, base `TimestampedModel`) : FK sans cycle (B27), stockage DER, `AuditLog.record()`. Un certificat est
+  toujours enregistré signé.
 - **API** : `api/admin/` (`routes.py`, `schemas.py` écrits à la main, `extra="forbid"`, `deps.py` : keystore,
-  services et `current_actor` = `"anonymous"`, ADR-0008), `api/problems.py` (toutes les erreurs, y compris la
-  validation, en `application/problem+json`), `api/health.py` (`GET /`, `GET /health`).
-- **Règle métier** : l'auto-signature est réservée aux AC racines (`ca` + `key_cert_sign`), validité
-  `validity_days` (3650 par défaut, 1..10950). Les certificats d'entité finale seront émis par une AC (lot 5).
+  services et `current_actor` = `"anonymous"`, ADR-0008), `api/problems.py` (toutes les erreurs en
+  `application/problem+json`), `api/health.py` (`GET /`, `GET /health`).
+- **CLI** `cli/` : `version`, `serve`, `authority init|status|export`, `profile list|show` ; `_runtime.py` ouvre la
+  même base que le serveur et transforme les erreurs en message lisible (code de sortie non nul).
+- **Règles métier** : le seul certificat auto-signé est celui de l'AC racine, créé par `h42pki authority init`
+  (ADR-0010) ; tout le reste passe par un profil intégré (lecture seule, ADR-0009) via `IssuanceService`. Pas de CDP ni
+  d'OCSP dans les certificats avant la phase 3, pas d'AIA avant le lot 5b.
 - mypy est `strict` sur tout `src/`, sans exemption.
 - Les expérimentations précédentes (`certold.py`, `certdb.py`, `certapp.py`, `main.py`, `cli.py` : stockage en
   fichiers JSON + config TOML, routes `/api/pki/ca/*`) et `src/test.py` ont été **supprimées** le 2026-11-21. Ne pas
   les recréer ni s'en inspirer : la hiérarchie d'AC se fait via la fédération (`docs/protocols/federation.md`).
-- `cli.py` est un module unique pour l'instant ; il deviendra le paquet `cli/` de la structure cible.
 
 La liste des bogues connus et de la dette technique est dans `docs/etat-des-lieux.md`.
 Le plan de travail par phases est dans `docs/roadmap.md` — **suivre l'ordre des phases**.
@@ -68,19 +73,20 @@ src/h42pki/
   db.py              # configuration Tortoise (tortoise_config(settings))
   errors.py          # erreurs métier typées (NotFound, Conflict, Unprocessable, InvalidRequest)
   core/              # DOMAINE CRYPTO PUR : synchrone, sans I/O, sans ORM, sans FastAPI
-    keys.py  names.py  extensions.py  issuance.py  serial.py  errors.py        — en place (lot 4)
-    profiles.py  csr.py  crl.py  ocsp.py  cms.py  chain.py                      — à venir
+    keys.py  names.py  extensions.py  profiles.py  csr.py  issuance.py  validity.py  serial.py  errors.py
+                     #   — en place (lots 4 et 5a)
+    crl.py  ocsp.py  cms.py  chain.py                                           — à venir
   keystore/          # base.py (KeyStore), software.py — en place ; pkcs11.py en phase 7
-  models/            # modèles Tortoise (un fichier par agrégat)  — en place
-  services/          # keys.py, certificates.py — en place ; authority, issuance, revocation, crl, ocsp,
-                     # federation à venir
+  models/            # private_key, authority, profile, certificate, request, audit — en place
+  services/          # authority, issuance, profiles, keys, certificates, x509_fields — en place ;
+                     # revocation, crl, ocsp, federation à venir
   api/
     problems.py      # handlers application/problem+json (RFC 9457)        — en place
     admin/           # /api/v1/... (routes, schemas, deps ; sans auth jusqu'à la release, ADR-0008) — en place
     public/          # /ca/*, /crl/*      (HTTP public, AIA + CRL)
     ocsp/  est/  scep/  acme/  federation/
   tasks/             # tâches périodiques (CRL, purge nonces ACME, expirations)
-  cli/               # commandes Typer : init, status, export, rotate...
+  cli/               # Typer : authority init|status|export, profile list|show — en place ; rotate… à venir
 tests/
   unit/  integration/  interop/  conftest.py
 docs/
@@ -104,6 +110,7 @@ uv run ruff check . && uv run ruff format --check .
 uv run mypy src
 H42_PKI_CA_PASSPHRASE=... uv run h42pki serve --reload   # serveur de dev (uvicorn, rechargement auto)
 uv run h42pki --help                      # CLI
+uv run h42pki authority init --name root --common-name "Test Root CA"   # AC racine locale (base data/)
 docker build -t h42-pki:dev .            # image (Granian, non-root, /data)
 docker compose -f deploy/compose.yaml up  # hiérarchie racine + intermédiaire + émettrice (phase 2)
 ```

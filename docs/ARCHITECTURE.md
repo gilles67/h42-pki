@@ -115,8 +115,14 @@ stateDiagram-v2
     retired --> [*]
 ```
 
+**Initialisation (lot 5a).** Le mode `root` est choisi par la commande `h42pki authority init` (et non par un
+réglage `authority.mode` comme l'envisageait ADR-0001) : nouvelle clé, certificat de la racine (`--validity-days`,
+3650 jours par défaut, de 1 à 10950 ; `--path-length` optionnel), `Authority(kind=local, status=active)`
+(ADR-0010). Une seule AC locale non `retired` par conteneur. Les modes `subordinate` et `external` arrivent
+avec la fédération (phase 2).
+
 Tant que l'AC n'est pas `active`, seuls `/health`, l'API d'admin et la fédération répondent ;
-les endpoints d'enrôlement renvoient `503`.
+les endpoints d'enrôlement renvoient `503` (déjà le cas de `POST /api/v1/requests`).
 
 ## 4. Modèle de données
 
@@ -145,9 +151,11 @@ erDiagram
 
 Toutes les tables ont `id` (UUID), `created_at`, `updated_at` (UTC aware).
 
-> **État d'implémentation (lot 4).** Les tables `PrivateKey`, `Authority`, `Certificate` et `AuditLog` existent
-> (`src/h42pki/models/`). Les champs marqués *(plus tard)* ne sont pas encore implémentés. Les autres tables
-> (`Profile`, `CertificateRequest`, `Crl`, …) arrivent avec leur phase.
+> **État d'implémentation (lot 5a).** Les tables `PrivateKey`, `Authority`, `Profile`, `Certificate`,
+> `CertificateRequest` et `AuditLog` existent (`src/h42pki/models/`). Les champs marqués *(plus tard)* ne sont pas
+> encore implémentés. Les autres tables (`Crl`, `EnrollmentCredential`, …) arrivent avec leur phase.
+> Les clés étrangères pointent toujours « vers le bas » (Certificate → Authority / PrivateKey / Profile,
+> CertificateRequest → Profile / Certificate) : pas de cycle (B27).
 
 **`PrivateKey`** — clé détenue par ce conteneur.
 Implémenté : `algorithm` (`core.keys.KeyAlgorithm` : `rsa2048|rsa3072|rsa4096|ec_p256|ec_p384|ed25519`),
@@ -157,7 +165,8 @@ keystore : pour le backend logiciel, **PKCS#8 DER chiffré** par la passphrase d
 propre au backend, pas un format.
 *(plus tard)* : `pkcs11_uri` (backend pkcs11), `purpose` (`ca|ocsp|scep_ra|tls|serverkeygen`), `status`.
 
-**`Authority`** — une AC connue de ce conteneur. Aucune route ne l'utilise encore.
+**`Authority`** — une AC connue de ce conteneur. L'AC locale est créée par `h42pki authority init` et lue par
+`GET /api/v1/authority`.
 Implémenté : `kind` (`local|parent|child`), `name` (unique), `status` (cf. §3 : `uninitialized|pending_signature|
 active|rolling_over|retired|revoked`), `private_key` → `PrivateKey` (local uniquement, `RESTRICT`),
 `parent` → `Authority` (FK sur soi, `RESTRICT`), `path_length`, `public_base_url` (préfixe des URLs AIA/CDP/OCSP
@@ -166,28 +175,45 @@ inscrites dans les certificats). Le **certificat de l'AC** est l'inverse de `Cer
 1.1.7 ne sait pas créer (B27). Un renouvellement de certificat d'AC passe donc par une nouvelle `Authority`.
 *(plus tard)* : `federation_url` (pour `parent`/`child`), `name_constraints` (JSON).
 
-**`Profile`** — gabarit d'émission (remplace l'actuel `Extension` libre).
-`name` (unique), `kind` (`sub_ca|tls_server|tls_client|email|code_signing|ocsp_signer|device|custom`),
-`validity_days`, `max_validity_days`, `key_usage` (JSON), `extended_key_usage` (liste d'OID),
-`basic_constraints` (JSON), `allowed_key_algorithms` (liste), `subject_policy` (JSON : champs requis/autorisés/fixés),
-`san_policy` (JSON : types autorisés, motifs de domaines), `include_cdp`, `include_aia`, `include_ocsp`,
-`must_staple`, `enabled_channels` (`api|est|scep|acme|federation`).
+**`Profile`** — gabarit d'émission. Les profils **intégrés** sont définis dans `core/profiles.py`, écrits en base au
+démarrage et réalignés sur le code, en **lecture seule** (ADR-0009).
+Implémenté : `name` (unique), `kind` (`sub_ca|tls_server|tls_client|ocsp_signer|device`), `description`, `builtin`,
+`auto_approve` (émission immédiate ou approbation manuelle), `validity_days`, `max_validity_days`,
+`basic_constraints`, `key_usage` (mêmes schémas que `core.extensions` ; `key_encipherment` n'est appliqué qu'aux clés
+RSA), `extended_key_usage` (liste de **noms**, ADR-0006), `allowed_key_algorithms`, `subject_policy` (JSON :
+attributs `required` / `allowed`, `cn_must_match_san`), `san_policy` (JSON : `types` parmi `dns|ip|email|uri`,
+`required`), `ocsp_no_check`.
+*(plus tard)* : kinds `email|code_signing|custom`, motifs de domaines dans `san_policy`, valeurs fixées dans
+`subject_policy`, `include_cdp`, `include_aia`, `include_ocsp`, `must_staple`, `enabled_channels`, profils non
+intégrés et édition.
 
-**`Certificate`**
-Implémenté : `issuer` → `Authority` (null = auto-signé, `RESTRICT`), `authority` → `Authority` (OneToOne, renseigné
-quand le certificat est celui d'une AC), `serial_hex` (unique avec `issuer` ; les auto-signés ne sont pas couverts
-par la contrainte, B26), `subject_dn` (texte RFC 4514, renseigné à la signature), `subject` (JSON), `extensions`
-(JSON : extensions **demandées**, tant que les profils n'existent pas), `private_key` → `PrivateKey` (null sauf
-certificats détenus localement, `RESTRICT`), `public_key_der`, `der` (null tant que non signé),
-`sha256_fingerprint` (unique), `status` (`pending|valid|revoked|expired` ; `pending` est transitoire jusqu'à
-`CertificateRequest`), `not_before`, `not_after`, `revoked_at`, `revocation_reason` (enum RFC 5280),
-`invalidity_date`.
-*(plus tard)* : `sans` (JSON), `profile` → `Profile`, `ski`, `aki`, `status` `on_hold` (phase 3),
-`request` → `CertificateRequest`, `channel` (`api|est|scep|acme|federation|self`).
+| Profil | KU | EKU | Validité (défaut / max, jours) | SAN | Approbation |
+|---|---|---|---|---|---|
+| `sub_ca` | keyCertSign, cRLSign, digitalSignature | — | 1825 / 3650 | aucun | manuelle |
+| `tls_server` | digitalSignature (+ keyEncipherment si RSA) | serverAuth | 90 / 200 (SC-081v3) | requis, dns/ip | auto |
+| `tls_client` | digitalSignature | clientAuth | 365 / 825 | optionnel, dns/email/uri | auto |
+| `ocsp_signer` | digitalSignature | OCSPSigning (+ OCSPNoCheck) | 30 / 90 | aucun | manuelle |
+| `device` | digitalSignature (+ keyEncipherment si RSA) | clientAuth | 730 / 1095 | optionnel, dns/ip/uri | auto |
+
+**`Certificate`** — toujours enregistré **déjà signé** (le DER est la source de vérité).
+Implémenté : `issuer` → `Authority` (null pour le certificat de la racine, émis par sa propre clé ; `RESTRICT`),
+`authority` → `Authority` (OneToOne, renseigné quand le certificat est celui d'une AC), `profile` → `Profile` (null
+pour la racine), `channel` (`cli|api`), `serial_hex` (unique par émetteur), `subject_dn` (texte RFC 4514),
+`private_key` → `PrivateKey` (seulement pour les certificats dont la clé est détenue ici, comme celui de l'AC ;
+`RESTRICT`), `public_key_der`, `der`, `sha256_fingerprint` (unique), `status` (`valid|revoked|expired`),
+`not_before`, `not_after`, `revoked_at`, `revocation_reason` (enum RFC 5280), `invalidity_date`.
+Le sujet structuré (JSON) et les extensions demandées ne sont plus stockés : ils se déduisent du DER, et les
+extensions viennent du profil.
+*(plus tard)* : `sans` (colonne de recherche), `ski`, `aki`, statut `on_hold` (phase 3), calcul de `expired` (B34),
+canaux `est|scep|acme|federation`.
 
 **`CertificateRequest`**
-`csr_der`, `status` (`pending|approved|rejected|issued|failed`), `channel`, `profile`, `requester` (texte : identité
-authentifiée), `approved_by`, `rejection_reason`, `metadata` (JSON propre au canal).
+Implémenté : `csr_der`, `profile` → `Profile`, `status` (`pending|issued|rejected|failed` : l'approbation émet
+aussitôt, il n'y a donc pas d'état `approved` ; `failed` = émission impossible au moment de l'approbation),
+`requested_validity_days`, `requester`, `channel`, `certificate` → `Certificate` (OneToOne), `subject_dn` (sujet
+demandé), `rejection_reason`, `decided_by` (`auto-approve` ou l'acteur), `decided_at`, `metadata` (JSON :
+`ignored_extensions`, `validity_truncated`, `failure`).
+Une demande qui ne respecte pas son profil est refusée (422) **sans être enregistrée** (B35).
 
 **`Crl`**
 `authority`, `crl_number` (entier monotone par AC), `is_delta`, `base_crl_number`, `this_update`, `next_update`, `der`.
@@ -199,9 +225,10 @@ pour `acme_eab`, clé HMAC chiffrée car elle doit être relue), `profile`, `exp
 `allowed_subjects` (motif).
 
 **`AuditLog`** — `timestamp`, `actor`, `action`, `object_type`, `object_id`, `details` (JSON, sans secret) ;
-`source_ip` *(plus tard)*. Actions enregistrées : `private_key.generate`, `private_key.delete`, `certificate.create`,
-`certificate.self_sign`, dans la même transaction que l'opération ; `actor="anonymous"` jusqu'à l'authentification
-(ADR-0008).
+`source_ip` *(plus tard)*. Actions enregistrées : `private_key.generate`, `private_key.delete`, `authority.init`,
+`request.submit`, `request.approve`, `request.reject`, `request.fail`, `certificate.issue`, `profile.create`,
+`profile.realign`, dans la même transaction que l'opération. Acteur : `anonymous` pour l'API jusqu'à
+l'authentification (ADR-0008), `cli` pour la ligne de commande, `system` pour la synchronisation des profils.
 
 Tables spécifiques aux protocoles (détails dans `docs/protocols/`) :
 `ScepTransaction`, `AcmeAccount`, `AcmeOrder`, `AcmeAuthorization`, `AcmeChallenge`, `AcmeNonce`,
@@ -220,32 +247,44 @@ Tables spécifiques aux protocoles (détails dans `docs/protocols/`) :
 
 ### 5.1 Émission d'un certificat (tous canaux)
 
-Tous les canaux d'enrôlement convergent vers **`IssuanceService.issue()`** : c'est le seul chemin d'émission.
+Il n'existe que deux producteurs de certificats (ADR-0010) : `AuthorityService.init_root` pour le certificat de
+l'AC racine, et **`IssuanceService`** pour tout certificat signé par l'AC. Dans `IssuanceService`, tous les canaux
+passent par `submit` puis, selon le profil, par l'émission immédiate ou par `approve` / `reject` ; la méthode privée
+`_issue` est le **seul chemin d'émission** (appelée `issue()` dans les versions précédentes de ce document ; elle est
+privée pour qu'aucun appelant ne contourne l'approbation).
 
 ```mermaid
 sequenceDiagram
-    participant C as Canal (API/EST/SCEP/ACME/Fédération)
+    participant C as Canal (API ; EST/SCEP/ACME/Fédération plus tard)
     participant IS as IssuanceService
-    participant P as core.profiles
+    participant CSR as core.csr
     participant B as core.issuance
     participant K as Keystore
     participant DB as Base
-    C->>IS: issue(csr, profile, requester, overrides autorisés)
-    IS->>IS: vérifie signature CSR, AC active, canal autorisé par le profil
-    IS->>P: apply(profile, csr, authority) → TBS spec
-    P-->>IS: sujet, SAN filtrés, extensions, validité bornée
-    IS->>DB: crée CertificateRequest (+ serial réservé)
-    IS->>B: build(tbs_spec, issuer_cert)
-    B->>K: sign(tbs) [to_thread]
-    K-->>B: certificat signé
-    IS->>DB: Certificate + AuditLog (transaction)
-    IS-->>C: Certificate (+ chaîne)
+    C->>IS: submit(csr, profile, validity_days?, actor)
+    IS->>CSR: parse_csr : signature, algorithme, sujet, SAN, extensions ignorées
+    IS->>B: plan_issuance(csr, profil, certificat de l'AC) : règles du profil, sans clé
+    B-->>IS: plan ou 422 (rien n'est enregistré)
+    IS->>DB: CertificateRequest pending + AuditLog
+    alt profil auto_approve
+        IS->>IS: _issue
+    else approbation manuelle
+        C->>IS: approve(id) ou reject(id, reason)
+    end
+    IS->>K: clé de l'AC (AC active et non expirée, sinon 503)
+    IS->>B: build_issued(csr, profil, certificat et clé de l'AC) [to_thread]
+    B-->>IS: certificat signé et vérifié
+    IS->>DB: Certificate + demande issued + AuditLog (transaction)
+    IS-->>C: demande (certificate_id)
 ```
 
-Extensions ajoutées systématiquement par `core.issuance` (indépendamment du CSR) :
-`AuthorityKeyIdentifier`, `SubjectKeyIdentifier`, et selon le profil `CRLDistributionPoints`
-(`{public_base_url}/crl/{authority}.crl`), `AuthorityInformationAccess` (caIssuers `{public_base_url}/ca/{authority}.crt`,
-OCSP `{public_base_url}/ocsp`).
+Extensions posées par `core.issuance.build_issued` (indépendamment du CSR, dont les extensions ne sont jamais
+recopiées) : `BasicConstraints` et `KeyUsage` critiques, `ExtendedKeyUsage` non critique, `SubjectKeyIdentifier`,
+`AuthorityKeyIdentifier` (dérivé du SKI de l'émetteur), `SubjectAlternativeName` (critique si le sujet est vide),
+`OCSPNoCheck` pour `ocsp_signer`. La validité est plafonnée par le profil et **ramenée au `not_after` de
+l'émetteur** (`validity_truncated`) ; une AC fille reçoit un `pathLen` strictement inférieur à celui de l'émetteur.
+**À venir** : `AuthorityInformationAccess` caIssuers (`{public_base_url}/ca/{authority}.crt`, lot 5b),
+`CRLDistributionPoints` et OCSP (phase 3) : aucune URL n'est inscrite tant que le service correspondant n'existe pas.
 
 ### 5.2 Révocation
 
@@ -275,23 +314,30 @@ la fille génère clé + CSR et appelle `POST /api/v1/federation/enroll` → la 
 | `/` | HTTP | aucune | `{"name", "version"}` |
 | `/metrics` | HTTP interne | aucune / réseau privé | Prometheus (phase 7) |
 
-**API d'administration implémentée (lot 4).** Schémas écrits à la main (`extra="forbid"`, snake_case), aucune
+**API d'administration implémentée (lot 5a).** Schémas écrits à la main (`extra="forbid"`, snake_case), aucune
 réponse ne contient de clé privée ; toutes les erreurs en `application/problem+json` (RFC 9457) : 404 objet inconnu,
 409 conflit, 422 requête invalide (les erreurs de validation ajoutent une extension `errors` : `loc`, `msg`, `type`,
-jamais la valeur soumise), 500 si une clé stockée ne peut pas être déchiffrée.
+jamais la valeur soumise), 503 sans AC active, 500 si une clé stockée ne peut pas être déchiffrée.
 
 | Méthode | Chemin | Réponse |
 |---|---|---|
 | POST | `/api/v1/private-keys` `{algorithm}` | 201 `{id, algorithm, backend, public_key_pem, created_at}` |
 | GET | `/api/v1/private-keys/{id}` | 200, 404 |
 | DELETE | `/api/v1/private-keys/{id}` | 204, 404, 409 (clé utilisée par un certificat ou une AC) |
-| POST | `/api/v1/certificates` `{private_key_id?, subject, extensions}` | 201, statut `pending` ; 422 si la clé n'existe pas |
-| POST | `/api/v1/certificates/{id}/self-sign` `{validity_days?}` (corps optionnel) | 200 ; réservé aux AC racines (`basic_constraints.ca` et `key_usage.key_cert_sign`, sinon 422) ; `validity_days` 3650 par défaut, de 1 à 10950 (30 ans), sinon 422 ; 409 si déjà signé ; 422 sans clé |
-| GET | `/api/v1/certificates/{id}` | 200 `{id, serial_hex, subject, subject_dn, status, not_before, not_after, sha256_fingerprint, extensions}` |
-| GET | `/api/v1/certificates/{id}.pem` | `application/x-pem-file` ; 409 si non signé |
-| GET | `/api/v1/certificates/{id}.crt` | `application/pkix-cert` (DER) ; 409 si non signé |
+| GET | `/api/v1/authority` | AC locale : `name`, `status`, `certificate_id`, `subject_dn`, `sha256_fingerprint`, dates, `path_length`, `key_algorithm`, `public_base_url` ; 404 si aucune |
+| GET | `/api/v1/profiles` · `/api/v1/profiles/{name}` | profils (lecture seule ; 405 en écriture) |
+| POST | `/api/v1/requests` `{csr_pem, profile, validity_days?}` | 201, `status` = `issued` (avec `certificate_id`) ou `pending` ; 422 si le profil refuse la demande ; 503 sans AC active |
+| GET | `/api/v1/requests` (`?status=`) · `/api/v1/requests/{id}` | demandes, avec `validity_truncated` et `ignored_extensions` |
+| POST | `/api/v1/requests/{id}/approve` · `/api/v1/requests/{id}/reject` `{reason}` | décision manuelle ; 409 si déjà décidée |
+| GET | `/api/v1/certificates/{id}` | 200 `{id, serial_hex, subject_dn, status, not_before, not_after, sha256_fingerprint, profile, channel, issuer_id}` |
+| GET | `/api/v1/certificates/{id}.pem` | `application/x-pem-file` |
+| GET | `/api/v1/certificates/{id}.crt` | `application/pkix-cert` (DER) |
 
-Profils, demandes, liste des certificats et jetons d'API viennent en phase 1 (suite) et avant la release.
+**Supprimés au lot 5a** (ADR-0010) : `POST /api/v1/certificates` et `POST /api/v1/certificates/{id}/self-sign`
+(404/405). Une AC racine se crée par `h42pki authority init`.
+
+**À venir** : publication `/ca/*`, liste des certificats et schéma `Problem` dans l'OpenAPI (lot 5b, B30), jetons
+d'API (avant la release).
 
 **TLS et mTLS.** Le serveur ASGI (Granian ou Uvicorn) peut terminer TLS lui-même, mais l'accès au certificat client
 dans FastAPI dépend du serveur — **À vérifier**. Choix retenu pour v1 (cf. ADR-0005) : un **reverse-proxy**
