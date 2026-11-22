@@ -1,8 +1,9 @@
 """Admin API ``/api/v1`` (no authentication until the first release, ADR-0008)."""
 
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Response, status
+from fastapi import APIRouter, Query, Response, status
 
 from h42pki.api.admin.deps import (
     Actor,
@@ -14,6 +15,7 @@ from h42pki.api.admin.deps import (
 )
 from h42pki.api.admin.schemas import (
     AuthorityOut,
+    CertificateList,
     CertificateOut,
     PrivateKeyCreate,
     PrivateKeyOut,
@@ -24,7 +26,8 @@ from h42pki.api.admin.schemas import (
     certificate_pem,
 )
 from h42pki.errors import NotFound
-from h42pki.models import RequestStatus
+from h42pki.models import CertificateStatus, Channel, RequestStatus
+from h42pki.services.certificates import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 
 PEM_MEDIA_TYPE = "application/x-pem-file"
 DER_CERT_MEDIA_TYPE = "application/pkix-cert"
@@ -54,6 +57,44 @@ async def delete_private_key(private_key_id: UUID, actor: Actor, keys: KeyServic
 
 
 # --- certificates ---------------------------------------------------------------------------
+
+
+@router.get("/certificates")
+async def list_certificates(
+    certificates: CertificateServiceDep,
+    status: Annotated[CertificateStatus | None, Query()] = None,
+    profile: Annotated[str | None, Query(max_length=64)] = None,
+    channel: Annotated[Channel | None, Query()] = None,
+    q: Annotated[
+        str | None, Query(max_length=256, description="Substring of the subject DN, any case.")
+    ] = None,
+    limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = DEFAULT_PAGE_SIZE,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> CertificateList:
+    """Certificates, newest first."""
+    page = await certificates.search(
+        status=status, profile=profile, channel=channel, q=q, limit=limit, offset=offset
+    )
+    return CertificateList(
+        items=[CertificateOut.from_model(cert) for cert in page.items],
+        total=page.total,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get(
+    "/certificates/{certificate_id}/chain.pem",
+    response_class=Response,
+    responses={200: {"content": {PEM_MEDIA_TYPE: {}}}},
+)
+async def download_certificate_chain(
+    certificate_id: UUID, certificates: CertificateServiceDep
+) -> Response:
+    """The certificate followed by its issuers up to the root, ready to deploy on a server."""
+    chain = await certificates.chain(await certificates.get(certificate_id))
+    body = b"".join(certificate_pem(cert.der) for cert in chain)
+    return Response(content=body, media_type=PEM_MEDIA_TYPE)
 
 
 async def _der(certificates: CertificateServiceDep, certificate_id: UUID) -> bytes:

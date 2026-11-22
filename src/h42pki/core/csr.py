@@ -54,7 +54,8 @@ def _load(data: bytes | str) -> x509.CertificateSigningRequest:
         raise InvalidCsr("the CSR cannot be parsed (PEM or DER PKCS#10 expected)") from None
 
 
-def _san_entry(name: x509.GeneralName) -> SanEntry:
+def san_entry(name: x509.GeneralName) -> SanEntry:
+    """Map a supported general name to a :class:`SanEntry` (dns, ip, email, uri)."""
     if isinstance(name, x509.DNSName):
         return SanEntry("dns", name.value)
     if isinstance(name, x509.IPAddress):
@@ -104,7 +105,7 @@ def parse_csr(data: bytes | str) -> ParsedCsr:
     ignored: list[str] = []
     for extension in extensions:
         if isinstance(extension.value, x509.SubjectAlternativeName):
-            sans = tuple(_san_entry(name) for name in extension.value)
+            sans = tuple(san_entry(name) for name in extension.value)
         else:
             ignored.append(_extension_label(extension))
 

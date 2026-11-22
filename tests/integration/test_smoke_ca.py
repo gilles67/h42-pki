@@ -52,10 +52,14 @@ async def test_root_ca_certificate(
         "sha256_fingerprint",
         "profile",
         "channel",
+        "issuer",
         "issuer_id",
+        "sans",
+        "ca_issuers_url",
     }
     assert body["status"] == "valid"
     assert body["profile"] is None and body["issuer_id"] is None and body["channel"] == "cli"
+    assert body["issuer"] is None and body["sans"] == [] and body["ca_issuers_url"] is None
 
     root = await download(client, record.id)
     root.verify_directly_issued_by(root)
@@ -83,6 +87,9 @@ async def test_issued_tls_server_certificate(
     body = (await client.get(f"/api/v1/certificates/{request.certificate_id}")).json()
     assert body["profile"] == "tls_server"
     assert body["issuer_id"] == str(authority.id)
+    assert body["issuer"] == "test-root"
+    assert body["sans"] == [{"type": "dns", "value": "www.example.test"}]
+    assert body["ca_issuers_url"] is None  # the test root has no public base URL
     assert body["channel"] == "api"
     leaf = await download(client, request.certificate_id)
     leaf.verify_directly_issued_by(await download(client, root_record.id))

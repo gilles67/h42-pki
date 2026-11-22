@@ -10,8 +10,9 @@ from cryptography import x509
 from cryptography.hazmat.primitives import serialization
 from pydantic import BaseModel, ConfigDict, Field
 
+from h42pki.core.inspection import ca_issuers_url, subject_alternative_names
 from h42pki.core.keys import KeyAlgorithm
-from h42pki.core.profiles import ProfileSpec
+from h42pki.core.profiles import ProfileSpec, SanType
 from h42pki.core.validity import MAX_VALIDITY_DAYS, MIN_VALIDITY_DAYS
 from h42pki.models import (
     Authority,
@@ -61,6 +62,11 @@ class PrivateKeyOut(Schema):
         )
 
 
+class SanOut(Schema):
+    type: SanType
+    value: str
+
+
 class CertificateOut(Schema):
     id: UUID
     serial_hex: str
@@ -71,11 +77,17 @@ class CertificateOut(Schema):
     sha256_fingerprint: str
     profile: str | None  # None for the root CA certificate
     channel: Channel
-    issuer_id: UUID | None  # None for the root CA certificate (issued by itself)
+    issuer: str | None  # name of the issuing CA; None for the root CA certificate
+    issuer_id: UUID | None
+    sans: list[SanOut] = Field(description="Subject alternative names, read from the DER.")
+    ca_issuers_url: str | None = Field(
+        description="AIA caIssuers URL, read from the DER; None when absent."
+    )
 
     @classmethod
     def from_model(cls, cert: Certificate) -> "CertificateOut":
-        """``cert.profile`` must be prefetched."""
+        """``cert.profile`` and ``cert.issuer`` must be prefetched."""
+        parsed = x509.load_der_x509_certificate(cert.der)
         return cls(
             id=cert.id,
             serial_hex=cert.serial_hex,
@@ -86,8 +98,20 @@ class CertificateOut(Schema):
             sha256_fingerprint=cert.sha256_fingerprint,
             profile=cert.profile.name if cert.profile is not None else None,
             channel=cert.channel,
+            issuer=cert.issuer.name if cert.issuer is not None else None,
             issuer_id=cert.issuer_id,
+            sans=[
+                SanOut(type=san.type, value=san.value) for san in subject_alternative_names(parsed)
+            ],
+            ca_issuers_url=ca_issuers_url(parsed),
         )
+
+
+class CertificateList(Schema):
+    items: list[CertificateOut]
+    total: int = Field(description="Number of certificates matching the filters.")
+    limit: int
+    offset: int
 
 
 def certificate_pem(der: bytes) -> bytes:
