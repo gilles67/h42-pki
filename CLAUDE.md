@@ -85,10 +85,12 @@ configuration en base, profils désactivables, lanceur HTTP/HTTPS intégré, cer
 - **API** : `api/admin/` (`routes.py`, `schemas.py` écrits à la main, `extra="forbid"`, `deps.py` : keystore,
   services et `current_actor` = `"anonymous"`, ADR-0008), `api/problems.py` (toutes les erreurs en
   `application/problem+json`, schéma `Problem` déclaré dans l'OpenAPI), `api/public/` (`/ca/{name}.crt|.pem`,
-  `/ca/chain.pem` en HTTP, cache `ETag` / 304, aucune clé touchée), `api/health.py` (`GET /`, `GET /health`),
+  `/ca/chain.pem` en HTTP, cache `ETag` / 304 partagé dans `cache.py`, aucune clé touchée ; `/favicon.ico`, fichier
+  de `static/` lu une fois par `assets.py`), `api/health.py` (`GET /`, `GET /health`),
   `api/listener.py` (routes publiques seules en HTTP), `api/client_cert.py` (certificat client d'une requête).
 - **CLI** `cli/` : `version`, `serve` (lanceur, `--reload`), `healthcheck`, `authority init|status|export|update`,
-  `profile list|show|enable|disable`, `certificate list|export`, `config show|get|set|unset` ; `_runtime.py` ouvre la même base que le serveur et transforme les erreurs en message
+  `profile list|show|enable|disable`, `certificate list|export`, `config show|get|set|unset` ; `_runtime.py`
+  ouvre la même base que le serveur et transforme les erreurs en message
   lisible (code de sortie non nul).
 - **Règles métier** : le seul certificat auto-signé est celui de l'AC racine, créé par `h42pki authority init`
   (ADR-0010) ; tout le reste passe par un profil intégré (lecture seule, ADR-0009) via `IssuanceService`. AIA
@@ -108,6 +110,7 @@ src/h42pki/
   main.py            # create_app() : factory FastAPI + lifespan (Tortoise, synchronisation des profils)
   config.py          # Settings (pydantic-settings) : variables H42_PKI_* (liste fermée, ADR-0011), *_FILE, secrets
   logs.py  heartbeat.py
+  static/            # fichiers servis tels quels (favicon.ico), inclus dans le paquet, lus par importlib.resources
   server/            # lanceur maison : launcher, protocol, tls, ssl_context, run — en place (phase 1.1)
   db.py              # configuration Tortoise (tortoise_config(settings))
   errors.py          # erreurs métier typées (NotFound, Conflict, Unprocessable, InvalidRequest)
@@ -124,7 +127,7 @@ src/h42pki/
     problems.py      # handlers application/problem+json (RFC 9457)        — en place
     listener.py  client_cert.py  health.py                                  — en place
     admin/           # /api/v1/... (routes, schemas, deps ; sans auth jusqu'à la release, ADR-0008) — en place
-    public/          # /ca/* (HTTP public, AIA caIssuers, chaîne) — en place ; /crl/* en phase 3
+    public/          # /ca/* (HTTP public, AIA caIssuers, chaîne), /favicon.ico — en place ; /crl/* en phase 3
     ocsp/  est/  scep/  acme/  federation/
   tasks/             # tâches périodiques : tls_service (certificat HTTPS) — en place ; CRL, purges, expirations à venir
   cli/               # Typer : authority, profile, certificate, config, healthcheck, serve — en place

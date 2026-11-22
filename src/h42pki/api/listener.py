@@ -16,7 +16,7 @@ from h42pki.api.problems import problem
 LISTENER_EXTENSION = "h42pki.listener"
 
 # Public routes, also served over HTTP. /crl/*, /ocsp and /scep join them with their phase.
-HTTP_EXACT_ROUTES = frozenset({"/", "/health"})
+HTTP_EXACT_ROUTES = frozenset({"/", "/health", "/favicon.ico"})
 HTTP_ROUTE_PREFIXES = ("/ca/",)
 
 
@@ -49,8 +49,8 @@ class ListenerRoutesMiddleware:
             response = problem(
                 404,
                 "Not Found",
-                "this route is only served over HTTPS (the HTTP listener serves /, /health and "
-                "/ca/* only)",
+                "this route is only served over HTTPS (the HTTP listener serves /, /health, "
+                "/favicon.ico and /ca/* only)",
             )
             await response(scope, receive, send)
             return

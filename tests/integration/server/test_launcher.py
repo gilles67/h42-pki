@@ -167,7 +167,8 @@ async def test_u5_u6_route_split(
         for path in ("/docs", "/openapi.json", "/api/v1/config", "/api/v1/profiles"):
             assert (await get(running.http(path))).status_code == 404, path
             assert (await get(running.https(path), verify=context)).status_code == 200, path
-        for path in ("/", "/health", "/ca/test-root.crt", "/ca/test-root.pem", "/ca/chain.pem"):
+        public = ("/", "/health", "/favicon.ico", "/ca/test-root.crt", "/ca/test-root.pem")
+        for path in (*public, "/ca/chain.pem"):
             assert (await get(running.http(path))).status_code == 200, path
             assert (await get(running.https(path), verify=context)).status_code == 200, path
         # No redirect to HTTPS: AIA must stay plain HTTP (CLAUDE.md section 6.9).

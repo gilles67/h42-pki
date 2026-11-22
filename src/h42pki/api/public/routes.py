@@ -4,42 +4,18 @@ They only read published certificates: no request here ever triggers an operatio
 """
 
 import hashlib
-from datetime import UTC, datetime
-from email.utils import format_datetime
 
 from fastapi import APIRouter, Request, Response
 
 from h42pki.api.admin.schemas import certificate_pem
 from h42pki.api.problems import PROBLEM_RESPONSES
+from h42pki.api.public.cache import cacheable
 from h42pki.services.publication import PublicationService
 
 PEM_MEDIA_TYPE = "application/x-pem-file"
 DER_CERT_MEDIA_TYPE = "application/pkix-cert"
-CACHE_CONTROL = "public, max-age=3600"
 
 router = APIRouter(prefix="/ca", tags=["public"], responses=PROBLEM_RESPONSES)
-
-
-def _etag_matches(request: Request, etag: str) -> bool:
-    header = request.headers.get("if-none-match")
-    if header is None:
-        return False
-    candidates = {candidate.strip().removeprefix("W/") for candidate in header.split(",")}
-    return "*" in candidates or etag in candidates
-
-
-def _cacheable(
-    request: Request, *, body: bytes, media_type: str, etag: str, last_modified: datetime
-) -> Response:
-    headers = {
-        "ETag": etag,
-        # Tortoise returns ZoneInfo("UTC") datetimes; format_datetime(usegmt) wants datetime.UTC.
-        "Last-Modified": format_datetime(last_modified.astimezone(UTC), usegmt=True),
-        "Cache-Control": CACHE_CONTROL,
-    }
-    if _etag_matches(request, etag):
-        return Response(status_code=304, headers=headers)
-    return Response(content=body, media_type=media_type, headers=headers)
 
 
 # Declared before /ca/{name}.pem, which would otherwise match "chain" ("chain" is a reserved name).
@@ -52,7 +28,7 @@ def _cacheable(
 async def chain_pem(request: Request) -> Response:
     certificates = await PublicationService().chain()
     body = b"".join(certificate_pem(certificate.der) for certificate in certificates)
-    return _cacheable(
+    return cacheable(
         request,
         body=body,
         media_type=PEM_MEDIA_TYPE,
@@ -69,7 +45,7 @@ async def chain_pem(request: Request) -> Response:
 )
 async def ca_certificate_der(name: str, request: Request) -> Response:
     certificate = await PublicationService().ca_certificate(name)
-    return _cacheable(
+    return cacheable(
         request,
         body=certificate.der,
         media_type=DER_CERT_MEDIA_TYPE,
@@ -86,7 +62,7 @@ async def ca_certificate_der(name: str, request: Request) -> Response:
 )
 async def ca_certificate_pem(name: str, request: Request) -> Response:
     certificate = await PublicationService().ca_certificate(name)
-    return _cacheable(
+    return cacheable(
         request,
         body=certificate_pem(certificate.der),
         media_type=PEM_MEDIA_TYPE,

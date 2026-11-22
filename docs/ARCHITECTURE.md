@@ -413,7 +413,7 @@ Deux listeners, servis par le lanceur (ADR-0012) : **HTTP** (`H42_PKI_HTTP_PORT`
 les routes publiques sont servies sur les deux, tout le reste **uniquement en HTTPS**.
 
 Mise en œuvre : le protocole du lanceur pose `scope["extensions"]["h42pki.listener"]` (`"http"` ou `"https"`) sur
-chaque requête ; un middleware ASGI (`api/listener.py`) laisse passer en HTTP `/`, `/health` et `/ca/*` seulement
+chaque requête ; un middleware ASGI (`api/listener.py`) laisse passer en HTTP `/`, `/health`, `/favicon.ico` et `/ca/*` seulement
 (`/crl/*`, `/ocsp` et `/scep` s'y ajouteront avec leur phase) et renvoie pour tout le reste un `404`
 `application/problem+json` (« this route is only served over HTTPS »), sans redirection. `/docs` et
 `/openapi.json` sont donc HTTPS uniquement. Sans l'extension (application appelée directement, comme
@@ -422,6 +422,7 @@ chaque requête ; un middleware ASGI (`api/listener.py`) laisse passer en HTTP `
 | Préfixe | HTTP | HTTPS | Auth | Contenu |
 |---|---|---|---|---|
 | `/`, `/health` | oui | oui | aucune | `{"name", "version"}` ; santé : `status` (`ok`, `degraded`, `unavailable` → 503), `database`, `heartbeat_age_seconds`, `authority` (statut de l'AC locale), `listeners`, `https` (`serving`, `waiting`, `disabled`), `https_certificate` (`not_after`, `renewal` `ok`/`failing`), `warnings` — statuts seulement, jamais de secret |
+| `/favicon.ico` | oui | oui | aucune | favicon du projet (`image/x-icon`, ICO 16/32/48 px, `src/h42pki/static/`, charte graphique), lu une fois au démarrage ; cache `ETag` / 304, `Cache-Control: public, max-age=86400` ; absent de l'OpenAPI |
 | `/ca/{name}.crt`, `/ca/{name}.pem`, `/ca/chain.pem` | oui | oui | aucune | AIA caIssuers (DER), PEM, chaîne avec la racine — **implémenté (lot 5b)**, cache `ETag` / 304 |
 | `/crl/{name}.crl`, `/crl/{name}-delta.crl` | oui | oui | aucune | CRL DER (`application/pkix-crl`) — phase 3 |
 | `/ocsp` (POST), `/ocsp/{b64}` (GET) | oui | oui | aucune | `application/ocsp-request` / `-response` — phase 3 |
