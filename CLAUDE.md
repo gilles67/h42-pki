@@ -23,28 +23,31 @@ Chaque niveau fournit :
 | ACME | enrôlement automatisé (type Let's Encrypt) | RFC 8555 (+ RFC 8737, RFC 9773) | `docs/protocols/acme.md` |
 
 Stack : **Python ≥ 3.13 (ADR-0014), FastAPI, Tortoise ORM (async), `cryptography`, Pydantic v2, Typer (CLI), uv**.
-Serveur : **Uvicorn** piloté par un **lanceur maison** (HTTP + HTTPS intégrés, ADR-0012) à partir de la phase 1.1 ; Granian
-aujourd'hui.
+Serveur : **Uvicorn 0.54** (épinglé) piloté par un **lanceur maison** (HTTP + HTTPS intégrés, ADR-0012) ; plus de
+Granian.
 
 ## 2. État actuel du code (important)
 
-**Phase 1 terminée** (lots 1 à 5b) : outillage, sécurité, modèle de données, API `/api/v1`, AC racine par CLI,
-profils, demandes, émission depuis un CSR, publication `/ca/*` et AIA caIssuers, liste des certificats. Le code suit la
-structure en couches cible ; ce qui n'existe pas encore est marqué « à venir » au §3. **Prochaine étape : phase 1.1
-(socle d'exploitation)**, puis phase 2 (fédération).
+**Phases 1 et 1.1 terminées** : outillage, sécurité, modèle de données, API `/api/v1`, AC racine par CLI, profils,
+demandes, émission depuis un CSR, publication `/ca/*` et AIA caIssuers, liste des certificats (phase 1) ; Python 3.13,
+configuration en base, profils désactivables, lanceur HTTP/HTTPS intégré, certificat HTTPS émis par l'AC locale, santé
+(phase 1.1). Le code suit la structure en couches cible ; ce qui n'existe pas encore est marqué « à venir » au §3.
+**Prochaine étape : phase 2 (fédération).**
 
-**Décidé le 2026-11-22, pas encore implémenté (phase 1.1)** — à respecter dès maintenant :
+**Décisions du 2026-11-22, en place depuis la phase 1.1** — à respecter :
 - **Configuration en base** (ADR-0011) : hors de la base, seulement une **liste fermée** de variables d'environnement
   (`H42_PKI_DATABASE_URL`, `H42_PKI_CA_PASSPHRASE`, `H42_PKI_SERVER_HOSTNAME`, `H42_PKI_SERVER_ALT_NAMES`,
   `H42_PKI_ENVIRONMENT`, `H42_PKI_BIND_ADDRESS`, `H42_PKI_HTTP_ENABLED|PORT`, `H42_PKI_HTTPS_ENABLED|PORT`,
-  `H42_PKI_TRUSTED_PROXIES`). Le reste va dans la table `Setting`, écrite par la CLI seulement
-  (`h42pki config …`), lue par `GET /api/v1/config`. Pas de fichier TOML.
-- **HTTP et HTTPS intégrés** (ADR-0012, remplace ADR-0005) : lanceur maison, deux listeners Uvicorn dans un
-  processus, mTLS facultatif, certificat client dans `scope["extensions"]["tls"]`, routes publiques en HTTP, tout le
-  reste en HTTPS, mode « à vide » admis, santé par `h42pki healthcheck` et `GET /health`. Validé par
-  `docs/spikes/2026-11-tls-launcher.md`.
+  `H42_PKI_TRUSTED_PROXIES`), plus le mécanisme de livraison des secrets (`*_FILE`, `H42_PKI_SECRETS_DIR`). Le
+  reste est dans la table `Setting` (schéma `RuntimeSettings`, `core/settings_schema.py`), écrite par la CLI
+  seulement (`h42pki config …`), lue par `GET /api/v1/config`. Pas de fichier TOML.
+- **HTTP et HTTPS intégrés** (ADR-0012, remplace ADR-0005) : `server/`, deux listeners Uvicorn dans un processus,
+  mTLS facultatif, certificat client dans `scope["extensions"]["tls"]` (lu par `api/client_cert.py`), routes
+  publiques seules en HTTP (`api/listener.py`), mode « à vide » admis, santé par `h42pki healthcheck` et
+  `GET /health`.
 - **Certificat HTTPS émis par l'AC locale** (ADR-0013) : profil interne `service_tls`, 47 jours, renouvelé quand il
-  reste 15 jours ; toute AC, même racine ou intermédiaire, s'en émet un pour son propre serveur.
+  reste 15 jours (`tasks/tls_service.py`) ; toute AC, même racine ou intermédiaire, s'en émet un pour son propre
+  serveur.
 - **Profils désactivables** (`issuance.disabled_profiles`, complément de l'ADR-0009) : tous actifs par défaut, sur
   toute AC.
 - **Python 3.13** (ADR-0014).
@@ -52,30 +55,40 @@ structure en couches cible ; ce qui n'existe pas encore est marqué « à venir 
 - **Socle** : `config.py` (`Settings`, variables `H42_PKI_*`, `H42_PKI_*_FILE`, secrets Docker dans `/run/secrets`
   ou `H42_PKI_SECRETS_DIR`, contrôle des permissions des fichiers de secrets), `db.py` (config Tortoise), `main.py`
   (`create_app()` + lifespan `RegisterTortoise` puis synchronisation des profils, `generate_schemas=True` jusqu'à la
-  première release, ADR-0007), `errors.py` (erreurs métier typées, dont 503 `NoActiveAuthority`).
+  première release, ADR-0007 ; `manage_database=False` pour le lanceur), `errors.py` (erreurs métier typées, dont 503
+  `NoActiveAuthority`), `logs.py` (format texte ou JSON, niveau à chaud), `heartbeat.py` (battement du lanceur).
+- **`server/`** (lanceur, ADR-0012) : `launcher.py` (`Launcher` : listeners, démarrage différé du HTTPS, rechargement
+  à chaud du certificat, redémarrage d'un seul listener, mode « à vide », battement), `protocol.py` (sous-classe de
+  `H11Protocol` d'Uvicorn : extensions `h42pki.listener` et `tls`), `tls.py` (extension ASGI `tls`),
+  `ssl_context.py` (`SSLContext`, clé chiffrée via un dossier temporaire privé), `run.py` (base, journaux, signaux).
+- **`tasks/`** : `tls_service.py` (renouvellement quotidien du certificat HTTPS, nouvelle tentative le lendemain).
 - **`core/`** (pur, synchrone, testé par `tests/unit/core/test_purity.py`) : `keys.py` (`KeyAlgorithm` RSA/EC/Ed25519,
   génération, PKCS#8 DER chiffré, hachage de signature), `names.py` (`NameAttributes`, `Subject`, `rfc4514`),
-  `extensions.py` (`Extensions`, `validate_for_key`), `profiles.py` (`ProfileSpec`, `BUILTIN_PROFILES`), `csr.py`
-  (`parse_csr`), `issuance.py` (`build_self_signed` pour la racine, `plan_issuance` / `build_issued` pour le reste,
+  `extensions.py` (`Extensions`, `validate_for_key`), `profiles.py` (`ProfileSpec`, `BUILTIN_PROFILES`, dont le profil
+  interne `service_tls`), `csr.py` (`parse_csr`, `build_csr`), `issuance.py` (`build_self_signed` pour la racine, `plan_issuance` / `build_issued` pour le reste,
   AIA caIssuers), `publication.py` (`public_base_url`, noms d'AC, URL caIssuers), `inspection.py` (SAN et AIA relus
-  depuis le DER), `validity.py`, `serial.py`, `errors.py`.
-- **`keystore/`** : `KeyStore` (protocole : `generate`, `load`), `SoftwareKeyStore` (seul détenteur de la
+  depuis le DER), `hostnames.py` (FQDN, noms supplémentaires, CIDR), `settings_schema.py` (`RuntimeSettings`, niveaux
+  d'application), `service_tls.py` (quand réémettre le certificat HTTPS), `validity.py`, `serial.py`, `errors.py`.
+- **`keystore/`** : `KeyStore` (protocole : `generate`, `load`, `export_encrypted` pour la clé TLS), `SoftwareKeyStore` (seul détenteur de la
   passphrase), `get_keystore(settings)`. Seul `keystore` appelle les fonctions de (dé)chiffrement de `core.keys`.
 - **`services/`** : `AuthorityService` (`init_root`, AC locale), `IssuanceService` (`submit` → `auto_approve` ou
-  `approve` / `reject` → `_issue`, **seul chemin d'émission**), `ProfileService` (synchronisation des profils
-  intégrés, lecture), `PublicationService` (certificats publiés, chaîne), `KeyService`, `CertificateService`
+  `approve` / `reject` → `_issue`, **seul chemin d'émission**, y compris `issue_service_certificate`), `ProfileService`
+  (synchronisation des profils intégrés, lecture, activation), `SettingsService` / `SettingsWatcher` (réglages en
+  base, relecture par révision), `TlsServiceManager` (certificat `service_tls`), `PublicationService` (certificats publiés, chaîne), `KeyService`, `CertificateService`
   (lecture, recherche paginée, chaîne, statut effectif). Transactions, audit, crypto via `asyncio.to_thread` ; le
   keystore est passé explicitement et n'est construit que pour les opérations sur une clé (passphrase facultative
   ailleurs, B32).
-- **Modèles** `models/` (un fichier par agrégat : `private_key`, `authority`, `profile`, `certificate`, `request`,
-  `audit`, base `TimestampedModel`) : FK sans cycle (B27), stockage DER, `AuditLog.record()`. Un certificat est
+- **Modèles** `models/` (un fichier par agrégat : `private_key` (`purpose` `ca|tls`), `authority`, `profile`,
+  `certificate`, `request` (canal `system`), `audit`, `setting` (`Setting`, `SettingsRevision`), base
+  `TimestampedModel`) : FK sans cycle (B27), stockage DER, `AuditLog.record()`. Un certificat est
   toujours enregistré signé.
 - **API** : `api/admin/` (`routes.py`, `schemas.py` écrits à la main, `extra="forbid"`, `deps.py` : keystore,
   services et `current_actor` = `"anonymous"`, ADR-0008), `api/problems.py` (toutes les erreurs en
   `application/problem+json`, schéma `Problem` déclaré dans l'OpenAPI), `api/public/` (`/ca/{name}.crt|.pem`,
-  `/ca/chain.pem` en HTTP, cache `ETag` / 304, aucune clé touchée), `api/health.py` (`GET /`, `GET /health`).
-- **CLI** `cli/` : `version`, `serve`, `authority init|status|export|update`, `profile list|show`,
-  `certificate list|export` ; `_runtime.py` ouvre la même base que le serveur et transforme les erreurs en message
+  `/ca/chain.pem` en HTTP, cache `ETag` / 304, aucune clé touchée), `api/health.py` (`GET /`, `GET /health`),
+  `api/listener.py` (routes publiques seules en HTTP), `api/client_cert.py` (certificat client d'une requête).
+- **CLI** `cli/` : `version`, `serve` (lanceur, `--reload`), `healthcheck`, `authority init|status|export|update`,
+  `profile list|show|enable|disable`, `certificate list|export`, `config show|get|set|unset` ; `_runtime.py` ouvre la même base que le serveur et transforme les erreurs en message
   lisible (code de sortie non nul).
 - **Règles métier** : le seul certificat auto-signé est celui de l'AC racine, créé par `h42pki authority init`
   (ADR-0010) ; tout le reste passe par un profil intégré (lecture seule, ADR-0009) via `IssuanceService`. AIA
@@ -94,30 +107,34 @@ Le plan de travail par phases est dans `docs/roadmap.md` — **suivre l'ordre de
 src/h42pki/
   main.py            # create_app() : factory FastAPI + lifespan (Tortoise, synchronisation des profils)
   config.py          # Settings (pydantic-settings) : variables H42_PKI_* (liste fermée, ADR-0011), *_FILE, secrets
-  server/            # lanceur maison : listeners HTTP/HTTPS Uvicorn, protocole TLS, rechargement — phase 1.1
+  logs.py  heartbeat.py
+  server/            # lanceur maison : launcher, protocol, tls, ssl_context, run — en place (phase 1.1)
   db.py              # configuration Tortoise (tortoise_config(settings))
   errors.py          # erreurs métier typées (NotFound, Conflict, Unprocessable, InvalidRequest)
   core/              # DOMAINE CRYPTO PUR : synchrone, sans I/O, sans ORM, sans FastAPI
     keys.py  names.py  extensions.py  profiles.py  csr.py  issuance.py  publication.py  inspection.py
-    validity.py  serial.py  errors.py                                         — en place (lots 4 à 5b)
+    hostnames.py  settings_schema.py  service_tls.py  validity.py  serial.py  errors.py      — en place
     crl.py  ocsp.py  cms.py  chain.py                                           — à venir
   keystore/          # base.py (KeyStore), software.py — en place ; pkcs11.py en phase 7
-  models/            # private_key, authority, profile, certificate, request, audit — en place ; setting en phase 1.1
-  services/          # authority, issuance, profiles, publication, keys, certificates, x509_fields — en place ;
+  models/            # private_key, authority, profile, certificate, request, audit, setting — en place
+  services/          # authority, issuance, profiles, publication, keys, certificates, settings, tls_service,
+                     # x509_fields — en place ;
                      # revocation, crl, ocsp, federation à venir
   api/
     problems.py      # handlers application/problem+json (RFC 9457)        — en place
+    listener.py  client_cert.py  health.py                                  — en place
     admin/           # /api/v1/... (routes, schemas, deps ; sans auth jusqu'à la release, ADR-0008) — en place
     public/          # /ca/* (HTTP public, AIA caIssuers, chaîne) — en place ; /crl/* en phase 3
     ocsp/  est/  scep/  acme/  federation/
-  tasks/             # tâches périodiques : certificat HTTPS service_tls (phase 1.1), puis CRL, purges, expirations
-  cli/               # Typer : authority, profile, certificate — en place ; config, healthcheck en phase 1.1
+  tasks/             # tâches périodiques : tls_service (certificat HTTPS) — en place ; CRL, purges, expirations à venir
+  cli/               # Typer : authority, profile, certificate, config, healthcheck, serve — en place
 tests/
   unit/  integration/  interop/  conftest.py
 docs/
 ```
 
-Règle de dépendance (stricte) : `api → services → (core, keystore, models)`.
+Règle de dépendance (stricte) : `server → api → services → (core, keystore, models)` ; `tasks` est lancé par
+`server` et appelle `services`.
 `core` n'importe **jamais** `models`, `services`, `api`, `fastapi` ni `tortoise`.
 
 ## 4. Commandes
@@ -133,11 +150,13 @@ uv run pytest -m interop                  # interopérabilité (openssl, sscep, 
 uv run pytest --cov=h42pki --cov-report=term-missing
 uv run ruff check . && uv run ruff format --check .
 uv run mypy src
-H42_PKI_CA_PASSPHRASE=... uv run h42pki serve --reload   # serveur de dev (uvicorn, rechargement auto)
-# à partir de la phase 1.1, le serveur exige aussi H42_PKI_SERVER_HOSTNAME (FQDN), cf. ADR-0011
+H42_PKI_CA_PASSPHRASE=... H42_PKI_SERVER_HOSTNAME=pki.home42.test H42_PKI_SERVER_ALT_NAMES=localhost,127.0.0.1 \
+  uv run h42pki serve --reload            # lanceur de dev : HTTP :8080, HTTPS :8443 dès que l'AC existe
+uv run h42pki healthcheck                 # base + battement du lanceur (code 0 / 1)
+uv run h42pki config show                 # réglages en base ; `config set KEY VALUE`, `config unset KEY`
 uv run h42pki --help                      # CLI
 uv run h42pki authority init --name root --common-name "Test Root CA"   # AC racine locale (base data/)
-docker build -t h42-pki:dev .            # image (non-root, /data ; Granian aujourd'hui, lanceur Uvicorn en phase 1.1)
+docker build -t h42-pki:dev .            # image (non-root, /data, `h42pki serve`, ports 8080 et 8443)
 docker compose -f deploy/compose.yaml up  # hiérarchie racine + intermédiaire + émettrice (phase 2)
 ```
 
@@ -192,7 +211,7 @@ Avant de déclarer une tâche terminée : `ruff check`, `ruff format --check`, `
    jamais en dur ni dans le dépôt. `config/pki.json`, `*.sqlite3`, `*.pem`, `*.key` sont ignorés par git.
 8. Comparaisons de secrets en temps constant (`hmac.compare_digest`), mots de passe hachés (argon2 / scrypt).
 9. CRL et AIA servis en **HTTP simple** (pas de redirection HTTPS) pour éviter les boucles de validation ;
-   EST, ACME, la fédération et l'API d'admin uniquement en **HTTPS** (à partir de la phase 1.1 : le listener HTTP ne sert
+   EST, ACME, la fédération et l'API d'admin uniquement en **HTTPS** (depuis la phase 1.1 : le listener HTTP ne sert
    que les routes publiques, ADR-0012).
 10. Le certificat client se lit **uniquement** dans `scope["extensions"]["tls"]` (lanceur, ADR-0012) ; l'en-tête
     `Client-Cert` d'un reverse-proxy n'est pris en compte que si la requête vient de `H42_PKI_TRUSTED_PROXIES`.
@@ -209,7 +228,7 @@ Stratégie complète : `docs/testing.md`. L'essentiel :
 - Temps : `time-machine` pour expiration, `nextUpdate` CRL, nonces ACME.
 - Chaque bug corrigé ⇒ un test de non-régression. Chaque endpoint de protocole ⇒ au moins un test
   qui vérifie la sortie avec `cryptography` (parsing DER) **et** un test d'interop marqué `@pytest.mark.interop`.
-- Lanceur (phase 1.1) : reprendre les scénarios U1 à U14 de `docs/spikes/2026-11-tls-launcher.md` comme tests de
+- Lanceur : les scénarios U1 à U14 de `docs/spikes/2026-11-tls-launcher.md` sont repris comme tests de
   non-régression (vrais sockets, ports libres, PKI de test), car le protocole TLS hérite d'une classe interne
   d'Uvicorn (version épinglée).
 - Couverture visée : `core/` ≥ 90 %, global ≥ 80 %.

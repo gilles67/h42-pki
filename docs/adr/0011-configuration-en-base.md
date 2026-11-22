@@ -78,3 +78,28 @@ Les commandes de la CLI qui n'utilisent ni clé ni serveur ne demandent ni passp
 - Changer un port ou un nom d'hôte impose de recréer le conteneur, ce qui va de pair avec la publication des ports
   par Docker.
 - Comme le schéma de base (ADR-0007), le schéma des réglages évolue sans migration jusqu'à la première release.
+
+## Mise en œuvre (phase 1.1, 2026-11-22)
+
+Décisions inchangées ; précisions apportées par l'implémentation :
+
+- **Variables de livraison des secrets** : `H42_PKI_<NOM>_FILE` et `H42_PKI_SECRETS_DIR` (existantes depuis le lot 1,
+  B4) restent en plus de la liste fermée : elles disent *où* lire un secret, elles ne configurent pas l'instance.
+- **Défauts hors image** : `H42_PKI_DATABASE_URL` vaut `sqlite://data/h42pki.sqlite3` (chemin relatif, pour le
+  développement local) et `H42_PKI_BIND_ADDRESS` `127.0.0.1` ; l'image fixe `sqlite:///data/h42pki.sqlite3` et
+  `0.0.0.0`. Un défaut `/data` absolu ne fonctionnerait pas hors conteneur (Windows notamment).
+- **Contrôles** : règles de noms et de réseaux dans `core/hostnames.py` (pur), cohérence des ports dans `Settings`.
+  `H42_PKI_SERVER_HOSTNAME` et la passphrase ne sont exigés que par `h42pki serve` (code de sortie 2) ; `config`,
+  `profile`, `certificate`, `healthcheck` et `authority status|export` fonctionnent sans.
+- **Stockage** : `Setting.value` est du texte JSON (un `JSONField` de Tortoise gère mal une valeur qui est une simple
+  chaîne). Une table `SettingsRevision` (une ligne, compteur) est incrémentée dans la même transaction que chaque
+  écriture.
+- **Prise en compte** : les services relisent les réglages en base à chaque usage (aucun cache : `hot` est donc
+  immédiat pour eux) ; le lanceur relit la révision toutes les 5 secondes pour ce qu'il applique lui-même (niveau
+  des journaux, redémarrage d'un listener, vérification du certificat HTTPS). Une valeur stockée qui ne passe plus la
+  validation est ignorée avec un avertissement, au lieu de bloquer l'instance (pas de migration, ADR-0007).
+- **Niveaux** : `server.client_trust_anchors` est `listener` pour tout changement, ajout compris (l'ajout à chaud
+  d'une ancre n'a pas été validé) ; `server.tls_ciphers` est vérifié par OpenSSL dès l'écriture ;
+  `database.pool_size` n'a d'effet qu'avec PostgreSQL / MySQL (lu après une première connexion, puis reconnexion).
+- **CLI** : `h42pki config set KEY VALUE` lit la valeur en JSON, ou la prend comme texte si ce n'est pas du JSON ;
+  `set` d'une valeur déjà stockée n'écrit rien. Les 404 et 405 de l'API sont en `problem+json` (B46).

@@ -59,36 +59,50 @@ Réalisée en cinq lots (1 à 5b) :
 - authentification de l'API d'administration → jalon « Première release » (ADR-0008) ;
 - ascendants dans `/ca/chain.pem` → phase 2 (fédération).
 
-## Phase 1.1 — Socle d'exploitation (avant la phase 2)
+## Phase 1.1 — Socle d'exploitation — ✅ terminée (2026-11-22)
 
-Décisions du 2026-11-22 (ADR-0011 à 0014, complément de l'ADR-0009). La fédération s'appuiera sur ce socle : la
-fille joint la mère en HTTPS intégré.
+Décisions du 2026-11-22 (ADR-0011 à 0014, complément de l'ADR-0009), réalisées en deux étapes. La fédération
+s'appuiera sur ce socle : la fille joint la mère en HTTPS intégré.
 
-- **Python 3.13** (ADR-0014) : `requires-python`, `.python-version`, image `python:3.13-slim`, CI 3.13 et 3.14,
-  `uv.lock` régénéré.
-- **Variables d'environnement** (ADR-0011) : liste fermée et contrôles au démarrage (`H42_PKI_SERVER_HOSTNAME`
-  FQDN obligatoire pour le serveur, `H42_PKI_SERVER_ALT_NAMES`, `H42_PKI_BIND_ADDRESS`, `H42_PKI_HTTP_*`,
-  `H42_PKI_HTTPS_*`, `H42_PKI_TRUSTED_PROXIES`).
-- **Configuration en base** (ADR-0011) : table `Setting`, schéma `RuntimeSettings` avec niveau d'application,
-  `h42pki config show|get|set|unset` (avec `AuditLog`), `GET /api/v1/config` (lecture seule).
-- **Profils désactivables** (ADR-0009) : `issuance.disabled_profiles`, `h42pki profile disable|enable`, champ
-  `enabled` dans l'API.
-- **Lanceur maison** (ADR-0012) : `server/` (listeners HTTP et HTTPS Uvicorn, protocole TLS, `SSLContext`, démarrage
-  différé, rechargement à chaud, mode « à vide »), routes réparties entre HTTP et HTTPS, en-tête `Client-Cert`
-  seulement depuis `H42_PKI_TRUSTED_PROXIES`, avertissements de cohérence au démarrage. Granian retiré.
-- **Certificat HTTPS intégré** (ADR-0013) : profil interne `service_tls`, `PrivateKey.purpose`, émission dès que
-  l'AC est active, tâche de renouvellement (reste ≤ 15 jours, nouvelle tentative quotidienne), réémission si les
-  noms changent. Première tâche de `tasks/`.
-- **Santé** : `h42pki healthcheck` (base + battement du lanceur) utilisé par le `HEALTHCHECK` Docker ;
-  `GET /health` enrichi (statut de l'AC, listeners, expiration du certificat HTTPS).
-- **Tests** : scénarios U1 à U14 de `docs/spikes/2026-11-tls-launcher.md` repris comme tests de non-régression du
-  lanceur ; version d'Uvicorn épinglée.
+- ✅ **Python 3.13** (ADR-0014) : `requires-python`, `.python-version`, ruff et mypy, image `python:3.13-slim`, CI
+  (lint en 3.13, tests en 3.13 et 3.14), `uv.lock` régénéré. Granian retiré, Uvicorn épinglé `>=0.54,<0.55`.
+- ✅ **Variables d'environnement** (ADR-0011) : liste fermée, validée par `core/hostnames.py` (FQDN, noms
+  supplémentaires DNS ou IP, CIDR) et par `Settings` (ports, listeners) ; `H42_PKI_SERVER_HOSTNAME` exigé par
+  `h42pki serve` seulement.
+- ✅ **Configuration en base** (ADR-0011) : tables `Setting` et `SettingsRevision`, schéma `RuntimeSettings`
+  (13 réglages de la phase 1.1, niveau `hot` / `listener` / `process` déclaré pour chacun), `h42pki config
+  show|get|set|unset` (audit `config.set` / `config.unset`, message d'effet), `GET /api/v1/config` (405 en
+  écriture). Le serveur relit la révision toutes les 5 s.
+- ✅ **Profils désactivables** (ADR-0009) : `issuance.disabled_profiles`, `h42pki profile disable|enable`, champ
+  `enabled` ; soumission refusée (422), approbation refusée (409), rejet possible.
+- ✅ **Lanceur maison** (ADR-0012) : `server/` (listeners Uvicorn HTTP et HTTPS, protocole qui pose
+  `h42pki.listener` et l'extension ASGI `tls`, `SSLContext` TLS 1.2+ et mTLS facultatif, démarrage différé,
+  rechargement à chaud, redémarrage d'un seul listener, mode « à vide »), routes publiques seules en HTTP (404
+  `problem+json` sinon), `Client-Cert` seulement depuis `H42_PKI_TRUSTED_PROXIES`, avertissements au démarrage.
+- ✅ **Certificat HTTPS intégré** (ADR-0013) : profil interne `service_tls`, `PrivateKey.purpose`, canal `system`,
+  émission par `IssuanceService` dès que l'AC est active, réémission si les noms changent, tâche
+  `tasks/tls_service.py` (renouvellement à J-15, nouvelle tentative le lendemain, rechargement à chaud).
+- ✅ **Santé** : `h42pki healthcheck` (base + battement du lanceur, sans port) utilisé par le `HEALTHCHECK` Docker ;
+  `GET /health` enrichi (base, battement, AC, listeners, état du HTTPS, expiration et renouvellement du certificat).
+- ✅ **Tests** : scénarios U1 à U14 de `docs/spikes/2026-11-tls-launcher.md` sur le vrai lanceur
+  (`tests/integration/server/`, vrais sockets), en plus des tests des réglages, de la CLI et de l'API.
 
 **Fait quand** : dans Docker, avec une base vide et `H42_PKI_SERVER_HOSTNAME` défini, `h42pki authority init`
 ouvre le HTTPS sans redémarrage ; `curl --cacert root.pem https://<hostname>:8443/health` répond ; l'API
 d'administration ne répond plus en HTTP ; un certificat client présenté est visible de l'application ; le
 renouvellement forcé du certificat HTTPS est pris à chaud ; le conteneur est `healthy` avec HTTP et HTTPS
 désactivés.
+
+> État au 2026-11-22 : tous ces points sont vérifiés par les tests et par un scénario manuel **hors conteneur**
+> (Windows), Docker n'étant pas disponible sur le poste de développement. **Restent à valider dans Docker** :
+> l'image elle-même (`docker build`), l'état `healthy` du conteneur, avec et sans listener.
+
+**Reporté** :
+- passage à chaud du mTLS facultatif à obligatoire et ajout d'une ancre de confiance client **sans** redémarrer le
+  listener (aujourd'hui `server.client_trust_anchors` est de niveau `listener`) ;
+- vérification de la chaîne d'un certificat client reçu par `Client-Cert` → phase 4 (EST, B45) ;
+- purge des anciennes clés et anciens certificats `service_tls` → tâches de purge, phase 3 (B44) ;
+- CDP / OCSP dans les certificats, attendus par les clients Windows (B41) → phase 3.
 
 ## Phase 2 — Hiérarchie (fédération)
 

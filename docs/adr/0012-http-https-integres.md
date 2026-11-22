@@ -73,3 +73,31 @@ client à l'application. Une expérience autonome a tranché la question (`docs/
 - HTTP/1.1 seulement (protocole `h11`).
 - Le *channel binding* `tls-unique` d'EST reste non supporté.
 - Un seul processus et pas de workers multiples : cohérent avec l'ADR-0001 et les tâches planifiées.
+
+## Mise en œuvre (phase 1.1, 2026-11-22)
+
+Décisions inchangées ; précisions apportées par l'implémentation (`src/h42pki/server/`) :
+
+- **Uvicorn** épinglé `>=0.54,<0.55` ; Granian retiré des dépendances et de l'image.
+- **Clé sur disque** : pour rester dans la règle « une clé ne sort du keystore que chiffrée » (CLAUDE.md §6.2), le
+  fichier temporaire contient la clé en **PKCS#8 chiffré** par un mot de passe à usage unique gardé en mémoire
+  (`KeyStore.export_encrypted`), et `load_cert_chain(..., password=…)` la déchiffre. Le dossier reste `0700`, les
+  fichiers `0600`, supprimés aussitôt.
+- **Base et lifespan** : le lanceur ouvre la base lui-même et lance Uvicorn avec `lifespan="off"` (deux listeners
+  exécuteraient sinon deux fois le lifespan) ; `create_app(manage_database=False)`.
+- **Adresse du client** : Uvicorn tourne avec `proxy_headers=False`, sinon `X-Forwarded-For` aurait pu faire passer
+  un client pour un proxy de `H42_PKI_TRUSTED_PROXIES`.
+- **Répartition des routes** : le protocole pose `scope["extensions"]["h42pki.listener"]` sur les deux listeners, et
+  un middleware ASGI unique (`api/listener.py`) applique la règle, `/docs` et `/openapi.json` compris (HTTPS
+  seulement). Sans l'extension, tout répond : mode réservé aux tests.
+- **Redémarrage d'un listener** : le nouveau contexte TLS est construit avant l'arrêt de l'ancien listener (s'il
+  échoue, l'ancien reste) ; les connexions ouvertes ont 5 secondes pour se terminer.
+- **Santé** : le battement est un fichier du dossier temporaire nommé d'après l'URL de la base, écrit toutes les
+  10 secondes et supprimé à l'arrêt, plutôt qu'une ligne en base (pas d'écriture permanente dans SQLite) ;
+  `h42pki healthcheck` exige un battement de moins de 60 secondes.
+- **Signaux** : SIGINT et SIGTERM par `loop.add_signal_handler`, `signal.signal` sous Windows ; Uvicorn n'installe
+  pas ses propres gestionnaires.
+- **Développement** : `h42pki serve --reload` relance tout le processus lanceur avec `watchfiles.run_process` (le
+  rechargement d'Uvicorn ne sait relancer qu'une application, pas le lanceur).
+- **Environnement** : sous WSL1, SQLite en mode WAL ne se partage pas entre deux processus (B42) ; WSL2, Docker et
+  Windows ne sont pas concernés.

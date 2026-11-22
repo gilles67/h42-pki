@@ -17,8 +17,11 @@ flowchart TD
     I --> D["Issuing CA (devices)<br/>SCEP · EST · OCSP · CRL"]
 ```
 
-Stack: Python ≥ 3.12 (3.13 from the next lot, [ADR-0014](docs/adr/0014-python-3-13.md)), FastAPI, Tortoise ORM
-(SQLite by default), `cryptography`, Pydantic, Typer, uv.
+Stack: Python ≥ 3.13 ([ADR-0014](docs/adr/0014-python-3-13.md)), FastAPI, Tortoise ORM (SQLite by default),
+`cryptography`, Pydantic, Typer, uv. Each container serves **HTTP and HTTPS by itself**, without a reverse proxy: a
+built-in launcher runs two Uvicorn listeners in one process ([ADR-0012](docs/adr/0012-http-https-integres.md)), and
+the CA issues and renews the certificate of its own HTTPS server
+([ADR-0013](docs/adr/0013-certificat-serveur-integre.md)).
 
 > [!WARNING]
 > **Early development, not for production use.**
@@ -31,39 +34,53 @@ Stack: Python ≥ 3.12 (3.13 from the next lot, [ADR-0014](docs/adr/0014-python-
 Requirements: [uv](https://docs.astral.sh/uv/) (and Docker for the container image).
 
 ```bash
-uv sync --all-groups                      # install dependencies (runtime + dev)
-export H42_PKI_CA_PASSPHRASE='change-me'  # passphrase used to encrypt private keys
+uv sync --all-groups                               # install dependencies (runtime + dev)
+export H42_PKI_CA_PASSPHRASE='change-me'           # passphrase used to encrypt private keys
+export H42_PKI_SERVER_HOSTNAME=pki.home42.test     # FQDN of the service (CN of its HTTPS certificate)
+export H42_PKI_SERVER_ALT_NAMES=localhost,127.0.0.1
 export H42_PKI_ENVIRONMENT=dev
-uv run h42pki serve --reload              # http://127.0.0.1:8000, health check at /health
+uv run h42pki serve --reload                       # HTTP on 127.0.0.1:8080; HTTPS on :8443 once the CA exists
 ```
 
-The interactive API docs are then served at `http://127.0.0.1:8000/docs`.
-
-Create the root CA (once per container), then issue a TLS server certificate from a CSR:
+Until a CA exists, only HTTP answers, with the public routes (`/`, `/health`, `/ca/*`). Create the root CA (once per
+container) from another terminal, with the same variables: the server opens HTTPS **without restart**, with a
+certificate issued by that CA (47 days, renewed automatically 15 days before expiry).
 
 ```bash
 uv run h42pki authority init --name home42-root --common-name "Home42 Root CA"   # 10 years by default
 uv run h42pki authority export --output root.pem
+curl --cacert root.pem https://127.0.0.1:8443/health
+```
+
+The admin API (`/api/v1`) and its interactive docs (`https://127.0.0.1:8443/docs`) are served over **HTTPS only**.
+Issue a TLS server certificate from a CSR:
+
+```bash
 openssl req -new -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes \
   -keyout leaf.key -out leaf.csr -subj "/CN=www.home42.test" \
   -addext "subjectAltName=DNS:www.home42.test"
 jq -n --rawfile csr leaf.csr '{csr_pem: $csr, profile: "tls_server"}' \
-  | curl -s -H 'content-type: application/json' -d @- http://127.0.0.1:8000/api/v1/requests
+  | curl -s --cacert root.pem -H 'content-type: application/json' -d @- https://127.0.0.1:8443/api/v1/requests
 # -> {"status": "issued", "certificate_id": "…", …}
-curl -s -o leaf.pem http://127.0.0.1:8000/api/v1/certificates/<certificate_id>.pem
+curl -s --cacert root.pem -o leaf.pem https://127.0.0.1:8443/api/v1/certificates/<certificate_id>.pem
 openssl verify -CAfile root.pem leaf.pem
 ```
 
+> [!NOTE]
+> On Windows, `curl` (Schannel) refuses certificates that carry no revocation information until CRL and OCSP exist
+> (phase 3): add `--ssl-no-revoke`.
+
 Profiles decide what a certificate contains (`uv run h42pki profile list`): `tls_server` certificates last 90 days
-(200 at most). Certificates are listed with `uv run h42pki certificate list` or `GET /api/v1/certificates`.
+(200 at most). A profile can be disabled on a CA (`h42pki profile disable device`). Certificates are listed with
+`uv run h42pki certificate list` or `GET /api/v1/certificates`.
 
 With a public base URL (`--public-base-url` at `authority init`, or `h42pki authority update`), the CA certificate is
 published over plain HTTP and issued certificates point to it (AIA caIssuers):
 
 ```bash
-uv run h42pki authority update --public-base-url http://127.0.0.1:8000
-curl -s http://127.0.0.1:8000/ca/home42-root.crt | openssl x509 -inform DER -noout -subject
-curl -s -o chain.pem http://127.0.0.1:8000/ca/chain.pem   # CA chain, root included
+uv run h42pki authority update --public-base-url http://127.0.0.1:8080
+curl -s http://127.0.0.1:8080/ca/home42-root.crt | openssl x509 -inform DER -noout -subject
+curl -s -o chain.pem http://127.0.0.1:8080/ca/chain.pem   # CA chain, root included
 openssl verify -CAfile chain.pem leaf.pem
 ```
 
@@ -71,54 +88,46 @@ openssl verify -CAfile chain.pem leaf.pem
 
 ```bash
 make docker-build
-docker run -d --name h42pki -p 127.0.0.1:8000:8000 \
+docker run -d --name h42pki \
   -e H42_PKI_CA_PASSPHRASE='change-me' \
-  -v h42pki-data:/data \
+  -e H42_PKI_SERVER_HOSTNAME=pki.home42.lan \
+  -e H42_PKI_SERVER_ALT_NAMES=localhost,127.0.0.1 \
+  -v h42pki-data:/data -p 80:8080 -p 443:8443 \
   gilles67/h42-pki:latest
 docker exec h42pki h42pki authority init --name home42-root --common-name "Home42 Root CA"
+docker exec h42pki h42pki authority export > root.pem
+curl --cacert root.pem https://localhost/health
 ```
+
+The container is `healthy` when the database answers and the launcher is alive (`h42pki healthcheck`, independent of
+the ports). With `H42_PKI_HTTP_ENABLED=false` and `H42_PKI_HTTPS_ENABLED=false` it serves nothing on the network
+(idle mode, for example an offline root) and stays usable through `docker exec`.
 
 ### Configuration
 
-Settings are read from `H42_PKI_*` environment variables. Each secret can also be given as a file, either with
+A fixed list of environment variables, read at start-up; each secret can also be given as a file, either with
 `H42_PKI_<NAME>_FILE` or as a Docker secret in `/run/secrets/h42_pki_<name>` (directory configurable with
-`H42_PKI_SECRETS_DIR`).
+`H42_PKI_SECRETS_DIR`):
 
 | Variable | Default | Description |
 |---|---|---|
-| `H42_PKI_CA_PASSPHRASE` | *(required)* | Passphrase that encrypts the private keys |
-| `H42_PKI_DATABASE_URL` | `sqlite://data/h42pki.sqlite3` (`/data/…` in the image) | Tortoise database URL |
-| `H42_PKI_ENVIRONMENT` | `production` | `dev`, `test` or `production` |
-
-### Coming next: built-in HTTP and HTTPS (phase 1.1)
-
-The next lot makes each container self-sufficient, without a reverse proxy
-([ADR-0011](docs/adr/0011-configuration-en-base.md) to [ADR-0013](docs/adr/0013-certificat-serveur-integre.md)):
-
-- one process serves **HTTP** (public endpoints: `/ca/*`, later CRL, OCSP, SCEP) and **HTTPS** (everything,
-  including the admin API, federation, EST and ACME), with optional client certificates (mTLS);
-- as soon as the CA is active, it issues the certificate of its own HTTPS server (47 days, renewed automatically
-  15 days before expiry) — even a root or intermediate CA does this, for its own server only;
-- the whole configuration lives in the database (one file to back up, plus the passphrase), edited with
-  `h42pki config`; only a fixed list of environment variables remains:
-
-| Variable | Default | Description |
-|---|---|---|
-| `H42_PKI_CA_PASSPHRASE` | *(required)* | Passphrase that encrypts the private keys |
-| `H42_PKI_SERVER_HOSTNAME` | *(required for the server)* | FQDN of the service: CN and first SAN of its HTTPS certificate |
+| `H42_PKI_CA_PASSPHRASE` | *(required by the server)* | Passphrase that encrypts the private keys |
+| `H42_PKI_SERVER_HOSTNAME` | *(required by the server)* | FQDN of the service: CN and first SAN of its HTTPS certificate |
 | `H42_PKI_SERVER_ALT_NAMES` | empty | Extra DNS names / IP addresses for the HTTPS certificate, comma-separated |
-| `H42_PKI_DATABASE_URL` | `sqlite:///data/h42pki.sqlite3` | Tortoise database URL |
+| `H42_PKI_DATABASE_URL` | `sqlite://data/h42pki.sqlite3` (`sqlite:///data/…` in the image) | Tortoise database URL |
 | `H42_PKI_ENVIRONMENT` | `production` | `dev`, `test` or `production` |
-| `H42_PKI_BIND_ADDRESS` | `0.0.0.0` in the image | Listen address |
-| `H42_PKI_HTTP_ENABLED` / `H42_PKI_HTTP_PORT` | `true` / `8080` | HTTP listener |
-| `H42_PKI_HTTPS_ENABLED` / `H42_PKI_HTTPS_PORT` | `true` / `8443` | HTTPS listener |
-| `H42_PKI_TRUSTED_PROXIES` | empty | CIDRs of trusted reverse proxies (none by default) |
+| `H42_PKI_BIND_ADDRESS` | `127.0.0.1` (`0.0.0.0` in the image) | Listen address |
+| `H42_PKI_HTTP_ENABLED` / `H42_PKI_HTTP_PORT` | `true` / `8080` | HTTP listener (public routes only) |
+| `H42_PKI_HTTPS_ENABLED` / `H42_PKI_HTTPS_PORT` | `true` / `8443` | HTTPS listener (everything, optional client certificates) |
+| `H42_PKI_TRUSTED_PROXIES` | empty | CIDRs of trusted reverse proxies (`Client-Cert` header); none by default |
+
+Everything else lives in the database (one file to back up, plus the passphrase), edited with the CLI and read by
+`GET /api/v1/config`:
 
 ```bash
-docker run -d --name pki-root \
-  -e H42_PKI_CA_PASSPHRASE_FILE=/run/secrets/ca_passphrase \
-  -e H42_PKI_SERVER_HOSTNAME=pki-root.home42.lan \
-  -v pki-root-data:/data -p 80:8080 -p 443:8443 gilles67/h42-pki
+uv run h42pki config show                              # value, default, origin, application level
+uv run h42pki config set server.tls_min_version tls1.3 # -> the HTTPS listener restarts by itself
+uv run h42pki config unset server.tls_min_version
 ```
 
 ## Development
@@ -131,9 +140,9 @@ docker run -d --name pki-root \
 | `make typecheck` | mypy |
 | `make test` | pytest (interop tests excluded) |
 | `make check` | lint + typecheck + test |
-| `make run` | dev server with auto-reload |
+| `make run` | dev server with auto-reload (`h42pki serve --reload`) |
 
-CI (GitHub Actions) runs lint, type checking and tests on Python 3.12 and 3.13 (3.13 and 3.14 from phase 1.1).
+CI (GitHub Actions) runs lint and type checking on Python 3.13, tests on Python 3.13 and 3.14.
 
 ## Roadmap
 
@@ -141,8 +150,8 @@ CI (GitHub Actions) runs lint, type checking and tests on Python 3.12 and 3.13 (
 |---|---|---|
 | 0 | Clean-up: installable package, settings, tooling, tests, Docker image, CI | ✅ done |
 | 1 | CA core: key store, certificate profiles, single issuance path, data model, admin API, CLI, AIA publication | ✅ done |
-| 1.1 | Operations base: Python 3.13, configuration in the database, built-in HTTP/HTTPS launcher, self-issued HTTPS certificate, health check | 🚧 next |
-| 2 | Hierarchy: subordinate CA enrolment with its parent (federation), multi-level `docker compose` | ⏳ |
+| 1.1 | Operations base: Python 3.13, configuration in the database, built-in HTTP/HTTPS launcher, self-issued HTTPS certificate, health check | ✅ done |
+| 2 | Hierarchy: subordinate CA enrolment with its parent (federation), multi-level `docker compose` | 🚧 next |
 | 3 | Revocation: CRL (full/delta) and OCSP responder | ⏳ |
 | 4 | EST enrolment (RFC 7030) | ⏳ |
 | 5 | SCEP enrolment (RFC 8894) | ⏳ |

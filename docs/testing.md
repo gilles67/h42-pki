@@ -54,27 +54,55 @@ markers = ["interop: requires external tools / docker", "slow: long-running"]
 6. Bug corrigé ⇒ test de non-régression nommé `test_regression_<id>` (ex. `test_regression_B1_unique_serials`).
 7. Pas de RSA 4096 hors `@pytest.mark.slow`.
 
-## 4 bis. Lanceur HTTP/HTTPS (phase 1.1)
+## 4 bis. Lanceur HTTP/HTTPS
 
 Le protocole TLS du lanceur hérite d'une classe **interne** d'Uvicorn (ADR-0012) : ses tests vérifient le
 comportement réel, avec de vrais sockets, et protègent les mises à jour d'Uvicorn (version épinglée).
 
-- `tests/integration/server/` : PKI de test, ports libres, lanceur démarré dans la boucle de test ou en
-  sous-processus.
-- Reprendre les scénarios **U1 à U14** de `docs/spikes/2026-11-tls-launcher.md` :
-  - démarrage différé du HTTPS ;
-  - routes réparties entre HTTP et HTTPS (l'API d'administration absente en HTTP) ;
-  - mTLS facultatif, certificat client et chaîne visibles dans `scope["extensions"]["tls"]`, refus d'une AC
-    inconnue ;
-  - rechargement à chaud, y compris pour une connexion déjà ouverte ;
-  - un seul processus, arrêt propre.
-- Ajouter :
-  - mode « à vide » (aucun listener) avec `h42pki healthcheck` au vert ;
-  - contrôles des variables d'environnement (FQDN invalide, ports identiques, CIDR invalide) ;
-  - en-tête `Client-Cert` ignoré sans `H42_PKI_TRUSTED_PROXIES` ou depuis une IP non listée ;
-  - renouvellement de `service_tls` à J-15 avec `time_machine`, réémission si les noms changent.
-- À vérifier à l'implémentation (non couverts par l'expérience) : modification à chaud de la version TLS minimale,
-  ajout à chaud d'une ancre de confiance, passage à chaud du mTLS facultatif à obligatoire.
+`tests/integration/server/` (PKI de test EC P-256, ports libres, base en mémoire de la fixture `client`) :
+
+- `test_launcher.py`, lanceur démarré dans la boucle de test :
+  - **U1, U2** : HTTP seul avant tout certificat, port HTTPS fermé, `/health` à `"https": "waiting"` ;
+  - **U3** : HTTPS ouvert tout seul après la création de l'AC ;
+  - **U4** : en HTTP, schéma `http`, extension `h42pki.listener` = `http`, pas d'extension `tls` ;
+  - **U5, U6** : répartition des routes (`/api/v1/*`, `/docs`, `/openapi.json` absents en HTTP avec un 404
+    `problem+json` sans redirection, présents en HTTPS ; `/`, `/health`, `/ca/*` sur les deux) ;
+  - **U7 à U10** : HTTPS sans certificat client, certificat client et chaîne vérifiée (feuille + AC) dans
+    `scope["extensions"]["tls"]`, certificat d'une AC inconnue refusé à la poignée de main ;
+  - **U11, U12** : renouvellement forcé par les réglages `tls_service.*`, nouveau numéro de série pour les nouvelles
+    connexions, connexion ouverte avant le renouvellement toujours servie avec l'ancien certificat ;
+  - **U13** : les deux listeners servis par le même processus ;
+  - redémarrage du seul listener HTTPS après `server.tls_min_version = tls1.3` (TLS 1.2 refusé ensuite, HTTP
+    intact), redémarrage des deux listeners pour une limite Uvicorn, ancien listener conservé si le nouveau contexte
+    TLS échoue, niveau des journaux appliqué à chaud ;
+  - mode « à vide » (aucun port, battement écrit puis supprimé à l'arrêt), HTTPS désactivé sans émission de
+    certificat, avertissements au démarrage, port HTTP occupé.
+- `test_process.py`, `h42pki serve` dans un autre processus :
+  - HTTPS ouvert après `h42pki authority init` lancée dans un troisième processus, API d'administration 404 en HTTP
+    et 200 en HTTPS, certificat de 47 jours, puis **U14** (arrêt propre sur SIGTERM, POSIX seulement) ;
+  - **U14** en mode « à vide » ;
+  - `h42pki healthcheck` rouge avant le démarrage, vert en mode « à vide », rouge après l'arrêt ;
+  - `serve` sans `H42_PKI_SERVER_HOSTNAME` ou sans passphrase : code 2 ; plus d'options `--host` / `--port`.
+- `test_components.py` : `Client-Cert` ignoré sans `H42_PKI_TRUSTED_PROXIES` et depuis une IP non listée, accepté
+  depuis une IP listée, en-tête invalide ignoré, connexion TLS prioritaire ; tâche de renouvellement (échec puis
+  nouvelle tentative, renouvellement à J-15 avec `time_machine`, réveil sur demande) ; `/health` avec un
+  renouvellement en échec ; battement et `healthcheck` (absent, récent, périmé, base injoignable) ; `SSLContext`
+  (aucun fichier laissé dans le dossier temporaire, ancres) ; réglages qui redémarrent un listener ;
+  `database.pool_size`.
+
+Ailleurs : `tests/integration/test_service_tls.py` (émission, réémission si les noms changent, renouvellement à J-15,
+expiration, matériel chargé avec la clé chiffrée), `tests/unit/core/test_service_tls.py`,
+`tests/unit/core/test_hostnames.py`, `tests/unit/core/test_settings_schema.py`, `tests/integration/test_settings.py`
+(dont la relecture d'une écriture faite « par un autre processus »), `test_cli_config.py`, `test_config_api.py`,
+`test_disabled_profiles.py`.
+
+Limites connues :
+- sous **Windows**, SIGTERM ne peut pas être envoyé à un processus : les assertions de U14 ne tournent que sous
+  POSIX (WSL) ;
+- sous **WSL1**, SQLite en mode WAL ne se partage pas entre processus (B42) : les deux tests de `test_process.py`
+  qui lancent la CLI pendant que le serveur tourne y sont ignorés ;
+- non couverts (non implémentés) : ajout à chaud d'une ancre de confiance et passage à chaud du mTLS facultatif à
+  obligatoire, sans redémarrer le listener.
 
 ## 5. Interopérabilité (`deploy/compose.interop.yaml`)
 

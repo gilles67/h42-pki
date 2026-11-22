@@ -48,3 +48,21 @@ de devoir fournir un certificat de l'extérieur à certains conteneurs et garde 
 - Le nom sous lequel les autres conteneurs joignent celui-ci (par exemple le nom du service `docker compose`) doit
   figurer dans `H42_PKI_SERVER_ALT_NAMES`, sinon la vérification TLS échoue entre conteneurs.
 - C'est la première tâche planifiée du projet (`tasks/`), avant celles des CRL.
+
+## Mise en œuvre (phase 1.1, 2026-11-22)
+
+Décisions inchangées ; précisions apportées par l'implémentation :
+
+- **Même chemin d'émission** : `IssuanceService.issue_service_certificate` (interne, absente de l'API) génère une clé
+  **EC P-256** (rapide, acceptée partout), construit le CSR, enregistre une demande sur le canal `system`
+  (`requester = system`), puis passe par le même `_issue` que tout autre certificat ; la clé est stockée dans la même
+  transaction que le certificat. Profil interne : 47 jours par défaut, 200 au plus (SC-081v3), CN = premier nom.
+- **Réémission** (`core/service_tls.py`) : aucun certificat, expiré, CN ou ensemble des SAN différents des
+  variables, ou `renew_before_days` jours ou moins restants.
+- **Attente de l'AC** : le lanceur regarde toutes les 5 secondes si l'AC est active ; la tâche quotidienne prend le
+  relais une fois le HTTPS ouvert. Un changement des réglages `tls_service.*` déclenche une vérification immédiate,
+  ce qui permet de forcer un renouvellement sans commande dédiée.
+- **HTTPS désactivé** (`H42_PKI_HTTPS_ENABLED=false`) : aucun certificat n'est émis.
+- **Limites connues** : les anciennes clés et anciens certificats restent en base (B44, purge en phase 3) ; tant que
+  les certificats n'ont ni CDP ni OCSP (phase 3), les clients Windows qui exigent une information de révocation
+  refusent ce HTTPS (B41).
