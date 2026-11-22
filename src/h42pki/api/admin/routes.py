@@ -13,17 +13,20 @@ from h42pki.api.admin.deps import (
     IssuanceServiceDep,
     KeyServiceDep,
     ProfileServiceDep,
+    SettingsServiceDep,
 )
 from h42pki.api.admin.schemas import (
     AuthorityOut,
     CertificateList,
     CertificateOut,
+    ConfigOut,
     PrivateKeyCreate,
     PrivateKeyOut,
     ProfileOut,
     RequestCreate,
     RequestOut,
     RequestReject,
+    SettingOut,
     certificate_pem,
 )
 from h42pki.api.problems import PROBLEM_RESPONSES
@@ -148,6 +151,15 @@ async def get_authority(authorities: AuthorityServiceDep) -> AuthorityOut:
     if authority is None:
         raise NotFound("no local certificate authority: run `h42pki authority init` first")
     return AuthorityOut.from_model(authority, await authorities.certificate_of(authority))
+
+
+# --- configuration (read-only: written by the CLI, ADR-0011) --------------------------------
+
+
+@router.get("/config")
+async def get_config(settings: SettingsServiceDep) -> ConfigOut:
+    """Effective runtime settings, with their default, origin and application level."""
+    return ConfigOut(items=[SettingOut.from_view(view) for view in await settings.describe()])
 
 
 # --- profiles (read-only, ADR-0009) ---------------------------------------------------------

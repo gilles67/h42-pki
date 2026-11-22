@@ -1,6 +1,7 @@
 """Exception handlers rendering errors as ``application/problem+json`` (RFC 9457)."""
 
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Mapping
+from http import HTTPStatus
 from typing import Any
 
 from fastapi import FastAPI, Request
@@ -8,6 +9,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
 from tortoise.exceptions import DoesNotExist, IntegrityError
 
@@ -77,10 +79,18 @@ def install_problem_schemas(app: FastAPI) -> None:
 ExceptionHandler = Callable[[Request, Any], Coroutine[Any, Any, Response]]
 
 
-def problem(status: int, title: str, detail: str, **extensions: Any) -> JSONResponse:
+def problem(
+    status: int,
+    title: str,
+    detail: str,
+    *,
+    headers: Mapping[str, str] | None = None,
+    **extensions: Any,
+) -> JSONResponse:
     """Build a problem details response; ``extensions`` become extra members (RFC 9457 3.2)."""
     return JSONResponse(
         status_code=status,
+        headers=headers,
         content={
             "type": "about:blank",
             "title": title,
@@ -111,6 +121,32 @@ async def _request_validation_error(request: Request, exc: RequestValidationErro
     return problem(422, "Unprocessable Content", detail, errors=errors)
 
 
+# Read-only resources whose writes go through the CLI until the API has authentication.
+READ_ONLY_HINTS = {
+    "/api/v1/config": "settings are changed with `h42pki config set|unset` (ADR-0011)",
+    "/api/v1/profiles": "built-in profiles are read-only (ADR-0009)",
+}
+
+
+def _method_not_allowed_detail(request: Request) -> str:
+    detail = f"method {request.method} is not allowed on this resource"
+    for prefix, hint in READ_ONLY_HINTS.items():
+        if request.url.path == prefix or request.url.path.startswith(f"{prefix}/"):
+            return f"{detail}: {hint}"
+    return detail
+
+
+async def _http_exception(request: Request, exc: StarletteHTTPException) -> Response:
+    """Routing errors of Starlette (404 unknown route, 405 wrong method) as problem+json."""
+    if exc.status_code == 404:
+        detail = "the requested resource does not exist"
+    elif exc.status_code == 405:
+        detail = _method_not_allowed_detail(request)
+    else:
+        detail = str(exc.detail)
+    return problem(exc.status_code, HTTPStatus(exc.status_code).phrase, detail, headers=exc.headers)
+
+
 async def _does_not_exist(request: Request, exc: DoesNotExist) -> Response:
     return problem(404, "Not Found", "the requested resource does not exist")
 
@@ -124,6 +160,7 @@ def exception_handlers() -> dict[int | type[Exception], ExceptionHandler]:
     """Handlers to pass to ``FastAPI(exception_handlers=...)``."""
     return {
         H42Error: _h42_error,
+        StarletteHTTPException: _http_exception,
         RequestValidationError: _request_validation_error,
         DoesNotExist: _does_not_exist,
         IntegrityError: _integrity_error,

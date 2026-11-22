@@ -4,6 +4,7 @@ Tortoise models are never returned directly, and no schema exposes ``encrypted_k
 """
 
 from datetime import UTC, datetime
+from typing import Any, Literal
 from uuid import UUID
 
 from cryptography import x509
@@ -13,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from h42pki.core.inspection import ca_issuers_url, subject_alternative_names
 from h42pki.core.keys import KeyAlgorithm
 from h42pki.core.profiles import ProfileSpec, SanType
+from h42pki.core.settings_schema import ApplyLevel, Listener
 from h42pki.core.validity import MAX_VALIDITY_DAYS, MIN_VALIDITY_DAYS
 from h42pki.models import (
     Authority,
@@ -28,6 +30,7 @@ from h42pki.models import (
 )
 from h42pki.services.certificates import effective_status
 from h42pki.services.profiles import spec_of
+from h42pki.services.settings import SettingView
 
 MAX_CSR_PEM_LENGTH = 65536
 
@@ -162,6 +165,39 @@ class ProfileOut(ProfileSpec):
     @classmethod
     def from_model(cls, profile: Profile) -> "ProfileOut":
         return cls(**spec_of(profile).model_dump(), builtin=profile.builtin)
+
+
+# --- configuration (read-only, ADR-0011) ----------------------------------------------------
+
+
+class SettingOut(Schema):
+    key: str = Field(description="section.name")
+    value: Any = Field(description="Effective value (JSON).")
+    default: Any = Field(description="Default value defined in the code.")
+    origin: Literal["default", "database"]
+    level: ApplyLevel = Field(description="How a change is applied: hot, listener or process.")
+    listeners: list[Listener] = Field(description="Listeners restarted by a change (listener).")
+    description: str
+    updated_at: datetime | None
+    updated_by: str | None
+
+    @classmethod
+    def from_view(cls, view: SettingView) -> "SettingOut":
+        return cls(
+            key=view.key,
+            value=view.value,
+            default=view.default,
+            origin="database" if view.origin == "database" else "default",
+            level=view.apply,
+            listeners=list(view.listeners),
+            description=view.description,
+            updated_at=view.updated_at,
+            updated_by=view.updated_by,
+        )
+
+
+class ConfigOut(Schema):
+    items: list[SettingOut]
 
 
 # --- certificate requests -------------------------------------------------------------------

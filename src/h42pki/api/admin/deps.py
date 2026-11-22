@@ -12,6 +12,7 @@ from h42pki.services import (
     IssuanceService,
     KeyService,
     ProfileService,
+    SettingsService,
 )
 
 
@@ -49,9 +50,14 @@ def profile_service() -> ProfileService:
     return ProfileService()
 
 
+def settings_service() -> SettingsService:
+    return SettingsService()
+
+
 Actor = Annotated[str, Depends(current_actor)]
 AuthorityServiceDep = Annotated[AuthorityService, Depends(authority_service)]
 IssuanceServiceDep = Annotated[IssuanceService, Depends(issuance_service)]
 ProfileServiceDep = Annotated[ProfileService, Depends(profile_service)]
 KeyServiceDep = Annotated[KeyService, Depends(key_service)]
 CertificateServiceDep = Annotated[CertificateService, Depends(certificate_service)]
+SettingsServiceDep = Annotated[SettingsService, Depends(settings_service)]
