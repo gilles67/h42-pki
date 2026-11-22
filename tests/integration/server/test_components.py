@@ -359,8 +359,6 @@ async def test_ssl_context_extra_trust_anchors_and_ciphers(
     context = build_context(material, server)
 
     assert len(context.get_ca_certs()) == 1  # same anchor twice: one entry
-    with pytest.raises(ssl.SSLError):
-        build_context(material, ServerSettings(tls_ciphers="NOT-A-CIPHER"))
 
 
 def test_changed_listeners() -> None:

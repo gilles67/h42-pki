@@ -101,6 +101,7 @@ def test_build_and_read_values() -> None:
         ({"issuance.disabled_profiles": "device"}, "valid list"),
         ({"server.tls_min_version": "tls1.1"}, "tls1.2"),
         ({"server.tls_ciphers": ""}, "at least 1 character"),
+        ({"server.tls_ciphers": "NOT-A-CIPHER"}, "OpenSSL selects no cipher"),
         ({"server.keep_alive_timeout": 0}, "greater than or equal to 1"),
         ({"server.max_header_size": 10}, "greater than or equal to 1024"),
         ({"server.client_trust_anchors": ["not a certificate"]}, "one PEM certificate"),
@@ -156,3 +157,9 @@ def test_levels_are_an_enum() -> None:
 )
 def test_parse_cli_value(text: str, value: object) -> None:
     assert parse_cli_value(text) == value
+
+
+def test_valid_cipher_list() -> None:
+    assert build_settings({"server.tls_ciphers": "ECDHE+AESGCM"}).server.tls_ciphers == (
+        "ECDHE+AESGCM"
+    )

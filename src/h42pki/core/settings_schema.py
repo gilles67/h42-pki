@@ -15,6 +15,7 @@ settings arrive with their phase.
 """
 
 import json
+import ssl
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
@@ -180,6 +181,16 @@ class ServerSettings(_Section):
         ge=1024,
         le=1024 * 1024,
     )
+
+    @field_validator("tls_ciphers")
+    @classmethod
+    def _check_ciphers(cls, value: str | None) -> str | None:
+        if value is not None:
+            try:  # OpenSSL itself decides; checked here rather than at the listener restart
+                ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER).set_ciphers(value)
+            except ssl.SSLError:
+                raise ValueError("OpenSSL selects no cipher with this cipher list") from None
+        return value
 
     @field_validator("client_trust_anchors")
     @classmethod

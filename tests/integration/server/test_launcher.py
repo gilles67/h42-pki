@@ -328,18 +328,26 @@ async def test_uvicorn_limit_restarts_both_listeners(
         assert running.launcher._servers["http"].config.timeout_keep_alive == 30
 
 
-async def test_invalid_cipher_list_keeps_the_running_listener(
+async def test_failed_restart_keeps_the_running_listener(
     run_launcher: Any,
     server_settings: SettingsFactory,
     make_pki: PkiFactory,
     caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """A new SSLContext that cannot be built never takes the listener down."""
+    from h42pki.server import launcher as launcher_module
+
     pki = await make_pki()
     async with run_launcher(server_settings()) as running:
         await running.wait_https()
         https_server = running.launcher._servers["https"]
 
-        await SettingsService().set("server.tls_ciphers", "NOT-A-CIPHER", actor="cli")
+        def broken(*args: Any) -> ssl.SSLContext:
+            raise ssl.SSLError("simulated failure")
+
+        monkeypatch.setattr(launcher_module, "build_context", broken)
+        await SettingsService().set("server.tls_min_version", "tls1.3", actor="cli")
         await wait_for(lambda: "not restarted" in caplog.text, "the error")
 
         assert running.launcher._servers["https"] is https_server
