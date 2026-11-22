@@ -161,10 +161,17 @@ class AuthorityOut(Schema):
 
 class ProfileOut(ProfileSpec):
     builtin: bool
+    enabled: bool = Field(
+        description="False when the profile is listed in issuance.disabled_profiles."
+    )
 
     @classmethod
-    def from_model(cls, profile: Profile) -> "ProfileOut":
-        return cls(**spec_of(profile).model_dump(), builtin=profile.builtin)
+    def from_model(cls, profile: Profile, *, disabled: set[str]) -> "ProfileOut":
+        return cls(
+            **spec_of(profile).model_dump(),
+            builtin=profile.builtin,
+            enabled=profile.name not in disabled,
+        )
 
 
 # --- configuration (read-only, ADR-0011) ----------------------------------------------------

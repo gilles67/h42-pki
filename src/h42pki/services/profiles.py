@@ -3,7 +3,11 @@
 from typing import Any
 
 from h42pki.core.profiles import BUILTIN_PROFILES, ProfileSpec
+from h42pki.errors import NotFound, Unprocessable
 from h42pki.models import AuditLog, Profile
+from h42pki.services.settings import SettingChange, SettingsService
+
+DISABLED_PROFILES = "issuance.disabled_profiles"
 
 SYSTEM_ACTOR = "system"
 
@@ -44,6 +48,28 @@ class ProfileService:
 
     async def get(self, name: str) -> Profile:
         return await Profile.get(name=name)
+
+    # --- activation per CA (issuance.disabled_profiles, ADR-0009) -------------------------
+
+    @staticmethod
+    async def disabled() -> set[str]:
+        """Profiles refused by this CA, read from the database at each call (hot setting)."""
+        return set((await SettingsService().effective()).issuance.disabled_profiles)
+
+    async def set_enabled(self, name: str, *, enabled: bool, actor: str) -> SettingChange:
+        """Shortcut on ``issuance.disabled_profiles`` (``h42pki profile enable|disable``)."""
+        spec = BUILTIN_PROFILES.get(name)
+        if spec is None:
+            raise NotFound(f"profile {name!r} does not exist (see `h42pki profile list`)")
+        if spec.internal:
+            raise Unprocessable(f"{name!r} is an internal profile and cannot be disabled")
+        settings = SettingsService()
+        current = (await settings.effective()).issuance.disabled_profiles
+        if enabled:
+            wanted = [profile for profile in current if profile != name]
+        else:
+            wanted = [*current, name] if name not in current else current
+        return await settings.set(DISABLED_PROFILES, wanted, actor=actor)
 
     @staticmethod
     async def _audit(action: str, profile: Profile, details: dict[str, Any]) -> None:

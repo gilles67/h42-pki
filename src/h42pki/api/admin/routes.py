@@ -167,12 +167,13 @@ async def get_config(settings: SettingsServiceDep) -> ConfigOut:
 
 @router.get("/profiles")
 async def list_profiles(profiles: ProfileServiceDep) -> list[ProfileOut]:
-    return [ProfileOut.from_model(profile) for profile in await profiles.list()]
+    disabled = await profiles.disabled()
+    return [ProfileOut.from_model(profile, disabled=disabled) for profile in await profiles.list()]
 
 
 @router.get("/profiles/{name}")
 async def get_profile(name: str, profiles: ProfileServiceDep) -> ProfileOut:
-    return ProfileOut.from_model(await profiles.get(name))
+    return ProfileOut.from_model(await profiles.get(name), disabled=await profiles.disabled())
 
 
 # --- certificate requests -------------------------------------------------------------------

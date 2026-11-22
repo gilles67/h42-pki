@@ -149,10 +149,37 @@ def test_profile_list() -> None:
 
     assert result.exit_code == 0
     lines = result.output.splitlines()
-    assert lines[0].split()[:3] == ["NAME", "KIND", "APPROVAL"]
+    assert lines[0].split()[:4] == ["NAME", "KIND", "ENABLED", "APPROVAL"]
     tls_server = next(line for line in lines if line.startswith("tls_server"))
-    assert "auto" in tls_server and "90 (max 200)" in tls_server and "server_auth" in tls_server
+    assert tls_server.split()[2:4] == ["yes", "auto"]
+    assert "90 (max 200)" in tls_server and "server_auth" in tls_server
     assert len(lines) == 6
+
+
+def test_profile_disable_and_enable() -> None:
+    result = invoke("profile", "disable", "device")
+
+    assert result.exit_code == 0, result.output
+    assert "profile device disabled (issuance.disabled_profiles = ['device'])" in result.stdout
+    assert "applied hot" in result.stdout
+    listing = invoke("profile", "list").stdout.splitlines()
+    device = next(line for line in listing if line.startswith("device"))
+    assert device.split()[2] == "no"
+    assert "already disabled" in invoke("profile", "disable", "device").stdout
+    assert json.loads(invoke("config", "get", "issuance.disabled_profiles").stdout) == ["device"]
+
+    result = invoke("profile", "enable", "device")
+
+    assert result.exit_code == 0, result.output
+    assert "profile device enabled (issuance.disabled_profiles = [])" in result.stdout
+    assert "already enabled" in invoke("profile", "enable", "device").stdout
+
+
+def test_profile_disable_unknown() -> None:
+    result = invoke("profile", "disable", "code_signing")
+
+    assert result.exit_code == 1
+    assert "profile 'code_signing' does not exist" in result.stderr
 
 
 def test_profile_show() -> None:

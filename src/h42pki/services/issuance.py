@@ -27,7 +27,7 @@ from h42pki.models import (
     RequestStatus,
 )
 from h42pki.services.authority import AuthorityService
-from h42pki.services.profiles import spec_of
+from h42pki.services.profiles import ProfileService, spec_of
 from h42pki.services.x509_fields import signed_fields
 
 AUTO_APPROVE = "auto-approve"
@@ -79,6 +79,13 @@ class IssuanceService:
             if profile is None:
                 raise Unprocessable(f"unknown profile {profile_name!r}")
             spec = spec_of(profile)
+            if spec.internal:
+                raise Unprocessable(
+                    f"profile {profile_name!r} is internal: the CA issues it for its own server "
+                    "only"
+                )
+            if profile.name in await ProfileService.disabled():
+                raise Unprocessable(f"profile {profile_name!r} is disabled on this CA")
             authority = await self._authorities.get_local()
             parsed = parse_csr(csr)
             now = datetime.now(UTC)
@@ -117,6 +124,11 @@ class IssuanceService:
 
     async def approve(self, request_id: UUID, *, actor: str) -> CertificateRequest:
         request = await self._pending(request_id)
+        profile = await Profile.get(id=request.profile_id)
+        if profile.name in await ProfileService.disabled():
+            raise Conflict(
+                f"profile {profile.name!r} is disabled on this CA: the request can only be rejected"
+            )
         await self._audit(actor, "request.approve", request, {})
         return await self._issue(
             request, parsed=parse_csr(request.csr_der), actor=actor, decided_by=actor

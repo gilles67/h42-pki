@@ -27,6 +27,7 @@ class Profile(TimestampedModel):
     san_policy: fields.JSONField[SanPolicy] = fields.JSONField(field_type=SanPolicy)
     ocsp_no_check = fields.BooleanField(default=False)
     include_aia = fields.BooleanField(default=True)
+    internal = fields.BooleanField(default=False)  # service_tls (ADR-0013)
 
     class Meta:
         table = "profile"
@@ -49,4 +50,5 @@ class Profile(TimestampedModel):
             "san_policy": self.san_policy,
             "ocsp_no_check": self.ocsp_no_check,
             "include_aia": self.include_aia,
+            "internal": self.internal,
         }

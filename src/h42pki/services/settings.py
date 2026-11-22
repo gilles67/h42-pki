@@ -113,6 +113,8 @@ class SettingsService:
             new = value_of(build_settings({**values, key: value}), key)  # normalized
             encoded = json.dumps(new, separators=(",", ":"))
             row = rows.get(key)
+            if row is not None and _decode(row) == new:  # already stored: nothing to write
+                return SettingChange(key, previous, new, False, info.apply, info.listeners)
             if row is None:
                 await Setting.create(key=key, value=encoded, updated_by=actor)
             else:
