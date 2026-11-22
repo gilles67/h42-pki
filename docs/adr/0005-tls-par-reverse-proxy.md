@@ -1,7 +1,10 @@
 # ADR-0005 — TLS et mTLS terminés par un reverse-proxy
 
-- **Statut** : proposé
+- **Statut** : **remplacé par [ADR-0012](0012-http-https-integres.md)** (2026-11-22)
 - **Date** : 2026-11-21
+
+> Cette décision n'est plus en vigueur : HTTP et HTTPS sont intégrés au conteneur, et un reverse-proxy n'est plus
+> qu'une option (`H42_PKI_TRUSTED_PROXIES`). Le texte ci-dessous est conservé pour l'historique.
 
 ## Contexte
 

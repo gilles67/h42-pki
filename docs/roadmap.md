@@ -59,11 +59,46 @@ Réalisée en cinq lots (1 à 5b) :
 - authentification de l'API d'administration → jalon « Première release » (ADR-0008) ;
 - ascendants dans `/ca/chain.pem` → phase 2 (fédération).
 
+## Phase 1.1 — Socle d'exploitation (avant la phase 2)
+
+Décisions du 2026-11-22 (ADR-0011 à 0014, complément de l'ADR-0009). La fédération s'appuiera sur ce socle : la
+fille joint la mère en HTTPS intégré.
+
+- **Python 3.13** (ADR-0014) : `requires-python`, `.python-version`, image `python:3.13-slim`, CI 3.13 et 3.14,
+  `uv.lock` régénéré.
+- **Variables d'environnement** (ADR-0011) : liste fermée et contrôles au démarrage (`H42_PKI_SERVER_HOSTNAME`
+  FQDN obligatoire pour le serveur, `H42_PKI_SERVER_ALT_NAMES`, `H42_PKI_BIND_ADDRESS`, `H42_PKI_HTTP_*`,
+  `H42_PKI_HTTPS_*`, `H42_PKI_TRUSTED_PROXIES`).
+- **Configuration en base** (ADR-0011) : table `Setting`, schéma `RuntimeSettings` avec niveau d'application,
+  `h42pki config show|get|set|unset` (avec `AuditLog`), `GET /api/v1/config` (lecture seule).
+- **Profils désactivables** (ADR-0009) : `issuance.disabled_profiles`, `h42pki profile disable|enable`, champ
+  `enabled` dans l'API.
+- **Lanceur maison** (ADR-0012) : `server/` (listeners HTTP et HTTPS Uvicorn, protocole TLS, `SSLContext`, démarrage
+  différé, rechargement à chaud, mode « à vide »), routes réparties entre HTTP et HTTPS, en-tête `Client-Cert`
+  seulement depuis `H42_PKI_TRUSTED_PROXIES`, avertissements de cohérence au démarrage. Granian retiré.
+- **Certificat HTTPS intégré** (ADR-0013) : profil interne `service_tls`, `PrivateKey.purpose`, émission dès que
+  l'AC est active, tâche de renouvellement (reste ≤ 15 jours, nouvelle tentative quotidienne), réémission si les
+  noms changent. Première tâche de `tasks/`.
+- **Santé** : `h42pki healthcheck` (base + battement du lanceur) utilisé par le `HEALTHCHECK` Docker ;
+  `GET /health` enrichi (statut de l'AC, listeners, expiration du certificat HTTPS).
+- **Tests** : scénarios U1 à U14 de `docs/spikes/2026-11-tls-launcher.md` repris comme tests de non-régression du
+  lanceur ; version d'Uvicorn épinglée.
+
+**Fait quand** : dans Docker, avec une base vide et `H42_PKI_SERVER_HOSTNAME` défini, `h42pki authority init`
+ouvre le HTTPS sans redémarrage ; `curl --cacert root.pem https://<hostname>:8443/health` répond ; l'API
+d'administration ne répond plus en HTTP ; un certificat client présenté est visible de l'application ; le
+renouvellement forcé du certificat HTTPS est pris à chaud ; le conteneur est `healthy` avec HTTP et HTTPS
+désactivés.
+
 ## Phase 2 — Hiérarchie (fédération)
 
 - `docs/protocols/federation.md` complet : invitations, `enroll`, approbation, validation de chaîne côté fille,
   vérification périodique du statut de l'AC fille.
-- `deploy/compose.yaml` racine + intermédiaire + émettrice.
+- Inscription par la CLI (`h42pki authority init --parent-url … --token … --parent-fingerprint …`, invitation
+  jamais stockée), épinglage de la mère par l'empreinte de son AC, échanges en HTTPS intégré, sans mTLS.
+- `deploy/compose.yaml` racine + intermédiaire + émettrice, **sans reverse-proxy**, chaque service dans
+  `H42_PKI_SERVER_ALT_NAMES`.
+- Validation de `Authority.name` pour les AC créées par la fédération (B37).
 
 **Fait quand** : la hiérarchie à trois niveaux se monte par `docker compose up` + deux invitations, et un certificat
 de l'émettrice se vérifie jusqu'à la racine.
@@ -80,7 +115,8 @@ de l'émettrice se vérifie jusqu'à la racine.
 ## Phase 4 — EST
 
 - Endpoints `cacerts`, `simpleenroll`, `simplereenroll`, `csrattrs` ; `serverkeygen` en option.
-- Authentification Basic + certificat client via proxy de confiance ; Traefik mTLS dans le compose.
+- Authentification Basic ou certificat client lu dans la connexion TLS du lanceur (mTLS facultatif, ADR-0012) ;
+  certificat via proxy de confiance (`Client-Cert`) en option.
 
 ## Phase 5 — SCEP
 
@@ -122,7 +158,16 @@ Prérequis bloquants avant de taguer une version déployable avec des données �
 2. ~~Nom du paquet Python~~ → `h42pki` (adopté au lot 1).
 3. Base de production visée : SQLite suffit-elle, ou PostgreSQL dès la phase 1 ?
 4. Approbation manuelle par défaut pour les AC filles, ou auto-approbation avec invitation ?
-5. Interface web d'administration : hors périmètre v1 confirmé ?
+5. Interface web d'administration : hors périmètre v1, mais **prévue** : `GET /health` et `GET /api/v1/config`
+   sont pensés pour elle (2026-11-22).
 6. ~~Casse des champs JSON~~ → **snake_case** (ADR-0006, 2026-11-21).
 7. ~~Migrations~~ → aucune avant la première release (ADR-0007, 2026-11-21).
 8. ~~Authentification de l'API admin~~ → aucune avant la première release (ADR-0008, 2026-11-21).
+9. ~~Fichier de configuration~~ → configuration en base, liste fermée de variables d'environnement (ADR-0011,
+   2026-11-22).
+10. ~~Reverse-proxy obligatoire~~ → HTTP et HTTPS intégrés, proxy facultatif (ADR-0012, remplace ADR-0005,
+    2026-11-22).
+11. ~~Certificat du serveur HTTPS~~ → émis par l'AC locale, 47 jours, renouvelé à J-15, y compris pour une racine
+    ou une intermédiaire (ADR-0013, 2026-11-22).
+12. ~~Rôle des AC~~ → aucun profil réservé à un rang ; profils désactivables par AC (ADR-0009, 2026-11-22).
+13. ~~Version de Python~~ → 3.13 (ADR-0014, 2026-11-22).

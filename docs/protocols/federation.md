@@ -11,8 +11,16 @@ Justification du choix d'un protocole dédié plutôt qu'EST : ADR-0003.
   consomme une **invitation à usage unique** créée par un administrateur sur la mère.
 - La mère **impose** les contraintes de l'AC fille (`pathLen`, NameConstraints, validité, sujet) via le profil `sub_ca`
   et les paramètres de l'invitation ; le CSR de la fille ne peut que les restreindre, jamais les élargir.
-- La fille **vérifie** la mère : TLS validé par `parent.ca_bundle`, et empreinte SHA-256 du certificat de la mère
-  communiquée avec l'invitation (épinglage).
+- La fille **vérifie** la mère sans ancre de confiance préalable, par **épinglage** :
+  1. elle télécharge `/ca/chain.pem` de la mère ;
+  2. elle vérifie que l'empreinte SHA-256 du certificat de l'AC mère, communiquée avec l'invitation, correspond ;
+  3. elle utilise cette chaîne comme ancre pour valider le HTTPS de la mère, dont le certificat `service_tls` est
+     émis par l'AC mère elle-même (ADR-0012, ADR-0013).
+  Il n'y a pas de mTLS entre conteneurs en v1.
+- Le nom utilisé dans l'URL de la mère doit figurer dans son certificat HTTPS : `H42_PKI_SERVER_HOSTNAME` ou
+  `H42_PKI_SERVER_ALT_NAMES` de la mère (par exemple le nom du service `docker compose`).
+- Tous les échanges d'inscription passent par le HTTPS de la mère : ses routes `/api/v1/federation/*` n'existent
+  pas en HTTP.
 - Les endpoints publics (chaîne, CRL, OCSP) de la mère restent accessibles sans authentification.
 
 ## 2. Séquence
@@ -24,7 +32,9 @@ sequenceDiagram
     participant F as Conteneur fille
     Admin->>M: POST /api/v1/federation/invitations {name, path_length, name_constraints, validity_days, auto_approve}
     M-->>Admin: {token (affiché une seule fois), parent_fingerprint, expires_at}
-    Admin->>F: configure token + fingerprint (secret fichier)
+    Admin->>F: h42pki authority init --parent-url … --token … --parent-fingerprint … (invitation jamais stockée)
+    F->>M: GET /ca/chain.pem
+    F->>F: empreinte de l'AC mère == empreinte épinglée ? chaîne = ancre TLS
     F->>F: génère clé AC + CSR (BasicConstraints CA, KU keyCertSign/cRLSign)
     F->>M: POST /api/v1/federation/enroll (Bearer token) {csr, name, public_base_url}
     M->>M: vérifie token, CSR, contraintes ; crée ChildAuthorityEnrollment
@@ -71,8 +81,12 @@ Format du jeton : `h42fed_<invitation_id>.<secret 32 octets base64url>`. Seul le
 
 ## 5. Côté fille
 
-- CLI : `h42pki authority init` (mode `subordinate`) fait l'inscription puis, si `202`, interroge avec `Retry-After`.
-  En démarrage conteneur, la même logique tourne dans le lifespan si l'AC est `uninitialized` et qu'un jeton est fourni.
+- CLI **seulement** : `h42pki authority init --parent-url URL --token INVITATION --parent-fingerprint SHA256`
+  fait l'inscription. L'invitation n'est **jamais stockée** (ADR-0011) ; l'URL de la mère et l'empreinte le sont.
+  Si la mère répond `202`, la commande attend en interrogeant selon `Retry-After`. Interrompue, elle se reprend par
+  `h42pki authority init --resume --token INVITATION`.
+- Tant que l'AC fille n'est pas `active`, son conteneur ne sert que le HTTP (pas de certificat `service_tls`) ; dès
+  l'activation, elle s'émet son certificat HTTPS et le lanceur ouvre le port sans redémarrage (ADR-0013).
 - Tâche périodique : vérifie quotidiennement le statut de son propre certificat via l'OCSP de la mère (URL dans l'AIA).
   Si `revoked` → `Authority.status = revoked`, arrêt de toute émission, alerte dans les logs.
 - Renouvellement : nouvelle invitation + `h42pki authority renew` (nouvelle clé recommandée, cf. ARCHITECTURE §8.3).
@@ -81,6 +95,9 @@ Format du jeton : `h42fed_<invitation_id>.<secret 32 octets base64url>`. Seul le
 
 Une racine peut être arrêtée entre deux signatures. Contraintes :
 - CRL de la racine à longue validité (ex. `crl.validity_hours = 4380`, ~6 mois) et régénérée lors de chaque démarrage ;
+- la racine doit être **joignable en HTTPS** pendant l'inscription d'une fille. Entre deux inscriptions, elle peut
+  tourner en mode « à vide » (`H42_PKI_HTTP_ENABLED=false`, `H42_PKI_HTTPS_ENABLED=false`) : ses tâches planifiées
+  continuent et la CLI reste utilisable par `docker exec` (ADR-0012) ;
 - **Décision ouverte** : qui sert la CRL et le certificat de la racine quand elle est arrêtée ? Option proposée :
   `mirror_parent = true` sur l'AC fille, qui met en cache `/crl/{parent}.crl` et `/ca/{parent}.crt` et les sert
   sur sa propre `public_base_url` ; la racine utilise alors comme `public_base_url` un nom DNS pointant vers les filles.
@@ -90,4 +107,6 @@ Une racine peut être arrêtée entre deux signatures. Contraintes :
 - Unitaires : contrôles §4 (chaque refus a son test), format du jeton, validation de chaîne côté fille.
 - Intégration : deux applications FastAPI dans le même test (mère + fille) reliées par `httpx.ASGITransport`
   — aucune socket réseau nécessaire.
-- Interop : `docker compose` racine → intermédiaire → émettrice, puis `openssl verify -CAfile root.pem -untrusted chain.pem leaf.pem`.
+- Interop : `docker compose` racine → intermédiaire → émettrice, **sans reverse-proxy**, chacune avec le nom de son
+  service dans `H42_PKI_SERVER_ALT_NAMES` ; puis `openssl verify -CAfile root.pem -untrusted chain.pem leaf.pem`, et
+  vérification que chaque conteneur présente en HTTPS un certificat valide pour la racine.

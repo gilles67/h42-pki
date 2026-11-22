@@ -16,6 +16,10 @@ Une API JSON dédiée `/api/v1/federation` (cf. `docs/protocols/federation.md`),
 unique** créée par un administrateur de la mère. Pas de secret long terme entre conteneurs en v1 : chaque
 renouvellement d'AC fille passe par une nouvelle invitation.
 
+> **Précision (2026-11-22)** : les échanges passent par le HTTPS intégré de la mère (ADR-0012), dont le certificat est
+> émis par sa propre AC (ADR-0013). La fille le valide par la chaîne de la hiérarchie **et** par l'empreinte de la mère
+> communiquée avec l'invitation. Il n'y a pas de mTLS entre conteneurs en v1.
+
 ## Alternatives considérées
 
 - **EST entre AC** : standard, mais pas de place pour les métadonnées ni les contraintes ; il faudrait l'étendre de

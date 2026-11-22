@@ -30,6 +30,21 @@ d'élargir ce que l'AC accepte de signer.
 - **`tls_server` suit le vote CA/Browser Forum SC-081v3** : 200 jours au plus depuis le 15 mars 2026, 90 jours par
   défaut. La baisse suivante (100 puis 47 jours) arrive avec ACME en phase 6.
 
+### Complément du 2026-11-22 : activation des profils et profil interne
+
+- **Toutes les demandes sont possibles par défaut** : aucun profil n'est réservé à un rang d'AC (racine,
+  intermédiaire, émettrice). La construction de la PKI reste la plus souple possible.
+- Un profil peut être **désactivé** sur une AC par le réglage en base `issuance.disabled_profiles` (liste vide par
+  défaut, niveau `hot`, ADR-0011), ou par les raccourcis `h42pki profile disable|enable NAME`. Un réglage séparé, et
+  non un champ du profil, parce que les profils intégrés sont réalignés sur le code à chaque démarrage.
+- Effet d'un profil désactivé :
+  - `POST /api/v1/requests` le refuse (`problem+json`, « profil désactivé sur cette AC ») ;
+  - une demande `pending` sur ce profil ne peut plus être approuvée, seulement rejetée ;
+  - EST, SCEP et ACME appliqueront la même règle, puisqu'ils passent par `IssuanceService` ;
+  - `GET /api/v1/profiles` et `h42pki profile list` affichent un champ `enabled`.
+- Le profil **interne `service_tls`** (certificat du serveur HTTPS intégré, ADR-0013) est écrit en base comme les
+  autres, mais n'est utilisable ni par `/requests` ni par les protocoles d'enrôlement, et ne peut pas être désactivé.
+
 ## Alternatives considérées
 
 - **Édition par API** : utile à terme, mais dangereuse sans authentification (ADR-0008) et source de divergence entre

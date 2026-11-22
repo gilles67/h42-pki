@@ -17,7 +17,8 @@ flowchart TD
     I --> D["Issuing CA (devices)<br/>SCEP · EST · OCSP · CRL"]
 ```
 
-Stack: Python ≥ 3.12, FastAPI, Tortoise ORM (SQLite by default), `cryptography`, Pydantic, Typer, uv.
+Stack: Python ≥ 3.12 (3.13 from the next lot, [ADR-0014](docs/adr/0014-python-3-13.md)), FastAPI, Tortoise ORM
+(SQLite by default), `cryptography`, Pydantic, Typer, uv.
 
 > [!WARNING]
 > **Early development, not for production use.**
@@ -89,6 +90,37 @@ Settings are read from `H42_PKI_*` environment variables. Each secret can also b
 | `H42_PKI_DATABASE_URL` | `sqlite://data/h42pki.sqlite3` (`/data/…` in the image) | Tortoise database URL |
 | `H42_PKI_ENVIRONMENT` | `production` | `dev`, `test` or `production` |
 
+### Coming next: built-in HTTP and HTTPS (phase 1.1)
+
+The next lot makes each container self-sufficient, without a reverse proxy
+([ADR-0011](docs/adr/0011-configuration-en-base.md) to [ADR-0013](docs/adr/0013-certificat-serveur-integre.md)):
+
+- one process serves **HTTP** (public endpoints: `/ca/*`, later CRL, OCSP, SCEP) and **HTTPS** (everything,
+  including the admin API, federation, EST and ACME), with optional client certificates (mTLS);
+- as soon as the CA is active, it issues the certificate of its own HTTPS server (47 days, renewed automatically
+  15 days before expiry) — even a root or intermediate CA does this, for its own server only;
+- the whole configuration lives in the database (one file to back up, plus the passphrase), edited with
+  `h42pki config`; only a fixed list of environment variables remains:
+
+| Variable | Default | Description |
+|---|---|---|
+| `H42_PKI_CA_PASSPHRASE` | *(required)* | Passphrase that encrypts the private keys |
+| `H42_PKI_SERVER_HOSTNAME` | *(required for the server)* | FQDN of the service: CN and first SAN of its HTTPS certificate |
+| `H42_PKI_SERVER_ALT_NAMES` | empty | Extra DNS names / IP addresses for the HTTPS certificate, comma-separated |
+| `H42_PKI_DATABASE_URL` | `sqlite:///data/h42pki.sqlite3` | Tortoise database URL |
+| `H42_PKI_ENVIRONMENT` | `production` | `dev`, `test` or `production` |
+| `H42_PKI_BIND_ADDRESS` | `0.0.0.0` in the image | Listen address |
+| `H42_PKI_HTTP_ENABLED` / `H42_PKI_HTTP_PORT` | `true` / `8080` | HTTP listener |
+| `H42_PKI_HTTPS_ENABLED` / `H42_PKI_HTTPS_PORT` | `true` / `8443` | HTTPS listener |
+| `H42_PKI_TRUSTED_PROXIES` | empty | CIDRs of trusted reverse proxies (none by default) |
+
+```bash
+docker run -d --name pki-root \
+  -e H42_PKI_CA_PASSPHRASE_FILE=/run/secrets/ca_passphrase \
+  -e H42_PKI_SERVER_HOSTNAME=pki-root.home42.lan \
+  -v pki-root-data:/data -p 80:8080 -p 443:8443 gilles67/h42-pki
+```
+
 ## Development
 
 | Command | Purpose |
@@ -101,7 +133,7 @@ Settings are read from `H42_PKI_*` environment variables. Each secret can also b
 | `make check` | lint + typecheck + test |
 | `make run` | dev server with auto-reload |
 
-CI (GitHub Actions) runs lint, type checking and tests on Python 3.12 and 3.13.
+CI (GitHub Actions) runs lint, type checking and tests on Python 3.12 and 3.13 (3.13 and 3.14 from phase 1.1).
 
 ## Roadmap
 
@@ -109,7 +141,8 @@ CI (GitHub Actions) runs lint, type checking and tests on Python 3.12 and 3.13.
 |---|---|---|
 | 0 | Clean-up: installable package, settings, tooling, tests, Docker image, CI | ✅ done |
 | 1 | CA core: key store, certificate profiles, single issuance path, data model, admin API, CLI, AIA publication | ✅ done |
-| 2 | Hierarchy: subordinate CA enrolment with its parent (federation), multi-level `docker compose` | 🚧 next |
+| 1.1 | Operations base: Python 3.13, configuration in the database, built-in HTTP/HTTPS launcher, self-issued HTTPS certificate, health check | 🚧 next |
+| 2 | Hierarchy: subordinate CA enrolment with its parent (federation), multi-level `docker compose` | ⏳ |
 | 3 | Revocation: CRL (full/delta) and OCSP responder | ⏳ |
 | 4 | EST enrolment (RFC 7030) | ⏳ |
 | 5 | SCEP enrolment (RFC 8894) | ⏳ |
@@ -128,6 +161,7 @@ The design documentation is in French, in [`docs/`](docs/):
 - [`protocols/`](docs/protocols/): federation, CRL, OCSP, EST, SCEP, ACME
 - [`adr/`](docs/adr/): architecture decision records
 - [`testing.md`](docs/testing.md), [`etat-des-lieux.md`](docs/etat-des-lieux.md) (review of the existing code)
+- [`spikes/`](docs/spikes/): experiment reports (built-in HTTP/HTTPS launcher and client certificates)
 
 ## License
 

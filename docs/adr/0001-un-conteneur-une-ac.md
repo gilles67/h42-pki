@@ -14,6 +14,9 @@ Chaque conteneur porte **une seule AC active** (plus ses générations précéde
 se construit en reliant des conteneurs par le protocole de fédération. Tous exécutent la même image ; le rôle vient
 de la configuration (`authority.mode`).
 
+> **Précision (2026-11-22)** : le rôle n'est pas un réglage. Il est choisi une fois pour toutes par
+> `h42pki authority init` (racine au lot 5a ; fille et externe en phase 2). La configuration est en base (ADR-0011).
+
 ## Alternatives considérées
 
 - **Serveur multi-AC** : plus simple à déployer, mais la clé racine vit dans le même processus et la même base que les

@@ -22,8 +22,15 @@ Demande en attente (approbation manuelle du profil) → `202 Accepted` + `Retry-
 
 ## 2. Authentification
 
-EST exige TLS (cf. ARCHITECTURE §6 : TLS/mTLS terminés par le reverse-proxy, certificat client transmis dans
-`X-Client-Cert` depuis un proxy de confiance).
+EST exige TLS : ses routes n'existent que sur le listener **HTTPS** intégré (ADR-0012).
+- **Certificat client lu directement** dans la connexion TLS : mTLS **facultatif** (`CERT_OPTIONAL`), le certificat
+  et sa chaîne vérifiée arrivent dans `scope["extensions"]["tls"]`. Un client sans certificat peut donc utiliser
+  HTTP Basic sur le même port ; un certificat qui ne remonte pas à une ancre de confiance fait échouer la poignée de
+  main.
+- **Derrière un reverse-proxy** (facultatif) : le certificat client transmis dans l'en-tête `Client-Cert`
+  (RFC 9440) n'est pris en compte que si la requête vient d'un réseau listé dans `H42_PKI_TRUSTED_PROXIES` ;
+  sinon l'en-tête est ignoré.
+- Ancres de confiance pour les certificats clients : la chaîne de l'AC locale, plus `est.client_trust_anchors`.
 
 | Opération | Méthodes acceptées |
 |---|---|
@@ -32,11 +39,12 @@ EST exige TLS (cf. ARCHITECTURE §6 : TLS/mTLS terminés par le reverse-proxy, c
 | `simplereenroll` | certificat client **obligatoire**, valide, non révoqué, émis par cette AC ; le CSR doit reprendre le même sujet et les mêmes SAN (RFC 7030 §4.2.2) |
 
 Échec d'authentification → `401` avec `WWW-Authenticate: Basic realm="h42pki-est"`.
-Le *channel binding* `tls-unique` (RFC 7030 §3.5) n'est pas disponible derrière un proxy : non supporté en v1, documenté.
+Le *channel binding* `tls-unique` (RFC 7030 §3.5) n'est pas supporté en v1 (ni en TLS direct, ni derrière un proxy).
 
 ## 3. Implémentation
 
-- `api/est/routes.py` : décodage base64 → `x509.load_der_x509_csr` → `IssuanceService.issue(channel="est")`.
+- `api/est/routes.py` : décodage base64 → `x509.load_der_x509_csr` → `IssuanceService.submit(channel="est")`
+  (même chemin d'émission que l'API, profils désactivés compris, ADR-0009).
 - Sortie : `pkcs7.serialize_certificates([cert], serialization.Encoding.DER)` puis base64.
   Pour `cacerts` : certificats de l'AC et de ses ascendants.
 - `serverkeygen` : clé générée par le keystore (purpose `serverkeygen`), renvoyée en PKCS#8 **non chiffré** uniquement
@@ -48,8 +56,11 @@ Le *channel binding* `tls-unique` (RFC 7030 §3.5) n'est pas disponible derrièr
 
 - Unitaires : décodage base64 tolérant (sauts de ligne, CRLF) ; sérialisation certs-only relisible avec
   `pkcs7.load_der_pkcs7_certificates`.
-- Intégration : enrôlement Basic ; réenrôlement avec en-tête `X-Client-Cert` depuis un proxy de confiance ;
-  **même en-tête depuis une IP non listée → 401** ; réenrôlement avec sujet différent → 400 ; label inconnu → 404.
+- Intégration : enrôlement Basic sans certificat client ; réenrôlement avec certificat client présenté en TLS (via
+  le lanceur, comme dans l'expérience `docs/spikes/2026-11-tls-launcher.md`) ; réenrôlement avec en-tête
+  `Client-Cert` depuis un proxy de confiance ; **même en-tête sans `H42_PKI_TRUSTED_PROXIES`, ou depuis une IP non
+  listée → ignoré, donc 401** ; réenrôlement avec sujet différent → 400 ; label inconnu → 404 ; routes EST
+  inexistantes sur le listener HTTP.
 - Interop : `curl` + `openssl` (`curl --data-binary @csr.b64 -H 'Content-Type: application/pkcs10' -u user:pass
   https://…/.well-known/est/simpleenroll | base64 -d | openssl pkcs7 -inform DER -print_certs`) ;
   optionnellement `estclient` (libest) dans le compose d'interop.

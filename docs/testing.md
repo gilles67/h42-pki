@@ -54,9 +54,32 @@ markers = ["interop: requires external tools / docker", "slow: long-running"]
 6. Bug corrigé ⇒ test de non-régression nommé `test_regression_<id>` (ex. `test_regression_B1_unique_serials`).
 7. Pas de RSA 4096 hors `@pytest.mark.slow`.
 
+## 4 bis. Lanceur HTTP/HTTPS (phase 1.1)
+
+Le protocole TLS du lanceur hérite d'une classe **interne** d'Uvicorn (ADR-0012) : ses tests vérifient le
+comportement réel, avec de vrais sockets, et protègent les mises à jour d'Uvicorn (version épinglée).
+
+- `tests/integration/server/` : PKI de test, ports libres, lanceur démarré dans la boucle de test ou en
+  sous-processus.
+- Reprendre les scénarios **U1 à U14** de `docs/spikes/2026-11-tls-launcher.md` :
+  - démarrage différé du HTTPS ;
+  - routes réparties entre HTTP et HTTPS (l'API d'administration absente en HTTP) ;
+  - mTLS facultatif, certificat client et chaîne visibles dans `scope["extensions"]["tls"]`, refus d'une AC
+    inconnue ;
+  - rechargement à chaud, y compris pour une connexion déjà ouverte ;
+  - un seul processus, arrêt propre.
+- Ajouter :
+  - mode « à vide » (aucun listener) avec `h42pki healthcheck` au vert ;
+  - contrôles des variables d'environnement (FQDN invalide, ports identiques, CIDR invalide) ;
+  - en-tête `Client-Cert` ignoré sans `H42_PKI_TRUSTED_PROXIES` ou depuis une IP non listée ;
+  - renouvellement de `service_tls` à J-15 avec `time_machine`, réémission si les noms changent.
+- À vérifier à l'implémentation (non couverts par l'expérience) : modification à chaud de la version TLS minimale,
+  ajout à chaud d'une ancre de confiance, passage à chaud du mTLS facultatif à obligatoire.
+
 ## 5. Interopérabilité (`deploy/compose.interop.yaml`)
 
-Services : `root`, `intermediate`, `issuing` (h42-pki), `traefik` (TLS/mTLS), `web` (cible http-01),
+Services : `root`, `intermediate`, `issuing` (h42-pki, HTTP et HTTPS intégrés, sans reverse-proxy, ADR-0012),
+`web` (cible http-01),
 `dns` (cible dns-01), `tools` (openssl, sscep, curl, lego). Les tests `interop` pilotent `docker compose exec tools …`
 et vérifient les codes de retour. Scénarios minimum :
 
@@ -72,4 +95,4 @@ et vérifient les codes de retour. Scénarios minimum :
 
 - `core/` ≥ 90 %, `keystore/` ≥ 90 %, global ≥ 80 % (`--cov-fail-under=80` en CI une fois la phase 1 terminée).
 - `ruff check`, `ruff format --check`, `mypy src` bloquants en CI (GitHub Actions : job `lint`, job `test`
-  matrice Python 3.12/3.13, job `interop` nocturne).
+  matrice Python 3.13/3.14 à partir de la phase 1.1, ADR-0014, job `interop` nocturne).

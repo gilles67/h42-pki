@@ -13,7 +13,7 @@ c'est le bon moment pour changer.
 ## Décision
 
 - Tous les champs des schémas Pydantic, des colonnes JSON en base, de l'API d'administration, de la fédération et
-  de la configuration TOML sont en **snake_case**, sans alias PascalCase ou camelCase.
+  de la configuration (réglages en base depuis l'ADR-0011, qui remplace le TOML envisagé) sont en **snake_case**, sans alias PascalCase ou camelCase.
 - Attributs de sujet : on reprend les noms de `cryptography.x509.oid.NameOID` en minuscules : `country_name`,
   `state_or_province_name`, `locality_name`, `organization_name`, `organizational_unit_name`, `common_name`,
   `email_address`.
