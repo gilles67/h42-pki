@@ -14,7 +14,9 @@ from h42pki.cli._runtime import CLI_ACTOR, fail, run, validation_message
 from h42pki.config import Settings
 from h42pki.core.keys import KeyAlgorithm
 from h42pki.core.names import Subject
+from h42pki.core.publication import PublicBaseUrl, normalize_public_base_url
 from h42pki.core.validity import DEFAULT_CA_VALIDITY_DAYS, MAX_VALIDITY_DAYS, MIN_VALIDITY_DAYS
+from h42pki.errors import H42Error
 from h42pki.keystore import get_keystore
 from h42pki.models import Authority, Certificate
 from h42pki.services import AuthorityService
@@ -39,6 +41,18 @@ def _describe(authority: Authority, certificate: Certificate) -> list[tuple[str,
         ("Path length", path_length),
         ("Public base URL", authority.public_base_url or "-"),
     ]
+
+
+def _normalized_url(url: str) -> PublicBaseUrl:
+    try:
+        return normalize_public_base_url(url)
+    except H42Error as exc:
+        fail(exc.detail, code=2)
+
+
+def _warn(warnings: list[str]) -> None:
+    for message in warnings:
+        typer.secho(f"warning: {message}", err=True, fg=typer.colors.YELLOW)
 
 
 def _print(rows: list[tuple[str, str]]) -> None:
@@ -101,9 +115,39 @@ def init(
         )
         return _describe(authority, await service.certificate_of(authority))
 
+    if public_base_url is not None:
+        _warn(_normalized_url(public_base_url).warnings)
     rows = run(operation)
     typer.secho("Root CA created.", fg=typer.colors.GREEN)
     _print(rows)
+
+
+@app.command()
+def update(
+    public_base_url: Annotated[
+        str,
+        typer.Option(
+            help="New public HTTP base URL of the CA (written in the AIA of issued "
+            'certificates); "" removes it.'
+        ),
+    ],
+) -> None:
+    """Change the settings of the local CA."""
+    url = public_base_url.strip() or None
+    if url is not None:
+        _warn(_normalized_url(url).warnings)
+
+    async def operation(settings: Settings) -> str | None:
+        service = AuthorityService()  # no private key involved
+        authority, _ = await service.update_public_base_url(url, actor=CLI_ACTOR)
+        return authority.public_base_url
+
+    stored = run(operation)
+    if stored is None:
+        typer.secho("Public base URL removed: issued certificates will carry no AIA.", fg="green")
+    else:
+        typer.secho(f"Public base URL set to {stored}", fg=typer.colors.GREEN)
+    typer.echo("Certificates already issued are unchanged; only new ones use this setting.")
 
 
 @app.command()

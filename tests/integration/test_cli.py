@@ -215,3 +215,54 @@ def test_invalid_configuration_is_a_readable_error(monkeypatch: pytest.MonkeyPat
 
     assert result.exit_code == 2
     assert "invalid configuration: environment:" in result.output
+
+
+def test_authority_update_public_base_url() -> None:
+    invoke(*INIT)
+
+    result = invoke("authority", "update", "--public-base-url", "http://pki.home42.test/")
+
+    assert result.exit_code == 0, result.output
+    assert "Public base URL set to http://pki.home42.test" in result.output
+    assert "Certificates already issued are unchanged" in result.output
+    assert "http://pki.home42.test" in invoke("authority", "status").output
+
+    removed = invoke("authority", "update", "--public-base-url", "")
+    assert removed.exit_code == 0
+    assert "Public base URL removed" in removed.output
+    assert "Public base URL  -" in invoke("authority", "status").output
+
+
+def test_https_public_base_url_warns() -> None:
+    result = invoke(*INIT, "--public-base-url", "https://pki.home42.test")
+
+    assert result.exit_code == 0, result.output
+    assert "warning: an https public base URL may cause validation loops" in result.output
+
+
+@pytest.mark.parametrize("command", ["init", "update"])
+def test_invalid_public_base_url_fails_before_anything(command: str) -> None:
+    if command == "update":
+        invoke(*INIT)
+        args = ["authority", "update", "--public-base-url", "ftp://pki.home42.test"]
+    else:
+        args = [*INIT, "--public-base-url", "ftp://pki.home42.test"]
+
+    result = invoke(*args)
+
+    assert result.exit_code == 2
+    assert "must use http or https" in result.output
+
+
+def test_update_without_authority() -> None:
+    result = invoke("authority", "update", "--public-base-url", "http://pki.home42.test")
+
+    assert result.exit_code == 1
+    assert "h42pki authority init" in result.output
+
+
+def test_invalid_authority_name() -> None:
+    result = invoke("authority", "init", "--name", "Home42 Root", "--common-name", "Root")
+
+    assert result.exit_code == 1
+    assert "invalid CA name" in result.output

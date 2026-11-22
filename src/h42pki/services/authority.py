@@ -10,6 +10,11 @@ from h42pki.core.extensions import BasicConstraints, Extensions, KeyUsage
 from h42pki.core.issuance import DEFAULT_CA_VALIDITY_DAYS, build_self_signed, check_validity_days
 from h42pki.core.keys import KeyAlgorithm, SupportedPrivateKey
 from h42pki.core.names import Subject
+from h42pki.core.publication import (
+    PublicBaseUrl,
+    normalize_public_base_url,
+    validate_authority_name,
+)
 from h42pki.core.serial import new_serial_hex
 from h42pki.errors import Conflict, InvalidRequest, MissingPassphrase, NoActiveAuthority
 from h42pki.keystore import KEY_OPERATIONS_REQUIREMENT, KeyStore
@@ -52,6 +57,9 @@ class AuthorityService:
     ) -> Authority:
         """Create the local root CA: a new key, its root certificate, an active Authority."""
         check_validity_days(validity_days)
+        validate_authority_name(name)
+        if public_base_url is not None:
+            public_base_url = normalize_public_base_url(public_base_url).url
         if path_length is not None and path_length < 0:
             raise InvalidRequest("path_length must be zero or positive")
         if (
@@ -119,6 +127,31 @@ class AuthorityService:
                 },
             )
         return authority
+
+    async def update_public_base_url(
+        self, public_base_url: str | None, *, actor: str
+    ) -> tuple[Authority, PublicBaseUrl | None]:
+        """Change (or remove, with None) the public base URL of the local CA.
+
+        Only certificates issued afterwards carry the new AIA URL; issued ones are unchanged.
+        """
+        authority = await self.get_local()
+        normalized = (
+            normalize_public_base_url(public_base_url) if public_base_url is not None else None
+        )
+        previous = authority.public_base_url
+        new = normalized.url if normalized is not None else None
+        async with in_transaction():
+            await Authority.filter(id=authority.id).update(public_base_url=new)
+            await AuditLog.record(
+                actor=actor,
+                action="authority.update",
+                object_type="authority",
+                object_id=authority.id,
+                details={"field": "public_base_url", "previous": previous, "new": new},
+            )
+        authority.public_base_url = new
+        return authority, normalized
 
     async def find_local(self) -> Authority | None:
         """The active local CA, if any (certificate and key prefetched)."""

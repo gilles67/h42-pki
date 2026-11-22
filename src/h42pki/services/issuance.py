@@ -13,6 +13,7 @@ from tortoise.transactions import in_transaction
 from h42pki.core.csr import ParsedCsr, parse_csr
 from h42pki.core.issuance import build_issued, plan_issuance
 from h42pki.core.names import rfc4514
+from h42pki.core.publication import ca_certificate_url
 from h42pki.errors import Conflict, H42Error, NoActiveAuthority, Unprocessable
 from h42pki.keystore import KeyStore
 from h42pki.models import (
@@ -30,6 +31,13 @@ from h42pki.services.profiles import spec_of
 from h42pki.services.x509_fields import signed_fields
 
 AUTO_APPROVE = "auto-approve"
+
+
+def _ca_issuers_url(authority: Authority) -> str | None:
+    """AIA caIssuers of the certificates this CA issues, if it publishes its certificate."""
+    if authority.public_base_url is None:
+        return None
+    return ca_certificate_url(authority.public_base_url, authority.name)
 
 
 class IssuanceService:
@@ -162,6 +170,7 @@ class IssuanceService:
                 issuer_key,
                 validity_days=request.requested_validity_days,
                 now=now,
+                ca_issuers_url=_ca_issuers_url(authority),
             )
         except H42Error as exc:
             await self._fail(request, exc, actor=actor, decided_by=decided_by)
