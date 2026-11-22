@@ -5,6 +5,7 @@ directory (where the heartbeat lives).
 """
 
 import os
+import platform
 import signal
 import socket
 import ssl
@@ -28,6 +29,12 @@ from tests.integration.server.conftest import free_port
 CLI = [sys.executable, "-c", "from h42pki.cli import app; app()"]
 START_TIMEOUT = 30.0
 POSIX = os.name != "nt"
+# WSL1 cannot share an SQLite database in WAL mode between processes ("locking protocol"); WSL2,
+# Docker and Windows can. These tests run the CLI against the database of a running server.
+WSL1 = "Microsoft" in platform.release()
+shared_database = pytest.mark.skipif(
+    WSL1, reason="WSL1: SQLite WAL cannot be shared between processes (use WSL2 or Docker)"
+)
 
 
 class Instance:
@@ -123,6 +130,7 @@ def instance(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Callab
             item.process.communicate(timeout=30)
 
 
+@shared_database
 def test_https_opens_after_authority_init_and_stops_cleanly(
     instance: Callable[..., Instance],
 ) -> None:
@@ -172,6 +180,7 @@ def test_u14_sigterm_in_idle_mode(instance: Callable[..., Instance]) -> None:
     assert "idle mode" in output and "launcher stopped" in output
 
 
+@shared_database
 def test_healthcheck_in_idle_mode(instance: Callable[..., Instance]) -> None:
     """Green while the launcher runs without any listener, red once it is stopped."""
     server = instance(HTTP_ENABLED="false", HTTPS_ENABLED="false")
