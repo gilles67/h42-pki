@@ -254,3 +254,4 @@ Stratégie complète : `docs/testing.md`. L'essentiel :
 - `docs/protocols/` — `federation.md`, `crl.md`, `ocsp.md`, `est.md`, `scep.md`, `acme.md`
 - `docs/adr/` — décisions d'architecture
 - `docs/spikes/` — comptes rendus d'expériences (ex. lanceur HTTP/HTTPS et certificat client)
+- `docs/charte-graphique.md` — logo, couleurs et typographie ; fichiers du logo dans `docs/assets/brand/`

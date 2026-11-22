@@ -1,4 +1,8 @@
-# h42-pki
+<p align="center">
+  <img src="docs/assets/brand/h42-pki.svg" width="112" alt="h42-pki logo">
+</p>
+
+<h1 align="center">h42-pki</h1>
 
 **Home42 PKI**: a containerised certificate authority server written in Python.
 
