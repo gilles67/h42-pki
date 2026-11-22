@@ -1,6 +1,7 @@
 """Certificate requests and issuance: the only way to get a certificate signed by the CA."""
 
 import asyncio
+import hashlib
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -64,15 +65,22 @@ class IssuanceService:
         The request is checked against the profile and the active CA before being stored: a
         request that could never be issued is refused (422) instead of waiting for a decision.
         """
-        profile = await Profile.get_or_none(name=profile_name)
-        if profile is None:
-            raise Unprocessable(f"unknown profile {profile_name!r}")
-        spec = spec_of(profile)
-        authority = await self._authorities.get_local()
-        parsed = parse_csr(csr)
-        now = datetime.now(UTC)
-        issuer_cert = await self._issuer_certificate(authority, now)
-        plan = plan_issuance(parsed, spec, issuer_cert, validity_days=validity_days, now=now)
+        parsed: ParsedCsr | None = None
+        try:
+            profile = await Profile.get_or_none(name=profile_name)
+            if profile is None:
+                raise Unprocessable(f"unknown profile {profile_name!r}")
+            spec = spec_of(profile)
+            authority = await self._authorities.get_local()
+            parsed = parse_csr(csr)
+            now = datetime.now(UTC)
+            issuer_cert = await self._issuer_certificate(authority, now)
+            plan = plan_issuance(parsed, spec, issuer_cert, validity_days=validity_days, now=now)
+        except H42Error as exc:
+            await self._audit_refusal(
+                exc, csr=csr, parsed=parsed, profile_name=profile_name, actor=actor, channel=channel
+            )
+            raise
 
         async with in_transaction():
             request = await CertificateRequest.create(
@@ -199,6 +207,37 @@ class IssuanceService:
                 },
             )
         return await self.get(request.id)
+
+    @staticmethod
+    async def _audit_refusal(
+        exc: H42Error,
+        *,
+        csr: bytes | str,
+        parsed: ParsedCsr | None,
+        profile_name: str,
+        actor: str,
+        channel: Channel,
+    ) -> None:
+        """Trace a request refused before being stored (B35): never the CSR itself."""
+        if parsed is not None:
+            data = parsed.csr.public_bytes(serialization.Encoding.DER)
+        else:  # unreadable CSR: fingerprint of what was received
+            data = csr.encode("utf-8", errors="replace") if isinstance(csr, str) else csr
+        fingerprint = hashlib.sha256(data).hexdigest()
+        await AuditLog.record(
+            actor=actor,
+            action="request.refuse",
+            object_type="certificate_request",
+            object_id=fingerprint,
+            details={
+                "profile": profile_name,
+                "channel": channel.value,
+                "reason": exc.detail,
+                "csr_sha256": fingerprint,
+                "csr_sha256_of": "der" if parsed is not None else "received",
+                "subject_dn": rfc4514(parsed.csr.subject) if parsed is not None else None,
+            },
+        )
 
     async def _fail(
         self, request: CertificateRequest, exc: H42Error, *, actor: str, decided_by: str

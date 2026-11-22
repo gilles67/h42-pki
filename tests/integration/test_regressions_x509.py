@@ -1,5 +1,6 @@
 """Non-regression tests for the X.509 bugs fixed in lot 4, on the lot 5a issuance path."""
 
+import hashlib
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -12,7 +13,7 @@ from cryptography.hazmat.primitives.asymmetric import ec, ed25519
 from httpx import AsyncClient
 
 from h42pki.core.keys import KeyAlgorithm, SupportedPrivateKey
-from h42pki.models import Authority, Certificate, PrivateKey
+from h42pki.models import AuditLog, Authority, Certificate, PrivateKey
 from tests.conftest import TEST_PASSPHRASE, IssueFactory, RootFactory
 from tests.x509_helpers import csr_pem, make_csr, name
 
@@ -187,3 +188,36 @@ async def test_regression_B33_state_and_locality(
     )
     assert refused.status_code == 422
     assert "not allowed by profile ocsp_signer" in refused.json()["detail"]
+
+
+async def test_regression_B35_refused_requests_are_audited(
+    client: AsyncClient, make_root: RootFactory, key_for: KeyFor
+) -> None:
+    await make_root()
+    csr = make_csr(key_for(KeyAlgorithm.EC_P256), name(CN="no-san.example.test"))
+    pem = csr_pem(csr)
+
+    refused = await client.post("/api/v1/requests", json={"csr_pem": pem, "profile": "tls_server"})
+    garbage = await client.post(
+        "/api/v1/requests", json={"csr_pem": "not a csr", "profile": "tls_server"}
+    )
+
+    assert refused.status_code == garbage.status_code == 422
+    entries = await AuditLog.filter(action="request.refuse").order_by("timestamp")
+    assert [entry.actor for entry in entries] == ["anonymous", "anonymous"]
+    first, second = (entry.details for entry in entries)
+    der = csr.public_bytes(serialization.Encoding.DER)
+    assert first == {
+        "profile": "tls_server",
+        "channel": "api",
+        "reason": refused.json()["detail"],
+        "csr_sha256": hashlib.sha256(der).hexdigest(),
+        "csr_sha256_of": "der",
+        "subject_dn": "CN=no-san.example.test",
+    }
+    assert entries[0].object_id == first["csr_sha256"]
+    assert second["csr_sha256"] == hashlib.sha256(b"not a csr").hexdigest()
+    assert second["csr_sha256_of"] == "received" and second["subject_dn"] is None
+    for entry in entries:
+        assert "BEGIN CERTIFICATE REQUEST" not in str(entry.details)
+    assert (await client.get("/api/v1/requests")).json() == []
