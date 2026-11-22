@@ -24,6 +24,9 @@ d'élargir ce que l'AC accepte de signer.
 - Chaque profil porte **`auto_approve`** : vrai → la demande est émise à la soumission ; faux → elle reste `pending`
   jusqu'à `approve` / `reject`. `sub_ca` et `ocsp_signer` exigent une approbation manuelle ; `tls_server`,
   `tls_client` et `device` sont émis automatiquement.
+- **Sujet** : `state_or_province_name` (ST) et `locality_name` (L) sont autorisés (non requis) dans `sub_ca`,
+  `tls_server`, `tls_client` et `device` depuis le lot 5b (B33), pour accepter les CSR d'un `openssl req` interactif ;
+  `ocsp_signer` garde un simple `common_name`.
 - **`tls_server` suit le vote CA/Browser Forum SC-081v3** : 200 jours au plus depuis le 15 mars 2026, 90 jours par
   défaut. La baisse suivante (100 puis 47 jours) arrive avec ACME en phase 6.
 

@@ -54,7 +54,17 @@ openssl verify -CAfile root.pem leaf.pem
 ```
 
 Profiles decide what a certificate contains (`uv run h42pki profile list`): `tls_server` certificates last 90 days
-(200 at most). Give the subject with `-subj`: profiles only accept the attributes they list (no `ST` or `L`).
+(200 at most). Certificates are listed with `uv run h42pki certificate list` or `GET /api/v1/certificates`.
+
+With a public base URL (`--public-base-url` at `authority init`, or `h42pki authority update`), the CA certificate is
+published over plain HTTP and issued certificates point to it (AIA caIssuers):
+
+```bash
+uv run h42pki authority update --public-base-url http://127.0.0.1:8000
+curl -s http://127.0.0.1:8000/ca/home42-root.crt | openssl x509 -inform DER -noout -subject
+curl -s -o chain.pem http://127.0.0.1:8000/ca/chain.pem   # CA chain, root included
+openssl verify -CAfile chain.pem leaf.pem
+```
 
 ### Docker
 
@@ -98,8 +108,8 @@ CI (GitHub Actions) runs lint, type checking and tests on Python 3.12 and 3.13.
 | Phase | Content | Status |
 |---|---|---|
 | 0 | Clean-up: installable package, settings, tooling, tests, Docker image, CI | ✅ done |
-| 1 | CA core: key store, certificate profiles, single issuance path, data model, admin API, CLI, AIA publication | 🚧 in progress: root CA by CLI, profiles, requests and issuance from a CSR done (lot 5a); AIA publication and certificate listing next (lot 5b) |
-| 2 | Hierarchy: subordinate CA enrolment with its parent (federation), multi-level `docker compose` | ⏳ |
+| 1 | CA core: key store, certificate profiles, single issuance path, data model, admin API, CLI, AIA publication | ✅ done |
+| 2 | Hierarchy: subordinate CA enrolment with its parent (federation), multi-level `docker compose` | 🚧 next |
 | 3 | Revocation: CRL (full/delta) and OCSP responder | ⏳ |
 | 4 | EST enrolment (RFC 7030) | ⏳ |
 | 5 | SCEP enrolment (RFC 8894) | ⏳ |

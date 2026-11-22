@@ -167,7 +167,8 @@ propre au backend, pas un format.
 
 **`Authority`** — une AC connue de ce conteneur. L'AC locale est créée par `h42pki authority init` et lue par
 `GET /api/v1/authority`.
-Implémenté : `kind` (`local|parent|child`), `name` (unique), `status` (cf. §3 : `uninitialized|pending_signature|
+Implémenté : `kind` (`local|parent|child`), `name` (unique ; `[a-z0-9-]`, 64 caractères, `chain` réservé : il entre
+dans les URL `/ca/{name}.crt`), `status` (cf. §3 : `uninitialized|pending_signature|
 active|rolling_over|retired|revoked`), `private_key` → `PrivateKey` (local uniquement, `RESTRICT`),
 `parent` → `Authority` (FK sur soi, `RESTRICT`), `path_length`, `public_base_url` (préfixe des URLs AIA/CDP/OCSP
 inscrites dans les certificats). Le **certificat de l'AC** est l'inverse de `Certificate.authority`
@@ -182,7 +183,7 @@ Implémenté : `name` (unique), `kind` (`sub_ca|tls_server|tls_client|ocsp_signe
 `basic_constraints`, `key_usage` (mêmes schémas que `core.extensions` ; `key_encipherment` n'est appliqué qu'aux clés
 RSA), `extended_key_usage` (liste de **noms**, ADR-0006), `allowed_key_algorithms`, `subject_policy` (JSON :
 attributs `required` / `allowed`, `cn_must_match_san`), `san_policy` (JSON : `types` parmi `dns|ip|email|uri`,
-`required`), `ocsp_no_check`.
+`required`), `ocsp_no_check`, `include_aia` (AIA caIssuers quand l'AC publie son certificat).
 *(plus tard)* : kinds `email|code_signing|custom`, motifs de domaines dans `san_policy`, valeurs fixées dans
 `subject_policy`, `include_cdp`, `include_aia`, `include_ocsp`, `must_staple`, `enabled_channels`, profils non
 intégrés et édition.
@@ -283,8 +284,12 @@ recopiées) : `BasicConstraints` et `KeyUsage` critiques, `ExtendedKeyUsage` non
 `AuthorityKeyIdentifier` (dérivé du SKI de l'émetteur), `SubjectAlternativeName` (critique si le sujet est vide),
 `OCSPNoCheck` pour `ocsp_signer`. La validité est plafonnée par le profil et **ramenée au `not_after` de
 l'émetteur** (`validity_truncated`) ; une AC fille reçoit un `pathLen` strictement inférieur à celui de l'émetteur.
-**À venir** : `AuthorityInformationAccess` caIssuers (`{public_base_url}/ca/{authority}.crt`, lot 5b),
-`CRLDistributionPoints` et OCSP (phase 3) : aucune URL n'est inscrite tant que le service correspondant n'existe pas.
+**AIA (lot 5b)** : `AuthorityInformationAccess` caIssuers `{public_base_url}/ca/{authority}.crt`, non critique,
+quand l'AC a une `public_base_url` (validée et normalisée : http ou https avec avertissement, hôte requis, ni requête
+ni fragment, pas de barre finale) et que le profil a `include_aia` ; jamais sur le certificat de la racine. Changer
+l'URL (`h42pki authority update`) ne touche pas les certificats déjà émis.
+**À venir** : `CRLDistributionPoints` et OCSP (phase 3) : aucune URL n'est inscrite tant que le service correspondant
+n'existe pas.
 
 ### 5.2 Révocation
 
@@ -303,7 +308,7 @@ la fille génère clé + CSR et appelle `POST /api/v1/federation/enroll` → la 
 | Préfixe | Transport | Auth | Contenu |
 |---|---|---|---|
 | `/health`, `/ready` | HTTP | aucune | statut JSON |
-| `/ca/{name}.crt`, `/ca/{name}.pem`, `/ca/chain.pem` | **HTTP** | aucune | AIA caIssuers (DER), PEM, chaîne |
+| `/ca/{name}.crt`, `/ca/{name}.pem`, `/ca/chain.pem` | **HTTP** | aucune | AIA caIssuers (DER), PEM, chaîne avec la racine — **implémenté (lot 5b)**, cache `ETag` / 304 |
 | `/crl/{name}.crl`, `/crl/{name}-delta.crl` | **HTTP** | aucune | CRL DER (`application/pkix-crl`) |
 | `/ocsp` (POST), `/ocsp/{b64}` (GET) | HTTP | aucune | `application/ocsp-request` / `-response` |
 | `/acme/...` | HTTPS | JWS (RFC 8555) | `application/jose+json` |
@@ -314,10 +319,12 @@ la fille génère clé + CSR et appelle `POST /api/v1/federation/enroll` → la 
 | `/` | HTTP | aucune | `{"name", "version"}` |
 | `/metrics` | HTTP interne | aucune / réseau privé | Prometheus (phase 7) |
 
-**API d'administration implémentée (lot 5a).** Schémas écrits à la main (`extra="forbid"`, snake_case), aucune
+**API d'administration implémentée (lot 5b, fin de la phase 1).** Schémas écrits à la main (`extra="forbid"`, snake_case), aucune
 réponse ne contient de clé privée ; toutes les erreurs en `application/problem+json` (RFC 9457) : 404 objet inconnu,
 409 conflit, 422 requête invalide (les erreurs de validation ajoutent une extension `errors` : `loc`, `msg`, `type`,
-jamais la valeur soumise), 503 sans AC active, 500 si une clé stockée ne peut pas être déchiffrée.
+jamais la valeur soumise), 503 sans AC active, 500 si une clé stockée ne peut pas être déchiffrée. Le schéma
+`Problem` est déclaré dans l'OpenAPI pour 404, 409, 422 et 503 (`/openapi.json` ne contient plus
+`HTTPValidationError`, B30).
 
 | Méthode | Chemin | Réponse |
 |---|---|---|
@@ -329,15 +336,17 @@ jamais la valeur soumise), 503 sans AC active, 500 si une clé stockée ne peut 
 | POST | `/api/v1/requests` `{csr_pem, profile, validity_days?}` | 201, `status` = `issued` (avec `certificate_id`) ou `pending` ; 422 si le profil refuse la demande ; 503 sans AC active |
 | GET | `/api/v1/requests` (`?status=`) · `/api/v1/requests/{id}` | demandes, avec `validity_truncated` et `ignored_extensions` |
 | POST | `/api/v1/requests/{id}/approve` · `/api/v1/requests/{id}/reject` `{reason}` | décision manuelle ; 409 si déjà décidée |
-| GET | `/api/v1/certificates/{id}` | 200 `{id, serial_hex, subject_dn, status, not_before, not_after, sha256_fingerprint, profile, channel, issuer_id}` |
+| GET | `/api/v1/certificates` (`status`, `profile`, `channel`, `q`, `limit` ≤ 500, `offset`) | `{items, total, limit, offset}`, plus récents d'abord ; `status` effectif (un `valid` échu est `expired`, B34) |
+| GET | `/api/v1/certificates/{id}` | 200 `{id, serial_hex, subject_dn, status, not_before, not_after, sha256_fingerprint, profile, channel, issuer, issuer_id, sans, ca_issuers_url}` |
+| GET | `/api/v1/certificates/{id}/chain.pem` | certificat puis émetteurs jusqu'à la racine incluse (`application/x-pem-file`) |
 | GET | `/api/v1/certificates/{id}.pem` | `application/x-pem-file` |
 | GET | `/api/v1/certificates/{id}.crt` | `application/pkix-cert` (DER) |
 
 **Supprimés au lot 5a** (ADR-0010) : `POST /api/v1/certificates` et `POST /api/v1/certificates/{id}/self-sign`
 (404/405). Une AC racine se crée par `h42pki authority init`.
 
-**À venir** : publication `/ca/*`, liste des certificats et schéma `Problem` dans l'OpenAPI (lot 5b, B30), jetons
-d'API (avant la release).
+**À venir** : jetons d'API (avant la release, ADR-0008), `/crl/*` et `/ocsp` (phase 3), protocoles d'enrôlement
+(phases 4 à 6).
 
 **TLS et mTLS.** Le serveur ASGI (Granian ou Uvicorn) peut terminer TLS lui-même, mais l'accès au certificat client
 dans FastAPI dépend du serveur — **À vérifier**. Choix retenu pour v1 (cf. ADR-0005) : un **reverse-proxy**

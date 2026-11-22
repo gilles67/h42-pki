@@ -10,11 +10,22 @@ Références : RFC 5280 §5 (CRL), §4.2.1.13 (CRLDistributionPoints), §4.2.2.1
 | `GET /crl/{authority}-delta.crl` | `application/pkix-crl` | CRL delta (si `crl.delta_enabled`) |
 | `GET /ca/{authority}.crt` | `application/pkix-cert` | Certificat de l'AC, DER (cible de l'AIA caIssuers) |
 | `GET /ca/{authority}.pem` | `application/x-pem-file` | Idem en PEM |
-| `GET /ca/chain.pem` | `application/x-pem-file` | AC locale + ascendants (sans la racine si `chain.include_root = false`) |
+| `GET /ca/chain.pem` | `application/x-pem-file` | AC locale active + ascendants, **racine incluse** (pas de réglage) |
 
-- Servis en **HTTP** (pas de redirection vers HTTPS), réponses cacheables : `Cache-Control: public, max-age=<jusqu'au
-  prochain renouvellement>`, `Last-Modified = thisUpdate`, `ETag = sha256(der)`, prise en charge de `If-None-Match`.
-- `{authority}` = `Authority.name` ; plusieurs générations d'AC coexistent lors d'un rollover.
+- Servis en **HTTP** (pas de redirection vers HTTPS), sans authentification, hors de `/api/v1` (tag OpenAPI
+  `public`). Aucune requête ne déclenche d'opération sur une clé privée.
+- **Implémenté (lot 5b) pour `/ca/*`** : `ETag = "<sha256_fingerprint>"` (empreinte SHA-256 du DER ; pour
+  `chain.pem`, SHA-256 du corps), `Last-Modified = not_before` (le plus récent pour la chaîne),
+  `Cache-Control: public, max-age=3600`, `If-None-Match` (liste, `W/`, `*`) → `304` sans corps. Nom inconnu → 404,
+  aucune AC active → 503 sur `chain.pem` (`application/problem+json`).
+- **Prévu pour `/crl/*`** (phase 3) : `Cache-Control: public, max-age=<jusqu'au prochain renouvellement>`,
+  `Last-Modified = thisUpdate`, `ETag = sha256(der)`.
+- `{authority}` = `Authority.name` d'une AC **locale** active, en cours de rollover ou `retired` (pour que les
+  certificats émis avant un rollover restent vérifiables). Le nom est restreint à `[a-z0-9-]` (64 caractères) et
+  `chain` est réservé.
+- URL inscrite dans l'AIA caIssuers des certificats émis : `{public_base_url}/ca/{authority}.crt`, seulement si
+  `Authority.public_base_url` est renseignée (`h42pki authority init|update --public-base-url`) et si le profil a
+  `include_aia` ; jamais dans le certificat de la racine.
 - URL inscrite dans les certificats émis : `{public_base_url}/crl/{authority}.crl`.
 
 ## 2. Contenu de la CRL

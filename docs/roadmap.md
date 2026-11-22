@@ -27,48 +27,37 @@ Les numéros `B…` renvoient à `docs/etat-des-lieux.md`.
 > **La construction de l'image Docker et son état `healthy` restent à valider** (Docker indisponible sur le poste
 > de développement) : `docker build -t h42-pki:dev .` puis `docker run -e H42_PKI_CA_PASSPHRASE=… h42-pki:dev`.
 
-## Phase 1 — Noyau d'AC
+## Phase 1 — Noyau d'AC — ✅ terminée (2026-11-22)
 
-- `core/` : noms (sujet RFC 4514 ↔ JSON, champs optionnels — B11), extensions (B9, B10), profils, numéros de série (B1),
-  construction de certificat avec AKI/SKI/CDP/AIA (B12), validation de CSR, algorithmes RSA/EC/Ed25519 (B8).
-  ✅ snake_case (ADR-0006, lot 3). ✅ (lot 4) `core/keys.py` (B8, B18), `core/names.py` (B11, B28),
-  `core/extensions.py` (B9, B10), `core/serial.py` (B1), `core/issuance.py` : auto-signature d'AC racine avec AKI/SKI,
-  validité paramétrable et hachage adapté (B12, B17), pureté de `core` testée.
-  Restent : profils, validation de CSR, émission par une AC, CDP/AIA.
-- ✅ (lot 4) `keystore/software.py` : PKCS#8 DER chiffré (B18), protocole `KeyStore` (`generate`, `load`) ;
-  `sign` / `decrypt` / `purpose` viendront avec PKCS#11 (ADR-0004).
-- ✅ (partiel, lot 3) Modèles Tortoise cibles (ARCHITECTURE §4) avec `ForeignKeyField` (B13, B14, B21), sans migration
-  (ADR-0007) : `PrivateKey`, `Authority`, `Certificate`, `AuditLog` en place, stockage DER ; `Profile` et
-  `CertificateRequest` restent à faire.
-- `IssuanceService` (chemin d'émission unique, sans recopie d'extensions du CSR — B2), `AuditLog` (✅ table et
-  entrées pour clés et certificats, lot 3). ✅ (lot 4) `services/keys.py` et `services/certificates.py` remplacent le
-  code legacy `h42pki/ca/` (supprimé) ; `IssuanceService` complet au lot 5.
-- Profils par défaut fournis : `sub_ca`, `tls_server`, `tls_client`, `ocsp_signer`, `device`.
-- API admin `/api/v1` : clés, profils, demandes (approve/reject), certificats (liste, détail, PEM/DER), **sans authentification** (ADR-0008) (B6, B7).
-  ✅ (partiel, lots 2-4) : clés RSA/EC/Ed25519 (création, lecture, suppression — B6, B7), certificats (création,
-  auto-signature d'AC racine avec `validity_days`, détail, téléchargement `.pem` / `.crt`), toutes les erreurs en
-  `problem+json` (B29), opérations crypto via `asyncio.to_thread`. Restent : profils, demandes, liste des certificats.
+Réalisée en cinq lots (1 à 5b) :
+- ✅ `core/` pur et testé : clés RSA/EC/Ed25519 et PKCS#8 DER chiffré (B8, B18), noms (B11, B28), extensions (B9, B10),
+  profils, CSR (signature vérifiée, RSA < 2048 et SHA-1 / MD5 refusés — B36), émission avec AKI/SKI, validité bornée
+  et ramenée à l'émetteur, `pathLen` décroissant (B12, B17), numéros de série (B1), AIA caIssuers.
+- ✅ `keystore/software.py` (protocole `KeyStore`, ADR-0004) ; la passphrase n'est exigée qu'à l'usage d'une clé (B32).
+- ✅ Modèles `PrivateKey`, `Authority`, `Profile`, `Certificate`, `CertificateRequest`, `AuditLog` (FK sans cycle,
+  stockage DER), sans migration (ADR-0007).
+- ✅ `IssuanceService`, seul chemin d'émission (`submit` → `auto_approve` ou `approve` / `reject`), refus audités
+  (B35) ; AC racine par `h42pki authority init` (ADR-0010).
+- ✅ Profils intégrés en lecture seule : `sub_ca`, `tls_server` (90 / 200 jours, SC-081v3), `tls_client`,
+  `ocsp_signer`, `device` (ADR-0009) ; ST et L autorisés sauf pour `ocsp_signer` (B33).
+- ✅ API `/api/v1` sans authentification (ADR-0008) : clés, AC locale, profils, demandes, certificats (liste filtrée et
+  paginée, détail avec statut effectif — B34, `.pem` / `.crt` / `chain.pem`) ; erreurs `problem+json` déclarées dans
+  l'OpenAPI (B29, B30).
+- ✅ Publication HTTP `/ca/{name}.crt|.pem` et `/ca/chain.pem` (cache, 304) et AIA caIssuers dans les certificats
+  émis quand `public_base_url` est renseignée (lot 5b).
+- ✅ CLI : `h42pki authority init|status|export|update`, `h42pki profile list|show`,
+  `h42pki certificate list|export`.
 
-**Lot 5a (fait, 2026-11-21)** :
-- ✅ Profils intégrés en base, en lecture seule, réalignés au démarrage (`Profile`, ADR-0009) : `sub_ca`,
-  `tls_server` (90 / 200 jours, SC-081v3), `tls_client`, `ocsp_signer`, `device` ; approbation selon `auto_approve`.
-- ✅ `CertificateRequest` et émission depuis un CSR : signature du CSR vérifiée, RSA < 2048 refusé, sujet et SAN
-  filtrés par le profil (refus explicites), extensions du CSR jamais recopiées (B2), validité plafonnée et ramenée au
-  `not_after` de l'émetteur, `pathLen` strictement décroissant.
-- ✅ `IssuanceService` (`submit` → `auto_approve` ou `approve` / `reject` → `_issue`) : seul chemin d'émission.
-- ✅ AC racine par CLI (`h42pki authority init --validity-days`, une clé = une AC, B31) ; auto-signature par API
-  supprimée (ADR-0010).
-- ✅ CLI : `h42pki authority init|status|export`, `h42pki profile list|show`.
-- ✅ API : `GET /authority`, `GET /profiles[/{name}]`, `POST/GET /requests`, `approve` / `reject`.
+**Critère atteint** : une AC racine s'initialise par CLI, émet un certificat serveur via l'API depuis un CSR
+`openssl req`, vérifiable par `openssl verify` (avec `root.pem` ou la chaîne de `/ca/chain.pem`) ; couverture de `core/`
+≥ 94 % par module.
 
-**Lot 5b (à faire)** : publication `/ca/{name}.crt|.pem` et `/ca/chain.pem`, AIA caIssuers dans les certificats émis
-(à partir de `public_base_url`), liste des certificats, schéma `Problem` dans l'OpenAPI (B30).
-
-**Attend la phase 3** : CDP et OCSP dans les certificats émis (aucune URL vers un service qui n'existe pas encore).
-- AIA public : `/ca/{name}.crt|.pem`, `/ca/chain.pem` (lot 5b).
-
-**Fait quand** : une AC racine s'initialise par CLI, émet un certificat serveur via l'API, vérifiable par
-`openssl verify` ; couverture `core/` ≥ 90 %.
+**Reporté** :
+- édition des profils et profils non intégrés (avec l'authentification) ;
+- statut `expired` **persistant** (aujourd'hui calculé à la lecture, B34) et CDP / OCSP dans les certificats →
+  phase 3 ;
+- authentification de l'API d'administration → jalon « Première release » (ADR-0008) ;
+- ascendants dans `/ca/chain.pem` → phase 2 (fédération).
 
 ## Phase 2 — Hiérarchie (fédération)
 
