@@ -26,6 +26,7 @@ from h42pki.api.admin.schemas import (
     RequestReject,
     certificate_pem,
 )
+from h42pki.api.problems import PROBLEM_RESPONSES
 from h42pki.errors import NotFound
 from h42pki.models import CertificateStatus, Channel, RequestStatus
 from h42pki.services.certificates import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
@@ -33,7 +34,7 @@ from h42pki.services.certificates import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 PEM_MEDIA_TYPE = "application/x-pem-file"
 DER_CERT_MEDIA_TYPE = "application/pkix-cert"
 
-router = APIRouter(prefix="/api/v1", tags=["admin"])
+router = APIRouter(prefix="/api/v1", tags=["admin"], responses=PROBLEM_RESPONSES)
 
 
 # --- private keys ---------------------------------------------------------------------------

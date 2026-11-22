@@ -10,13 +10,14 @@ from email.utils import format_datetime
 from fastapi import APIRouter, Request, Response
 
 from h42pki.api.admin.schemas import certificate_pem
+from h42pki.api.problems import PROBLEM_RESPONSES
 from h42pki.services.publication import PublicationService
 
 PEM_MEDIA_TYPE = "application/x-pem-file"
 DER_CERT_MEDIA_TYPE = "application/pkix-cert"
 CACHE_CONTROL = "public, max-age=3600"
 
-router = APIRouter(prefix="/ca", tags=["public"])
+router = APIRouter(prefix="/ca", tags=["public"], responses=PROBLEM_RESPONSES)
 
 
 def _etag_matches(request: Request, etag: str) -> bool:

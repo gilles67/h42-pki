@@ -113,3 +113,33 @@ async def test_invalid_path_parameter_is_problem_json(client: AsyncClient) -> No
     assert response.status_code == 422
     assert response.headers["content-type"] == "application/problem+json"
     assert response.json()["errors"][0]["loc"] == ["path", "certificate_id"]
+
+
+async def test_regression_B30_openapi_declares_problem_json(client: AsyncClient) -> None:
+    response = await client.get("/openapi.json")
+    text = response.text
+    openapi = response.json()
+
+    assert "HTTPValidationError" not in text
+    assert "ValidationError" not in text
+    problem = openapi["components"]["schemas"]["Problem"]
+    assert set(problem["properties"]) == {"type", "title", "status", "detail", "instance", "errors"}
+    expected = {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Problem"}}}
+    for path, operations in openapi["paths"].items():
+        if not path.startswith(("/api/v1", "/ca/")):
+            continue
+        for method, operation in operations.items():
+            for status in ("404", "409", "422", "503"):
+                assert operation["responses"][status]["content"] == expected, (path, method)
+
+
+async def test_error_bodies_match_the_problem_schema(client: AsyncClient) -> None:
+    from h42pki.api.problems import Problem
+
+    not_found = await client.get(f"/api/v1/certificates/{uuid.uuid4()}")
+    invalid = await client.get("/api/v1/certificates", params={"limit": 501})
+    unavailable = await client.get("/ca/chain.pem")
+
+    for response in (not_found, invalid, unavailable):
+        Problem.model_validate(response.json())
+    assert Problem.model_validate(invalid.json()).errors is not None
