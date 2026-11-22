@@ -26,6 +26,7 @@ from h42pki.models import (
     Certificate,
     CertificateStatus,
     Channel,
+    KeyPurpose,
     PrivateKey,
 )
 from h42pki.services.x509_fields import signed_fields
@@ -93,6 +94,7 @@ class AuthorityService:
         async with in_transaction():
             key = await PrivateKey.create(
                 algorithm=key_algorithm,
+                purpose=KeyPurpose.CA,
                 encrypted_key=stored.encrypted_key,
                 public_key_der=stored.public_key_der,
             )

@@ -27,6 +27,7 @@ class Channel(StrEnum):
 
     CLI = "cli"
     API = "api"
+    SYSTEM = "system"  # issued by the CA for itself: built-in HTTPS server (ADR-0013)
 
 
 class CertificateRequest(TimestampedModel):

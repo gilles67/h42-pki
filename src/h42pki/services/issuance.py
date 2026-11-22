@@ -2,6 +2,7 @@
 
 import asyncio
 import hashlib
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -10,12 +11,14 @@ from cryptography import x509
 from cryptography.hazmat.primitives import serialization
 from tortoise.transactions import in_transaction
 
-from h42pki.core.csr import ParsedCsr, parse_csr
+from h42pki.core.csr import ParsedCsr, build_csr, parse_csr
 from h42pki.core.issuance import build_issued, plan_issuance
+from h42pki.core.keys import KeyAlgorithm
 from h42pki.core.names import rfc4514
+from h42pki.core.profiles import SERVICE_TLS_PROFILE
 from h42pki.core.publication import ca_certificate_url
 from h42pki.errors import Conflict, H42Error, NoActiveAuthority, Unprocessable
-from h42pki.keystore import KeyStore
+from h42pki.keystore import KeyStore, StoredKey
 from h42pki.models import (
     AuditLog,
     Authority,
@@ -23,6 +26,8 @@ from h42pki.models import (
     CertificateRequest,
     CertificateStatus,
     Channel,
+    KeyPurpose,
+    PrivateKey,
     Profile,
     RequestStatus,
 )
@@ -31,6 +36,9 @@ from h42pki.services.profiles import ProfileService, spec_of
 from h42pki.services.x509_fields import signed_fields
 
 AUTO_APPROVE = "auto-approve"
+SYSTEM_ACTOR = "system"
+# Key of the built-in HTTPS server: fast to generate and accepted by every TLS client.
+SERVICE_TLS_KEY_ALGORITHM = KeyAlgorithm.EC_P256
 
 
 def _ca_issuers_url(authority: Authority) -> str | None:
@@ -44,6 +52,7 @@ class IssuanceService:
     """submit -> (auto_approve | approve) -> _issue; reject. ``_issue`` is the single path."""
 
     def __init__(self, keystore: KeyStore) -> None:
+        self._keystore = keystore
         self._authorities = AuthorityService(keystore)
 
     # --- queries --------------------------------------------------------------------------
@@ -122,6 +131,50 @@ class IssuanceService:
             return await self._issue(request, parsed=parsed, actor=actor, decided_by=AUTO_APPROVE)
         return await self.get(request.id)
 
+    async def issue_service_certificate(
+        self, names: Sequence[str], *, validity_days: int
+    ) -> CertificateRequest:
+        """Certificate of the built-in HTTPS server (ADR-0013): internal, never exposed.
+
+        A new key (``purpose = tls``) and a CSR are made here, then the request follows the same
+        path as any other: checked against the internal ``service_tls`` profile, recorded, and
+        issued by ``_issue``. CN = the first name, SANs = all names.
+        """
+        profile = await Profile.get(name=SERVICE_TLS_PROFILE)
+        spec = spec_of(profile)
+        authority = await self._authorities.get_local()
+        stored = await self._keystore.generate(SERVICE_TLS_KEY_ALGORITHM)
+        key = await self._keystore.load(stored.encrypted_key)
+        csr_der = await asyncio.to_thread(build_csr, key, names[0], names)
+        parsed = parse_csr(csr_der)
+        now = datetime.now(UTC)
+        issuer_cert = await self._issuer_certificate(authority, now)
+        plan = plan_issuance(parsed, spec, issuer_cert, validity_days=validity_days, now=now)
+        async with in_transaction():
+            request = await CertificateRequest.create(
+                csr_der=csr_der,
+                profile=profile,
+                requested_validity_days=validity_days,
+                requester=SYSTEM_ACTOR,
+                channel=Channel.SYSTEM,
+                subject_dn=rfc4514(plan.subject),
+                metadata={"ignored_extensions": []},
+            )
+            await self._audit(
+                SYSTEM_ACTOR,
+                "request.submit",
+                request,
+                {
+                    "profile": profile.name,
+                    "subject_dn": request.subject_dn,
+                    "requested_validity_days": validity_days,
+                    "ignored_extensions": [],
+                },
+            )
+        return await self._issue(
+            request, parsed=parsed, actor=SYSTEM_ACTOR, decided_by=AUTO_APPROVE, tls_key=stored
+        )
+
     async def approve(self, request_id: UUID, *, actor: str) -> CertificateRequest:
         request = await self._pending(request_id)
         profile = await Profile.get(id=request.profile_id)
@@ -165,9 +218,19 @@ class IssuanceService:
         return x509.load_der_x509_certificate(record.der)
 
     async def _issue(
-        self, request: CertificateRequest, *, parsed: ParsedCsr, actor: str, decided_by: str
+        self,
+        request: CertificateRequest,
+        *,
+        parsed: ParsedCsr,
+        actor: str,
+        decided_by: str,
+        tls_key: StoredKey | None = None,
     ) -> CertificateRequest:
-        """The single issuance path for certificates signed by the CA."""
+        """The single issuance path for certificates signed by the CA.
+
+        ``tls_key``: key generated here for the certificate (built-in HTTPS server), stored in the
+        same transaction as the certificate.
+        """
         profile = await Profile.get(id=request.profile_id)
         spec = spec_of(profile)
         now = datetime.now(UTC)
@@ -194,11 +257,31 @@ class IssuanceService:
             "validity_truncated": issued.validity_truncated,
         }
         async with in_transaction():
+            private_key: PrivateKey | None = None
+            if tls_key is not None:
+                private_key = await PrivateKey.create(
+                    algorithm=SERVICE_TLS_KEY_ALGORITHM,
+                    purpose=KeyPurpose.TLS,
+                    encrypted_key=tls_key.encrypted_key,
+                    public_key_der=tls_key.public_key_der,
+                )
+                await AuditLog.record(
+                    actor=actor,
+                    action="private_key.generate",
+                    object_type="private_key",
+                    object_id=private_key.id,
+                    details={
+                        "algorithm": private_key.algorithm.value,
+                        "backend": private_key.backend.value,
+                        "purpose": private_key.purpose.value,
+                    },
+                )
             certificate = await Certificate.create(
                 issuer=authority,
                 profile=profile,
                 channel=request.channel,
                 status=CertificateStatus.VALID,
+                private_key=private_key,
                 **fields,
             )
             # Conditional update: a concurrent decision on the same request loses here.
@@ -225,6 +308,7 @@ class IssuanceService:
                     "not_after": fields["not_after"].isoformat(),
                     "validity_truncated": issued.validity_truncated,
                     "decided_by": decided_by,
+                    "channel": request.channel.value,
                 },
             )
         return await self.get(request.id)

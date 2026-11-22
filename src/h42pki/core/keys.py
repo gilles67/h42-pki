@@ -102,6 +102,15 @@ def serialize_encrypted(key: PrivateKeyTypes, passphrase: bytes) -> bytes:
     )
 
 
+def serialize_encrypted_pem(key: PrivateKeyTypes, password: bytes) -> bytes:
+    """Encrypted PKCS#8 PEM, the form ``ssl.SSLContext.load_cert_chain`` can read."""
+    return key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.BestAvailableEncryption(password),
+    )
+
+
 def load_encrypted(data: bytes, passphrase: bytes) -> SupportedPrivateKey:
     """Load an encrypted PKCS#8 DER key; any failure gives a generic error without details."""
     try:

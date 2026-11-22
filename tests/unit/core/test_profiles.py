@@ -11,9 +11,30 @@ RSA = [KeyAlgorithm.RSA2048, KeyAlgorithm.RSA3072, KeyAlgorithm.RSA4096]
 NOT_RSA = [KeyAlgorithm.EC_P256, KeyAlgorithm.EC_P384, KeyAlgorithm.ED25519]
 
 
-def test_the_five_builtin_profiles() -> None:
-    assert set(BUILTIN_PROFILES) == {"sub_ca", "tls_server", "tls_client", "ocsp_signer", "device"}
+def test_the_builtin_profiles() -> None:
+    assert set(BUILTIN_PROFILES) == {
+        "sub_ca",
+        "tls_server",
+        "tls_client",
+        "ocsp_signer",
+        "device",
+        "service_tls",
+    }
     assert {spec.kind for spec in BUILTIN_PROFILES.values()} == set(ProfileKind)
+    # Only the built-in HTTPS server profile is internal (ADR-0013).
+    assert [spec.name for spec in BUILTIN_PROFILES.values() if spec.internal] == ["service_tls"]
+
+
+def test_service_tls_profile() -> None:
+    spec = BUILTIN_PROFILES["service_tls"]
+
+    assert (spec.validity_days, spec.max_validity_days) == (47, 200)
+    assert spec.extended_key_usage == ["server_auth"]
+    assert spec.basic_constraints.ca is False
+    assert spec.san_policy.types == ["dns", "ip"] and spec.san_policy.required
+    assert spec.subject_policy.required == ["common_name"]
+    assert spec.subject_policy.cn_must_match_san
+    assert spec.include_aia
 
 
 def test_tls_server_follows_sc081v3() -> None:

@@ -9,6 +9,7 @@ from httpx import AsyncClient
 
 from h42pki.core.errors import InvalidValidity
 from h42pki.core.keys import KeyAlgorithm, public_key_algorithm
+from h42pki.core.profiles import BUILTIN_PROFILES
 from h42pki.errors import Conflict, NoActiveAuthority
 from h42pki.keystore import KeyStore
 from h42pki.models import (
@@ -141,4 +142,4 @@ async def test_unchanged_profiles_are_left_alone(client: AsyncClient) -> None:
     await ProfileService().sync_builtin()
 
     assert not await AuditLog.exists(action="profile.realign")
-    assert await AuditLog.filter(action="profile.create").count() == 5
+    assert await AuditLog.filter(action="profile.create").count() == len(BUILTIN_PROFILES)

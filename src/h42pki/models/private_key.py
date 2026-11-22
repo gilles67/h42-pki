@@ -13,9 +13,15 @@ class KeyBackend(StrEnum):
     PKCS11 = "pkcs11"
 
 
+class KeyPurpose(StrEnum):
+    CA = "ca"
+    TLS = "tls"  # key of the built-in HTTPS server; the CA key never serves TLS (ADR-0013)
+
+
 class PrivateKey(TimestampedModel):
     algorithm = fields.CharEnumField(KeyAlgorithm, max_length=16)
     backend = fields.CharEnumField(KeyBackend, default=KeyBackend.SOFTWARE, max_length=16)
+    purpose = fields.CharEnumField(KeyPurpose, default=KeyPurpose.CA, max_length=16)
     # Encrypted PKCS#8 DER (h42pki.core.keys.serialize_encrypted). Never returned by the API.
     encrypted_key = fields.BinaryField()
     public_key_der = fields.BinaryField()

@@ -5,16 +5,20 @@ other requested extension is listed as ignored and never copied into a certifica
 CLAUDE.md section 6.3).
 """
 
+import ipaddress
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from cryptography import x509
 from cryptography.exceptions import UnsupportedAlgorithm
-from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.asymmetric.types import CertificatePublicKeyTypes
+from cryptography.x509.oid import NameOID
 
 from h42pki.core.errors import InvalidCsr, InvalidSan
-from h42pki.core.keys import KeyAlgorithm, public_key_algorithm
+from h42pki.core.hostnames import is_ip_address
+from h42pki.core.keys import KeyAlgorithm, SupportedPrivateKey, public_key_algorithm, signature_hash
 from h42pki.core.names import NameAttributes, name_attributes
 from h42pki.core.profiles import SanType
 
@@ -116,3 +120,22 @@ def parse_csr(data: bytes | str) -> ParsedCsr:
         sans=sans,
         ignored_extensions=tuple(ignored),
     )
+
+
+def build_csr(key: SupportedPrivateKey, common_name: str, names: Sequence[str]) -> bytes:
+    """DER CSR for a server key held here: CN plus DNS / IP SANs (built-in HTTPS server).
+
+    The key is handed over by the service, as for the CA key; the CSR then follows the same
+    issuance path as any other request (ADR-0013).
+    """
+    general_names: list[x509.GeneralName] = [
+        x509.IPAddress(ipaddress.ip_address(name)) if is_ip_address(name) else x509.DNSName(name)
+        for name in names
+    ]
+    csr = (
+        x509.CertificateSigningRequestBuilder()
+        .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, common_name)]))
+        .add_extension(x509.SubjectAlternativeName(general_names), critical=False)
+        .sign(key, signature_hash(key))
+    )
+    return csr.public_bytes(serialization.Encoding.DER)

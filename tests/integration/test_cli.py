@@ -153,7 +153,9 @@ def test_profile_list() -> None:
     tls_server = next(line for line in lines if line.startswith("tls_server"))
     assert tls_server.split()[2:4] == ["yes", "auto"]
     assert "90 (max 200)" in tls_server and "server_auth" in tls_server
-    assert len(lines) == 6
+    assert len(lines) == 7
+    service_tls = next(line for line in lines if line.startswith("service_tls"))
+    assert service_tls.split()[2] == "internal"
 
 
 def test_profile_disable_and_enable() -> None:

@@ -38,6 +38,7 @@ class ProfileKind(StrEnum):
     TLS_CLIENT = "tls_client"
     OCSP_SIGNER = "ocsp_signer"
     DEVICE = "device"
+    SERVICE_TLS = "service_tls"
 
 
 class SubjectPolicy(BaseModel):
@@ -132,6 +133,9 @@ CA_SUBJECT = SubjectPolicy(
     required=["common_name"],
     allowed=["organization_name", "organizational_unit_name", "country_name", *LOCATION],
 )
+
+# Internal profile of the built-in HTTPS server certificate (ADR-0013).
+SERVICE_TLS_PROFILE = "service_tls"
 
 BUILTIN_PROFILES: dict[str, ProfileSpec] = {
     spec.name: spec
@@ -229,6 +233,24 @@ BUILTIN_PROFILES: dict[str, ProfileSpec] = {
                 allowed=["organization_name", "organizational_unit_name", *LOCATION],
             ),
             san_policy=SanPolicy(types=["dns", "ip", "uri"]),
+        ),
+        ProfileSpec(
+            name=SERVICE_TLS_PROFILE,
+            kind=ProfileKind.SERVICE_TLS,
+            description=(
+                "Internal: certificate of the built-in HTTPS server of this CA, issued and renewed "
+                "by the CA itself (ADR-0013). Never available to requests or enrolment protocols."
+            ),
+            auto_approve=True,
+            validity_days=47,
+            max_validity_days=200,
+            basic_constraints=BasicConstraints(ca=False),
+            key_usage=KeyUsage(digital_signature=True, key_encipherment=True),
+            extended_key_usage=["server_auth"],
+            allowed_key_algorithms=ALL_ALGORITHMS,
+            subject_policy=SubjectPolicy(required=["common_name"], cn_must_match_san=True),
+            san_policy=SanPolicy(types=["dns", "ip"], required=True),
+            internal=True,
         ),
     )
 }

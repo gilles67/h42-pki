@@ -35,3 +35,11 @@ class KeyStore(Protocol):
     async def load(self, stored: bytes) -> SupportedPrivateKey:
         """Turn the stored (protected) form back into a usable private key."""
         ...
+
+    async def export_encrypted(self, stored: bytes, password: bytes) -> bytes:
+        """Re-encrypt a stored key as PKCS#8 PEM under ``password`` (CLAUDE.md section 6.2).
+
+        Used to load the key of the built-in HTTPS server into an ``SSLContext``: the key only
+        leaves the key store encrypted, with a one-time password kept in memory.
+        """
+        ...

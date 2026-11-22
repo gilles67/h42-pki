@@ -4,7 +4,7 @@ import pytest
 from httpx import AsyncClient
 
 from h42pki.core.errors import InvalidSetting
-from h42pki.errors import NotFound
+from h42pki.errors import NotFound, Unprocessable
 from h42pki.models import AuditLog, CertificateRequest
 from h42pki.services import ProfileService, SettingsService
 from tests.conftest import RootFactory
@@ -117,9 +117,10 @@ async def test_set_enabled_unknown_profile() -> None:
         await ProfileService().set_enabled("code_signing", enabled=False, actor="cli")
 
 
-# The internal service_tls profile (ADR-0013) arrives with the built-in HTTPS server; until then
-# the name is simply unknown, and once it exists it can never be disabled (test_settings_schema).
 @pytest.mark.usefixtures("client")
-async def test_service_tls_cannot_be_disabled_yet() -> None:
-    with pytest.raises(InvalidSetting, match="service_tls"):
+async def test_service_tls_cannot_be_disabled() -> None:
+    """Internal profile (ADR-0013): HTTPS is turned off with H42_PKI_HTTPS_ENABLED=false."""
+    with pytest.raises(InvalidSetting, match="'service_tls' is an internal profile"):
         await _disable("service_tls")
+    with pytest.raises(Unprocessable, match="internal profile"):
+        await ProfileService().set_enabled("service_tls", enabled=False, actor="cli")

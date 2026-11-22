@@ -11,6 +11,7 @@ from h42pki.core.keys import (
     load_encrypted,
     public_key_der,
     serialize_encrypted,
+    serialize_encrypted_pem,
 )
 from h42pki.keystore.base import StoredKey
 
@@ -37,3 +38,7 @@ class SoftwareKeyStore:
 
     async def load(self, stored: bytes) -> SupportedPrivateKey:
         return await asyncio.to_thread(load_encrypted, stored, self._secret())
+
+    async def export_encrypted(self, stored: bytes, password: bytes) -> bytes:
+        key = await self.load(stored)
+        return await asyncio.to_thread(serialize_encrypted_pem, key, password)

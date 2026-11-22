@@ -73,7 +73,16 @@ async def test_profiles(client: AsyncClient) -> None:
 
     assert response.status_code == 200
     profiles = {profile["name"]: profile for profile in response.json()}
-    assert set(profiles) == {"device", "ocsp_signer", "sub_ca", "tls_client", "tls_server"}
+    assert set(profiles) == {
+        "device",
+        "ocsp_signer",
+        "service_tls",
+        "sub_ca",
+        "tls_client",
+        "tls_server",
+    }
+    assert profiles["service_tls"]["internal"] is True
+    assert profiles["tls_server"]["internal"] is False
     tls = profiles["tls_server"]
     assert (tls["validity_days"], tls["max_validity_days"]) == (90, 200)
     assert tls["builtin"] is True and tls["auto_approve"] is True

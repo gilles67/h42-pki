@@ -24,6 +24,7 @@ from h42pki.models import (
     CertificateStatus,
     Channel,
     KeyBackend,
+    KeyPurpose,
     PrivateKey,
     Profile,
     RequestStatus,
@@ -47,6 +48,7 @@ class PrivateKeyOut(Schema):
     id: UUID
     algorithm: KeyAlgorithm
     backend: KeyBackend
+    purpose: KeyPurpose
     public_key_pem: str
     created_at: datetime
 
@@ -61,6 +63,7 @@ class PrivateKeyOut(Schema):
             id=key.id,
             algorithm=key.algorithm,
             backend=key.backend,
+            purpose=key.purpose,
             public_key_pem=pem.decode("ascii"),
             created_at=key.created_at,
         )
