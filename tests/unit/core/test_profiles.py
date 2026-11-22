@@ -116,3 +116,14 @@ def test_required_san_needs_a_type() -> None:
 def test_extra_fields_forbidden() -> None:
     with pytest.raises(ValidationError):
         ProfileSpec.model_validate(_spec(include_cdp=True))
+
+
+@pytest.mark.parametrize("name", ["sub_ca", "tls_server", "tls_client", "device"])
+def test_state_and_locality_allowed(name: str) -> None:  # B33
+    permitted = BUILTIN_PROFILES[name].subject_policy.permitted()
+
+    assert {"state_or_province_name", "locality_name"} <= permitted
+
+
+def test_ocsp_signer_keeps_a_bare_common_name() -> None:
+    assert BUILTIN_PROFILES["ocsp_signer"].subject_policy.permitted() == {"common_name"}

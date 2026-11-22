@@ -120,9 +120,12 @@ def resolve_key_usage(spec: ProfileSpec, algorithm: KeyAlgorithm) -> KeyUsage:
 
 
 ALL_ALGORITHMS = list(KeyAlgorithm)
+# State and locality are allowed wherever a full organisation subject makes sense (B33), so that
+# CSRs from an interactive `openssl req` pass; the OCSP signer keeps a bare common name.
+LOCATION: list[SubjectField] = ["state_or_province_name", "locality_name"]
 CA_SUBJECT = SubjectPolicy(
     required=["common_name"],
-    allowed=["organization_name", "organizational_unit_name", "country_name"],
+    allowed=["organization_name", "organizational_unit_name", "country_name", *LOCATION],
 )
 
 BUILTIN_PROFILES: dict[str, ProfileSpec] = {
@@ -161,6 +164,7 @@ BUILTIN_PROFILES: dict[str, ProfileSpec] = {
                     "organization_name",
                     "organizational_unit_name",
                     "country_name",
+                    *LOCATION,
                 ],
                 cn_must_match_san=True,
             ),
@@ -184,6 +188,7 @@ BUILTIN_PROFILES: dict[str, ProfileSpec] = {
                     "organizational_unit_name",
                     "country_name",
                     "email_address",
+                    *LOCATION,
                 ],
             ),
             san_policy=SanPolicy(types=["dns", "email", "uri"]),
@@ -216,7 +221,7 @@ BUILTIN_PROFILES: dict[str, ProfileSpec] = {
             allowed_key_algorithms=ALL_ALGORITHMS,
             subject_policy=SubjectPolicy(
                 required=["common_name"],
-                allowed=["organization_name", "organizational_unit_name"],
+                allowed=["organization_name", "organizational_unit_name", *LOCATION],
             ),
             san_policy=SanPolicy(types=["dns", "ip", "uri"]),
         ),

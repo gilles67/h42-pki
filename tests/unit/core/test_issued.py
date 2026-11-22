@@ -176,13 +176,22 @@ def test_other_profiles_have_no_ocsp_no_check(root: Root, key_for: KeyFor) -> No
 
 
 def test_subject_attribute_not_allowed(root: Root, key_for: KeyFor) -> None:
-    with pytest.raises(InvalidSubject, match="state_or_province_name not allowed"):
+    with pytest.raises(InvalidSubject, match="email_address not allowed by profile tls_server"):
         _issue(
             root,
             "tls_server",
             key_for(KeyAlgorithm.EC_P256),
-            name(ST="Ile-de-France", CN="a.example.test"),
+            name(CN="a.example.test", emailAddress="a@example.test"),
             sans=["dns:a.example.test"],
+        )
+
+
+def test_state_and_locality_refused_for_ocsp_signer(root: Root, key_for: KeyFor) -> None:
+    with pytest.raises(
+        InvalidSubject, match="locality_name, state_or_province_name not allowed by profile"
+    ):
+        _issue(
+            root, "ocsp_signer", key_for(KeyAlgorithm.EC_P256), name(ST="IDF", L="Paris", CN="o")
         )
 
 

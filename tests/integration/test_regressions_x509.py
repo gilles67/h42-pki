@@ -163,3 +163,27 @@ async def test_regression_B36_weak_csr_signature_refused(
         )
         assert response.status_code == 422
         assert response.json()["detail"].startswith(f"CSRs signed with {hash_name} are refused")
+
+
+async def test_regression_B33_state_and_locality(
+    client: AsyncClient, make_root: RootFactory, key_for: KeyFor
+) -> None:
+    await make_root()
+    subject = name(C="FR", ST="Ile-de-France", L="Paris", O="Home42", CN="www.example.test")
+    key = key_for(KeyAlgorithm.EC_P256)
+    server_csr = csr_pem(make_csr(key, subject, sans=["dns:www.example.test"]))
+    ocsp_csr = csr_pem(make_csr(key, name(ST="Ile-de-France", L="Paris", CN="ocsp")))
+
+    accepted = await client.post(
+        "/api/v1/requests", json={"csr_pem": server_csr, "profile": "tls_server"}
+    )
+    refused = await client.post(
+        "/api/v1/requests", json={"csr_pem": ocsp_csr, "profile": "ocsp_signer"}
+    )
+
+    assert accepted.status_code == 201, accepted.text
+    assert accepted.json()["subject_dn"] == (
+        "CN=www.example.test,O=Home42,L=Paris,ST=Ile-de-France,C=FR"
+    )
+    assert refused.status_code == 422
+    assert "not allowed by profile ocsp_signer" in refused.json()["detail"]
