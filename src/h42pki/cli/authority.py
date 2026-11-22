@@ -111,7 +111,7 @@ def status() -> None:
     """Show the local CA."""
 
     async def operation(settings: Settings) -> list[tuple[str, str]] | None:
-        service = AuthorityService(get_keystore(settings))
+        service = AuthorityService()  # read-only: no passphrase needed (B32)
         authority = await service.find_local()
         if authority is None:
             return None
@@ -135,7 +135,7 @@ def export(
     """Export the certificate of the local CA."""
 
     async def operation(settings: Settings) -> bytes:
-        service = AuthorityService(get_keystore(settings))
+        service = AuthorityService()  # read-only: no passphrase needed (B32)
         return (await service.certificate_of(await service.get_local())).der
 
     der = run(operation)

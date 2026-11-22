@@ -45,5 +45,11 @@ class ServiceUnavailable(H42Error):
     title = "Service Unavailable"
 
 
+class MissingPassphrase(ServiceUnavailable):
+    """The CA passphrase is not configured, so private keys cannot be used."""
+
+    title = "Key Store Unavailable"
+
+
 class NoActiveAuthority(ServiceUnavailable):
     title = "No Active Certificate Authority"

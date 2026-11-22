@@ -7,6 +7,8 @@ import uvicorn
 
 from h42pki import __version__
 from h42pki.cli import authority, profile
+from h42pki.cli._runtime import fail, load_settings
+from h42pki.keystore import KEY_OPERATIONS_REQUIREMENT
 
 app = typer.Typer(help="h42-pki certificate authority server.", no_args_is_help=True)
 app.add_typer(authority.app, name="authority")
@@ -26,4 +28,6 @@ def serve(
     reload: Annotated[bool, typer.Option(help="Reload on code changes (development).")] = False,
 ) -> None:
     """Run the development server (uvicorn). Production images use Granian."""
+    if load_settings().ca_passphrase is None:
+        fail(f"cannot start the server: {KEY_OPERATIONS_REQUIREMENT}", code=2)
     uvicorn.run("h42pki.main:create_app", factory=True, host=host, port=port, reload=reload)

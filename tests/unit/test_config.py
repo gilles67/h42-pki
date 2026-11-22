@@ -67,9 +67,24 @@ def test_missing_secrets_dir_is_ignored(monkeypatch: pytest.MonkeyPatch, tmp_pat
     assert settings.ca_passphrase.get_secret_value() == PASSPHRASE
 
 
-def test_passphrase_is_required() -> None:
-    with pytest.raises(ValueError, match="ca_passphrase"):
-        Settings()  # type: ignore[call-arg]
+def test_passphrase_is_optional_in_settings() -> None:  # B32
+    assert Settings().ca_passphrase is None
+
+
+def test_regression_B32_server_refuses_to_start_without_passphrase() -> None:
+    from h42pki.main import create_app
+
+    with pytest.raises(RuntimeError, match="H42_PKI_CA_PASSPHRASE .* is required"):
+        create_app(Settings(environment="dev"))
+
+
+def test_keystore_requires_the_passphrase() -> None:
+    from h42pki.errors import MissingPassphrase
+    from h42pki.keystore import get_keystore
+
+    with pytest.raises(MissingPassphrase, match="H42_PKI_CA_PASSPHRASE"):
+        get_keystore(Settings())
+    assert MissingPassphrase.status_code == 503
 
 
 def test_passphrase_not_in_repr(monkeypatch: pytest.MonkeyPatch) -> None:

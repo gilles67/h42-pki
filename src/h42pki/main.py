@@ -11,12 +11,16 @@ from h42pki.api import admin, health
 from h42pki.api.problems import exception_handlers
 from h42pki.config import Settings, get_settings
 from h42pki.db import ensure_sqlite_directory, tortoise_config
+from h42pki.keystore import KEY_OPERATIONS_REQUIREMENT
 from h42pki.services.profiles import ProfileService
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     """Build the application; ``settings`` defaults to :func:`get_settings`."""
     app_settings = settings if settings is not None else get_settings()
+    if app_settings.ca_passphrase is None:
+        # Unchanged behaviour: the API generates and uses keys, it does not start without it.
+        raise RuntimeError(f"cannot start the server: {KEY_OPERATIONS_REQUIREMENT}")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:

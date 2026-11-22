@@ -11,8 +11,8 @@ from h42pki.core.issuance import DEFAULT_CA_VALIDITY_DAYS, build_self_signed, ch
 from h42pki.core.keys import KeyAlgorithm, SupportedPrivateKey
 from h42pki.core.names import Subject
 from h42pki.core.serial import new_serial_hex
-from h42pki.errors import Conflict, InvalidRequest, NoActiveAuthority
-from h42pki.keystore import KeyStore
+from h42pki.errors import Conflict, InvalidRequest, MissingPassphrase, NoActiveAuthority
+from h42pki.keystore import KEY_OPERATIONS_REQUIREMENT, KeyStore
 from h42pki.models import (
     AuditLog,
     Authority,
@@ -29,8 +29,15 @@ ROOT_KEY_USAGE = KeyUsage(key_cert_sign=True, crl_sign=True, digital_signature=T
 
 
 class AuthorityService:
-    def __init__(self, keystore: KeyStore) -> None:
-        self._keystore = keystore
+    def __init__(self, keystore: KeyStore | None = None) -> None:
+        """``keystore`` is only needed by operations that use a private key (B32)."""
+        self._key_store = keystore
+
+    @property
+    def _keystore(self) -> KeyStore:
+        if self._key_store is None:
+            raise MissingPassphrase(KEY_OPERATIONS_REQUIREMENT)
+        return self._key_store
 
     async def init_root(
         self,

@@ -129,7 +129,9 @@ class Settings(BaseSettings):
 
     environment: Literal["dev", "test", "production"] = "production"
     database_url: str = "sqlite://data/h42pki.sqlite3"
-    ca_passphrase: SecretStr
+    # Optional here: only the key store needs it (B32). The server refuses to start without
+    # it (h42pki.main), read-only CLI commands work without it.
+    ca_passphrase: SecretStr | None = None
 
     def __init__(self, **values: Any) -> None:
         token = _secret_file_issues.set([])

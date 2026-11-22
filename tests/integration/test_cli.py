@@ -166,11 +166,52 @@ def test_profile_show_unknown() -> None:
     assert "profile 'code_signing' does not exist" in result.output
 
 
-def test_missing_passphrase_is_a_readable_error(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.fixture
+def no_passphrase(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv(f"{ENV_PREFIX}CA_PASSPHRASE")
+    get_settings.cache_clear()
+
+
+def test_regression_B32_read_only_commands_need_no_passphrase(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert invoke(*INIT).exit_code == 0  # with the passphrase
+    monkeypatch.delenv(f"{ENV_PREFIX}CA_PASSPHRASE")
+    get_settings.cache_clear()
+
+    for command in (
+        ["profile", "list"],
+        ["profile", "show", "tls_server"],
+        ["authority", "status"],
+        ["authority", "export"],
+    ):
+        result = invoke(*command)
+        assert result.exit_code == 0, (command, result.output)
+
+
+@pytest.mark.usefixtures("no_passphrase")
+def test_init_without_passphrase_is_a_readable_error() -> None:
+    result = invoke(*INIT)
+
+    assert result.exit_code == 1
+    assert "error: H42_PKI_CA_PASSPHRASE" in result.output
+    assert "required for operations on private keys" in result.output
+    assert invoke("authority", "status").exit_code == 1  # nothing was created
+
+
+@pytest.mark.usefixtures("no_passphrase")
+def test_serve_without_passphrase_is_refused() -> None:
+    result = invoke("serve")
+
+    assert result.exit_code == 2
+    assert "cannot start the server: H42_PKI_CA_PASSPHRASE" in result.output
+
+
+def test_invalid_configuration_is_a_readable_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(f"{ENV_PREFIX}ENVIRONMENT", "staging")
     get_settings.cache_clear()
 
     result = invoke("profile", "list")
 
     assert result.exit_code == 2
-    assert "invalid configuration: ca_passphrase: Field required" in result.output
+    assert "invalid configuration: environment:" in result.output
