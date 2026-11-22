@@ -8,7 +8,7 @@
 #   a Docker secret named h42_pki_ca_passphrase   (/run/secrets/h42_pki_ca_passphrase)
 # The SQLite database lives in the /data volume.
 
-ARG PYTHON_VERSION=3.12
+ARG PYTHON_VERSION=3.13
 
 FROM ghcr.io/astral-sh/uv:0.13.9 AS uv
 
