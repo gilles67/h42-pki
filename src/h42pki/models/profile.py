@@ -26,6 +26,7 @@ class Profile(TimestampedModel):
     subject_policy: fields.JSONField[SubjectPolicy] = fields.JSONField(field_type=SubjectPolicy)
     san_policy: fields.JSONField[SanPolicy] = fields.JSONField(field_type=SanPolicy)
     ocsp_no_check = fields.BooleanField(default=False)
+    include_aia = fields.BooleanField(default=True)
 
     class Meta:
         table = "profile"
@@ -47,4 +48,5 @@ class Profile(TimestampedModel):
             "subject_policy": self.subject_policy,
             "san_policy": self.san_policy,
             "ocsp_no_check": self.ocsp_no_check,
+            "include_aia": self.include_aia,
         }

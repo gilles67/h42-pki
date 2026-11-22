@@ -89,6 +89,8 @@ class ProfileSpec(BaseModel):
     subject_policy: SubjectPolicy
     san_policy: SanPolicy
     ocsp_no_check: bool = False
+    # AIA caIssuers in issued certificates, when the CA has a public base URL.
+    include_aia: bool = True
 
     @model_validator(mode="after")
     def _check(self) -> Self:

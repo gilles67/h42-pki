@@ -43,3 +43,11 @@ class ProfileViolation(InvalidRequest):
 
 class PathLengthExceeded(InvalidRequest):
     title = "Path Length Exceeded"
+
+
+class InvalidPublicBaseUrl(InvalidRequest):
+    title = "Invalid Public Base URL"
+
+
+class InvalidAuthorityName(InvalidRequest):
+    title = "Invalid Authority Name"

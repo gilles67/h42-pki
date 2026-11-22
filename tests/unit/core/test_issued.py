@@ -20,7 +20,7 @@ from h42pki.core.extensions import Extensions
 from h42pki.core.issuance import IssuedCertificate, build_issued, build_self_signed
 from h42pki.core.keys import KeyAlgorithm, SupportedPrivateKey
 from h42pki.core.names import Subject
-from h42pki.core.profiles import BUILTIN_PROFILES
+from h42pki.core.profiles import BUILTIN_PROFILES, ProfileSpec
 from h42pki.core.serial import new_serial_hex
 from tests.x509_helpers import csr_pem, make_csr, name
 
@@ -63,16 +63,19 @@ def _issue(
     sans: Sequence[str] = (),
     extensions: Sequence[tuple[x509.ExtensionType, bool]] = (),
     validity_days: int | None = None,
+    ca_issuers_url: str | None = None,
+    spec: ProfileSpec | None = None,
 ) -> IssuedCertificate:
     csr = make_csr(leaf_key, subject, sans=sans, extensions=extensions)
     issuer_cert, issuer_key = root
     return build_issued(
         parse_csr(csr_pem(csr)),
-        BUILTIN_PROFILES[profile],
+        spec or BUILTIN_PROFILES[profile],
         issuer_cert,
         issuer_key,
         validity_days=validity_days,
         now=NOW,
+        ca_issuers_url=ca_issuers_url,
     )
 
 
@@ -347,3 +350,49 @@ def test_serial_numbers_differ(root: Root, key_for: KeyFor) -> None:
     }
 
     assert len(serials) == 3
+
+
+# --- authority information access -----------------------------------------------------------
+
+AIA_URL = "http://pki.example.test/ca/test-root.crt"
+
+
+@pytest.mark.parametrize("profile", sorted(BUILTIN_PROFILES))
+def test_aia_ca_issuers(root: Root, key_for: KeyFor, profile: str) -> None:
+    sans = ["dns:a.example.test"] if profile == "tls_server" else []
+    cert = _issue(
+        root, profile, key_for(KeyAlgorithm.EC_P384), name(CN="a.example.test"), sans=sans,
+        ca_issuers_url=AIA_URL,
+    ).certificate  # fmt: skip
+
+    aia = _ext(cert, x509.AuthorityInformationAccess)
+    assert not aia.critical
+    assert [(d.access_method, d.access_location.value) for d in aia.value] == [
+        (x509.oid.AuthorityInformationAccessOID.CA_ISSUERS, AIA_URL)
+    ]
+
+
+def test_no_aia_without_url(root: Root, key_for: KeyFor) -> None:
+    cert = _issue(root, "tls_server", key_for(KeyAlgorithm.EC_P256), sans=["dns:a"]).certificate
+
+    with pytest.raises(x509.ExtensionNotFound):
+        _ext(cert, x509.AuthorityInformationAccess)
+
+
+def test_no_aia_when_the_profile_excludes_it(root: Root, key_for: KeyFor) -> None:
+    spec = BUILTIN_PROFILES["tls_server"].model_copy(update={"include_aia": False})
+
+    cert = _issue(
+        root, "tls_server", key_for(KeyAlgorithm.EC_P256), sans=["dns:a"],
+        ca_issuers_url=AIA_URL, spec=spec,
+    ).certificate  # fmt: skip
+
+    with pytest.raises(x509.ExtensionNotFound):
+        _ext(cert, x509.AuthorityInformationAccess)
+
+
+def test_root_certificate_never_has_aia(root: Root) -> None:
+    issuer_cert, _ = root
+
+    with pytest.raises(x509.ExtensionNotFound):
+        _ext(issuer_cert, x509.AuthorityInformationAccess)

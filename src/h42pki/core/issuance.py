@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import assert_never
 
 from cryptography import x509
+from cryptography.x509.oid import AuthorityInformationAccessOID
 
 from h42pki.core.csr import ParsedCsr, SanEntry
 from h42pki.core.errors import (
@@ -261,11 +262,13 @@ def build_issued(
     *,
     validity_days: int | None,
     now: datetime,
+    ca_issuers_url: str | None = None,
 ) -> IssuedCertificate:
     """Issue a certificate for ``csr`` according to ``profile_spec``.
 
-    Only the public key, the subject and the SANs come from the CSR. No CRL distribution point
-    nor authority information access is added before the services that would answer exist.
+    Only the public key, the subject and the SANs come from the CSR. The AIA caIssuers points to
+    ``ca_issuers_url`` when given and the profile includes it; no CRL distribution point nor
+    OCSP URL is added before those services exist (phase 3).
     """
     plan = plan_issuance(csr, profile_spec, issuer_cert, validity_days=validity_days, now=now)
     public_key = csr.public_key
@@ -289,6 +292,18 @@ def build_issued(
         )
     if profile_spec.ocsp_no_check:
         builder = builder.add_extension(x509.OCSPNoCheck(), critical=False)
+    if ca_issuers_url is not None and profile_spec.include_aia:
+        builder = builder.add_extension(
+            x509.AuthorityInformationAccess(
+                [
+                    x509.AccessDescription(
+                        AuthorityInformationAccessOID.CA_ISSUERS,
+                        x509.UniformResourceIdentifier(ca_issuers_url),
+                    )
+                ]
+            ),
+            critical=False,
+        )
 
     certificate = builder.sign(issuer_key, signature_hash(issuer_key))
     certificate.verify_directly_issued_by(issuer_cert)
