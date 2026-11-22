@@ -6,13 +6,14 @@ import typer
 import uvicorn
 
 from h42pki import __version__
-from h42pki.cli import authority, profile
+from h42pki.cli import authority, certificate, profile
 from h42pki.cli._runtime import fail, load_settings
 from h42pki.keystore import KEY_OPERATIONS_REQUIREMENT
 
 app = typer.Typer(help="h42-pki certificate authority server.", no_args_is_help=True)
 app.add_typer(authority.app, name="authority")
 app.add_typer(profile.app, name="profile")
+app.add_typer(certificate.app, name="certificate")
 
 
 @app.command()

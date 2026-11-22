@@ -7,11 +7,16 @@ from pathlib import Path
 import pytest
 from click.testing import Result
 from cryptography import x509
+from cryptography.hazmat.primitives.asymmetric import ec
 from typer.testing import CliRunner
 
 from h42pki.cli import app
-from h42pki.config import ENV_PREFIX, get_settings
+from h42pki.cli._runtime import run
+from h42pki.config import ENV_PREFIX, Settings, get_settings
+from h42pki.keystore import get_keystore
+from h42pki.services import IssuanceService
 from tests.conftest import TEST_PASSPHRASE
+from tests.x509_helpers import csr_pem, make_csr, name
 
 runner = CliRunner()
 INIT = ["authority", "init", "--name", "home42-root", "--common-name", "Home42 Root CA"]
@@ -266,3 +271,84 @@ def test_invalid_authority_name() -> None:
 
     assert result.exit_code == 1
     assert "invalid CA name" in result.output
+
+
+def _issue_in_cli_database(profile: str, csr: str) -> str:
+    """Submit a request against the CLI database (there is no submit command)."""
+
+    async def operation(settings: Settings) -> str:
+        request = await IssuanceService(get_keystore(settings)).submit(
+            csr=csr, profile_name=profile, validity_days=None, actor="cli"
+        )
+        return str(request.certificate_id)
+
+    return run(operation)
+
+
+def _server_csr(host: str) -> str:
+    key = ec.generate_private_key(ec.SECP256R1())
+    return csr_pem(make_csr(key, name(CN=host), sans=[f"dns:{host}"]))
+
+
+def test_certificate_list(monkeypatch: pytest.MonkeyPatch) -> None:
+    invoke(*INIT)
+    for host in ("a.example.test", "b.example.test"):
+        _issue_in_cli_database("tls_server", _server_csr(host))
+    monkeypatch.delenv(f"{ENV_PREFIX}CA_PASSPHRASE")  # B32: read-only, no passphrase
+    get_settings.cache_clear()
+
+    everything = invoke("certificate", "list")
+    servers = invoke("certificate", "list", "--profile", "tls_server", "--limit", "1")
+
+    assert everything.exit_code == 0, everything.output
+    lines = everything.stdout.splitlines()
+    assert lines[0].split() == ["SERIAL", "SUBJECT", "PROFILE", "STATUS", "NOT", "AFTER"]
+    assert [line.split()[1] for line in lines[1:]] == [
+        "CN=b.example.test",
+        "CN=a.example.test",
+        "CN=Home42",  # root subject "CN=Home42 Root CA"
+    ]
+    assert "(root)" in lines[-1] and "valid" in lines[1]
+    assert "3 of 3 certificate(s)" in everything.output
+    assert servers.stdout.count("tls_server") == 1
+    assert "1 of 2 certificate(s)" in servers.output
+
+
+def test_certificate_list_rejects_invalid_options() -> None:
+    assert invoke("certificate", "list", "--limit", "501").exit_code == 2
+    assert invoke("certificate", "list", "--status", "pending").exit_code == 2
+
+
+def test_certificate_export(tmp_path: Path) -> None:
+    invoke(*INIT)
+    certificate_id = _issue_in_cli_database("tls_server", _server_csr("www.example.test"))
+
+    pem = invoke("certificate", "export", certificate_id)
+    chain = invoke("certificate", "export", certificate_id, "--chain")
+    target = tmp_path / "leaf.crt"
+    der = invoke(
+        "certificate", "export", certificate_id, "--format", "der", "--output", str(target)
+    )
+
+    assert pem.exit_code == chain.exit_code == der.exit_code == 0
+    leaf = x509.load_pem_x509_certificate(pem.stdout_bytes)
+    assert x509.load_der_x509_certificate(target.read_bytes()) == leaf
+    leaf_again, root = x509.load_pem_x509_certificates(chain.stdout_bytes)
+    assert leaf_again == leaf
+    leaf.verify_directly_issued_by(root)
+    assert root == exported()
+
+
+def test_certificate_export_errors() -> None:
+    invoke(*INIT)
+
+    unknown = invoke("certificate", "export", "00000000-0000-0000-0000-000000000000")
+    chain_der = invoke(
+        "certificate", "export", "00000000-0000-0000-0000-000000000000", "--chain",
+        "--format", "der",
+    )  # fmt: skip
+    bad_id = invoke("certificate", "export", "not-a-uuid")
+
+    assert unknown.exit_code == 1 and "does not exist" in unknown.output
+    assert chain_der.exit_code == 2 and "--chain is only available in PEM" in chain_der.output
+    assert bad_id.exit_code == 2
