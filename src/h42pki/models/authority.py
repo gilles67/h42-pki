@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 from typing import TYPE_CHECKING
+from uuid import UUID
 
 from tortoise import fields
 
@@ -57,6 +58,10 @@ class Authority(TimestampedModel):
     # The CA's own certificate: reverse side of Certificate.authority. A foreign key on this
     # table would form a cycle with Certificate.issuer, which Tortoise cannot create.
     certificate: fields.BackwardOneToOneRelation[Certificate]
+
+    # Foreign key columns created by Tortoise, declared for type checkers.
+    private_key_id: UUID | None
+    parent_id: UUID | None
 
     class Meta:
         table = "authority"

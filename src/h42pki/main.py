@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from tortoise.contrib.fastapi import RegisterTortoise
 
 from h42pki import __version__
-from h42pki.api import admin, health
+from h42pki.api import admin, health, public
 from h42pki.api.problems import exception_handlers
 from h42pki.config import Settings, get_settings
 from h42pki.db import ensure_sqlite_directory, tortoise_config
@@ -43,4 +43,5 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = app_settings
     app.include_router(health.router)
     app.include_router(admin.router)
+    app.include_router(public.router)
     return app
