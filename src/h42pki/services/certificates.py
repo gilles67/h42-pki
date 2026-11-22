@@ -3,7 +3,10 @@ CA certificate) and by IssuanceService (everything signed by the CA), nowhere el
 """
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from uuid import UUID
+
+from tortoise.expressions import Q
 
 from h42pki.models import Certificate, CertificateStatus, Channel
 
@@ -11,6 +14,16 @@ DEFAULT_PAGE_SIZE = 50
 MAX_PAGE_SIZE = 500
 # A chain is short (root -> intermediates -> leaf); the bound only guards against bad data.
 MAX_CHAIN_LENGTH = 16
+
+
+def effective_status(certificate: Certificate, now: datetime) -> CertificateStatus:
+    """Status as seen by clients: a valid certificate past its not_after is expired (B34).
+
+    Nothing is written: the stored status becomes persistent with the revocation tasks (phase 3).
+    """
+    if certificate.status is CertificateStatus.VALID and certificate.not_after <= now:
+        return CertificateStatus.EXPIRED
+    return certificate.status
 
 
 @dataclass(frozen=True)
@@ -32,10 +45,22 @@ class CertificateService:
         q: str | None = None,
         limit: int = DEFAULT_PAGE_SIZE,
         offset: int = 0,
+        now: datetime | None = None,
     ) -> CertificatePage:
-        """Certificates, newest first; ``q`` is a case-insensitive substring of the subject DN."""
+        """Certificates, newest first; ``q`` is a case-insensitive substring of the subject DN.
+
+        ``status`` filters on the effective status (see :func:`effective_status`).
+        """
+        now = now or datetime.now(UTC)
         query = Certificate.all()
-        if status is not None:
+        if status is CertificateStatus.VALID:
+            query = query.filter(status=CertificateStatus.VALID, not_after__gt=now)
+        elif status is CertificateStatus.EXPIRED:
+            query = query.filter(
+                Q(status=CertificateStatus.EXPIRED)
+                | Q(status=CertificateStatus.VALID, not_after__lte=now)
+            )
+        elif status is not None:
             query = query.filter(status=status)
         if profile is not None:
             query = query.filter(profile__name=profile)

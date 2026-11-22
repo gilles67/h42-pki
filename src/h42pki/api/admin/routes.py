@@ -1,5 +1,6 @@
 """Admin API ``/api/v1`` (no authentication until the first release, ADR-0008)."""
 
+from datetime import UTC, datetime
 from typing import Annotated
 from uuid import UUID
 
@@ -72,11 +73,12 @@ async def list_certificates(
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> CertificateList:
     """Certificates, newest first."""
+    now = datetime.now(UTC)
     page = await certificates.search(
-        status=status, profile=profile, channel=channel, q=q, limit=limit, offset=offset
+        status=status, profile=profile, channel=channel, q=q, limit=limit, offset=offset, now=now
     )
     return CertificateList(
-        items=[CertificateOut.from_model(cert) for cert in page.items],
+        items=[CertificateOut.from_model(cert, now=now) for cert in page.items],
         total=page.total,
         limit=limit,
         offset=offset,

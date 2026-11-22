@@ -221,3 +221,24 @@ async def test_regression_B35_refused_requests_are_audited(
     for entry in entries:
         assert "BEGIN CERTIFICATE REQUEST" not in str(entry.details)
     assert (await client.get("/api/v1/requests")).json() == []
+
+
+async def test_regression_B34_effective_expired_status(
+    client: AsyncClient, make_root: RootFactory, issue: IssueFactory, key_for: KeyFor
+) -> None:
+    await make_root()
+    csr = make_csr(key_for(KeyAlgorithm.EC_P256), sans=["dns:www.example.test"])
+    request = await issue("tls_server", csr_pem(csr))  # 90 days
+    url = f"/api/v1/certificates/{request.certificate_id}"
+
+    async def statuses() -> tuple[str, int, int]:
+        detail = (await client.get(url)).json()["status"]
+        expired = (await client.get("/api/v1/certificates", params={"status": "expired"})).json()
+        valid = (await client.get("/api/v1/certificates", params={"status": "valid"})).json()
+        return detail, expired["total"], valid["total"]
+
+    assert await statuses() == ("valid", 0, 2)
+    with time_machine.travel(datetime.now(UTC) + timedelta(days=100), tick=False):
+        assert await statuses() == ("expired", 1, 1)  # the root is still valid
+    stored = await Certificate.get(id=request.certificate_id)
+    assert stored.status.value == "valid"  # nothing written (persistent status: phase 3)

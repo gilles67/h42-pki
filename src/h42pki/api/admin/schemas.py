@@ -3,7 +3,7 @@
 Tortoise models are never returned directly, and no schema exposes ``encrypted_key``.
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 from uuid import UUID
 
 from cryptography import x509
@@ -26,6 +26,7 @@ from h42pki.models import (
     Profile,
     RequestStatus,
 )
+from h42pki.services.certificates import effective_status
 from h42pki.services.profiles import spec_of
 
 MAX_CSR_PEM_LENGTH = 65536
@@ -85,14 +86,14 @@ class CertificateOut(Schema):
     )
 
     @classmethod
-    def from_model(cls, cert: Certificate) -> "CertificateOut":
-        """``cert.profile`` and ``cert.issuer`` must be prefetched."""
+    def from_model(cls, cert: Certificate, *, now: datetime | None = None) -> "CertificateOut":
+        """``cert.profile`` and ``cert.issuer`` must be prefetched; ``status`` is effective."""
         parsed = x509.load_der_x509_certificate(cert.der)
         return cls(
             id=cert.id,
             serial_hex=cert.serial_hex,
             subject_dn=cert.subject_dn,
-            status=cert.status,
+            status=effective_status(cert, now or datetime.now(UTC)),
             not_before=cert.not_before,
             not_after=cert.not_after,
             sha256_fingerprint=cert.sha256_fingerprint,
