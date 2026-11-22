@@ -1,12 +1,20 @@
 # syntax=docker/dockerfile:1
 #
-# h42-pki: one container = one certificate authority.
+# h42-pki: one container = one certificate authority (ADR-0001).
 #
-# Required at run time: the CA key passphrase, through one of
-#   -e H42_PKI_CA_PASSPHRASE=...                  (environment variable)
-#   -e H42_PKI_CA_PASSPHRASE_FILE=/path/in/container
-#   a Docker secret named h42_pki_ca_passphrase   (/run/secrets/h42_pki_ca_passphrase)
-# The SQLite database lives in the /data volume.
+# Required at run time:
+#   - the CA key passphrase, through one of
+#       -e H42_PKI_CA_PASSPHRASE=...                  (environment variable)
+#       -e H42_PKI_CA_PASSPHRASE_FILE=/path/in/container
+#       a Docker secret named h42_pki_ca_passphrase   (/run/secrets/h42_pki_ca_passphrase)
+#   - -e H42_PKI_SERVER_HOSTNAME=pki.example.lan      (FQDN of the service, ADR-0011)
+# Optional: H42_PKI_SERVER_ALT_NAMES, H42_PKI_HTTP_ENABLED|PORT, H42_PKI_HTTPS_ENABLED|PORT,
+# H42_PKI_TRUSTED_PROXIES. Everything else is in the database (`h42pki config`).
+#
+# `h42pki serve` is the built-in launcher (ADR-0012): HTTP on 8080 (public routes: /, /health,
+# /ca/*), HTTPS on 8443 (everything) as soon as the CA is active and has issued the certificate
+# of its own server (ADR-0013). Publish them with -p 80:8080 -p 443:8443.
+# The SQLite database (data and configuration) lives in the /data volume.
 
 ARG PYTHON_VERSION=3.13
 
@@ -40,12 +48,13 @@ COPY --from=build /app/.venv /app/.venv
 ENV PATH="/app/.venv/bin:${PATH}" \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    H42_PKI_DATABASE_URL=sqlite:///data/h42pki.sqlite3
+    H42_PKI_DATABASE_URL=sqlite:///data/h42pki.sqlite3 \
+    H42_PKI_BIND_ADDRESS=0.0.0.0
 USER 10001:10001
 VOLUME ["/data"]
-EXPOSE 8000
-# slim images have no curl: probe /health with the standard library.
-HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-    CMD ["python", "-c", "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4).status == 200 else 1)"]
-# Interim until the built-in launcher (phase 1.1): one process, uvicorn on one HTTP port.
-CMD ["h42pki", "serve", "--host", "0.0.0.0", "--port", "8000"]
+EXPOSE 8080 8443
+# Port independent: database and launcher heartbeat; also healthy in idle mode (no listener).
+HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
+    CMD ["h42pki", "healthcheck"]
+# One process: both listeners and the scheduled tasks (docs/ARCHITECTURE.md section 9).
+CMD ["h42pki", "serve"]
