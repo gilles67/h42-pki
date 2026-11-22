@@ -2,6 +2,7 @@
 
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 import time_machine
@@ -142,3 +143,23 @@ async def test_regression_B28_email_address_in_subject_dn(
     body = (await client.get(f"/api/v1/certificates/{request.certificate_id}")).json()
     assert body["subject_dn"] == "emailAddress=alice@example.test,CN=alice"
     assert request.subject_dn == body["subject_dn"]
+
+
+FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
+WEAK_CSRS = {
+    "SHA1": (FIXTURES / "rsa2048-sha1.csr").read_text(encoding="ascii"),
+    "MD5": (FIXTURES / "rsa2048-md5.csr").read_text(encoding="ascii"),
+}
+
+
+async def test_regression_B36_weak_csr_signature_refused(
+    client: AsyncClient, make_root: RootFactory
+) -> None:
+    await make_root()
+
+    for hash_name, csr in WEAK_CSRS.items():
+        response = await client.post(
+            "/api/v1/requests", json={"csr_pem": csr, "profile": "tls_client"}
+        )
+        assert response.status_code == 422
+        assert response.json()["detail"].startswith(f"CSRs signed with {hash_name} are refused")

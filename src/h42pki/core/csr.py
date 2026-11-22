@@ -8,6 +8,8 @@ CLAUDE.md section 6.3).
 from dataclasses import dataclass
 
 from cryptography import x509
+from cryptography.exceptions import UnsupportedAlgorithm
+from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.asymmetric.types import CertificatePublicKeyTypes
 
@@ -17,6 +19,8 @@ from h42pki.core.names import NameAttributes, name_attributes
 from h42pki.core.profiles import SanType
 
 MIN_RSA_KEY_SIZE = 2048
+# Broken hash functions: a CSR signed with them is refused even if the signature verifies.
+WEAK_HASHES = (hashes.SHA1, hashes.MD5)
 
 PEM_MARKER = b"-----BEGIN"
 
@@ -68,9 +72,21 @@ def _extension_label(extension: x509.Extension[x509.ExtensionType]) -> str:
     return dotted if kind == "UnrecognizedExtension" else f"{kind} ({dotted})"
 
 
+def _check_signature_hash(csr: x509.CertificateSigningRequest) -> None:
+    try:
+        algorithm = csr.signature_hash_algorithm  # None for Ed25519
+    except UnsupportedAlgorithm:
+        raise InvalidCsr("the CSR signature algorithm is not supported") from None
+    if isinstance(algorithm, WEAK_HASHES):
+        raise InvalidCsr(
+            f"CSRs signed with {algorithm.name.upper()} are refused; sign it with SHA-256 or better"
+        )
+
+
 def parse_csr(data: bytes | str) -> ParsedCsr:
     """Parse and validate a PEM or DER CSR."""
     csr = _load(data)
+    _check_signature_hash(csr)  # before the signature check, for an explicit message (B36)
     if not csr.is_signature_valid:
         raise InvalidCsr("the CSR signature is invalid")
 
