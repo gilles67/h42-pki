@@ -185,3 +185,94 @@ def test_regression_B4_private_file_accepted_silently(
         settings = get_settings()
 
     assert settings.ca_passphrase.get_secret_value() == PASSPHRASE
+
+
+# --- closed list of environment variables (ADR-0011) ----------------------------------------
+
+
+def test_server_variables_defaults() -> None:
+    settings = Settings()
+
+    assert settings.server_hostname is None
+    assert settings.server_alt_names == []
+    assert settings.server_names == []
+    assert settings.bind_address == "127.0.0.1"
+    assert (settings.http_enabled, settings.http_port) == (True, 8080)
+    assert (settings.https_enabled, settings.https_port) == (True, 8443)
+    assert settings.trusted_proxies == []
+
+
+def test_server_variables_are_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(f"{ENV_PREFIX}SERVER_HOSTNAME", "PKI.Home42.test.")
+    monkeypatch.setenv(f"{ENV_PREFIX}SERVER_ALT_NAMES", "localhost, 127.0.0.1,pki.home42.test,::1")
+    monkeypatch.setenv(f"{ENV_PREFIX}BIND_ADDRESS", "::")
+    monkeypatch.setenv(f"{ENV_PREFIX}HTTP_ENABLED", "false")
+    monkeypatch.setenv(f"{ENV_PREFIX}HTTP_PORT", "80")
+    monkeypatch.setenv(f"{ENV_PREFIX}HTTPS_ENABLED", "true")
+    monkeypatch.setenv(f"{ENV_PREFIX}HTTPS_PORT", "443")
+    monkeypatch.setenv(f"{ENV_PREFIX}TRUSTED_PROXIES", "10.0.0.0/8, fd00::/8")
+
+    settings = Settings()
+
+    assert settings.server_hostname == "pki.home42.test"
+    # The hostname is not repeated among the extra names.
+    assert settings.server_alt_names == ["localhost", "127.0.0.1", "::1"]
+    assert settings.server_names == ["pki.home42.test", "localhost", "127.0.0.1", "::1"]
+    assert settings.bind_address == "::"
+    assert (settings.http_enabled, settings.http_port) == (False, 80)
+    assert (settings.https_enabled, settings.https_port) == (True, 443)
+    assert [str(network) for network in settings.trusted_proxies] == ["10.0.0.0/8", "fd00::/8"]
+
+
+def test_empty_hostname_is_absent(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(f"{ENV_PREFIX}SERVER_HOSTNAME", "  ")
+
+    assert Settings().server_hostname is None
+
+
+@pytest.mark.parametrize(
+    ("variable", "value", "message"),
+    [
+        ("SERVER_HOSTNAME", "pki", "at least two labels"),
+        ("SERVER_HOSTNAME", "10.0.0.1", "IP address"),
+        ("SERVER_ALT_NAMES", "localhost,*.home42.test", "wildcards"),
+        ("TRUSTED_PROXIES", "10.0.0.0/33", "not a valid network"),
+        ("BIND_ADDRESS", "localhost", "must be an IP address"),
+        ("HTTP_PORT", "0", "greater than or equal to 1"),
+        ("HTTPS_PORT", "65536", "less than or equal to 65535"),
+    ],
+)
+def test_invalid_server_variables(
+    monkeypatch: pytest.MonkeyPatch, variable: str, value: str, message: str
+) -> None:
+    monkeypatch.setenv(f"{ENV_PREFIX}{variable}", value)
+
+    with pytest.raises(ValueError, match=message):
+        Settings()
+
+
+def test_same_port_for_both_listeners_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(f"{ENV_PREFIX}HTTP_PORT", "8443")
+
+    with pytest.raises(ValueError, match="ports must differ"):
+        Settings()
+
+
+def test_same_port_is_allowed_when_one_listener_is_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(f"{ENV_PREFIX}HTTP_PORT", "8443")
+    monkeypatch.setenv(f"{ENV_PREFIX}HTTP_ENABLED", "false")
+
+    assert Settings().http_port == 8443
+
+
+def test_both_listeners_may_be_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Idle mode (ADR-0012): no listener at all is a valid configuration."""
+    monkeypatch.setenv(f"{ENV_PREFIX}HTTP_ENABLED", "false")
+    monkeypatch.setenv(f"{ENV_PREFIX}HTTPS_ENABLED", "false")
+
+    settings = Settings()
+
+    assert not settings.http_enabled
+    assert not settings.https_enabled

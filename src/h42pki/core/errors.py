@@ -51,3 +51,11 @@ class InvalidPublicBaseUrl(InvalidRequest):
 
 class InvalidAuthorityName(InvalidRequest):
     title = "Invalid Authority Name"
+
+
+class InvalidHostname(InvalidRequest):
+    title = "Invalid Hostname"
+
+
+class InvalidNetwork(InvalidRequest):
+    title = "Invalid Network"
