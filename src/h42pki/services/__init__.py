@@ -6,6 +6,7 @@ from h42pki.services.issuance import IssuanceService
 from h42pki.services.keys import KeyService
 from h42pki.services.profiles import ProfileService
 from h42pki.services.publication import PublicationService
+from h42pki.services.settings import SettingsService, SettingsWatcher
 
 __all__ = [
     "AuthorityService",
@@ -14,4 +15,6 @@ __all__ = [
     "KeyService",
     "ProfileService",
     "PublicationService",
+    "SettingsService",
+    "SettingsWatcher",
 ]

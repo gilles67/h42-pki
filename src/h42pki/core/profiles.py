@@ -91,6 +91,9 @@ class ProfileSpec(BaseModel):
     ocsp_no_check: bool = False
     # AIA caIssuers in issued certificates, when the CA has a public base URL.
     include_aia: bool = True
+    # Internal profile (service_tls, ADR-0013): issued by the CA for its own server only, never
+    # through requests or enrolment protocols, and cannot be disabled.
+    internal: bool = False
 
     @model_validator(mode="after")
     def _check(self) -> Self:

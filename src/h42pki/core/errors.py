@@ -1,6 +1,6 @@
 """Errors raised by ``h42pki.core``. Messages never contain key material or passphrases."""
 
-from h42pki.errors import H42Error, InvalidRequest
+from h42pki.errors import H42Error, InvalidRequest, NotFound
 
 
 class UnsupportedAlgorithm(InvalidRequest):
@@ -59,3 +59,11 @@ class InvalidHostname(InvalidRequest):
 
 class InvalidNetwork(InvalidRequest):
     title = "Invalid Network"
+
+
+class InvalidSetting(InvalidRequest):
+    title = "Invalid Setting"
+
+
+class UnknownSetting(NotFound):
+    title = "Unknown Setting"
