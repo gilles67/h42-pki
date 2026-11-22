@@ -8,6 +8,7 @@ from tortoise.contrib.fastapi import RegisterTortoise
 
 from h42pki import __version__
 from h42pki.api import admin, health, public
+from h42pki.api.listener import ListenerRoutesMiddleware
 from h42pki.api.problems import exception_handlers, install_problem_schemas
 from h42pki.config import Settings, get_settings
 from h42pki.db import ensure_sqlite_directory, tortoise_config
@@ -15,8 +16,13 @@ from h42pki.keystore import KEY_OPERATIONS_REQUIREMENT
 from h42pki.services.profiles import ProfileService
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
-    """Build the application; ``settings`` defaults to :func:`get_settings`."""
+def create_app(settings: Settings | None = None, *, manage_database: bool = True) -> FastAPI:
+    """Build the application; ``settings`` defaults to :func:`get_settings`.
+
+    ``manage_database``: the lifespan opens the database (tests, direct ASGI use). The launcher
+    passes False: it opens the database itself and runs Uvicorn without lifespan, since two
+    listeners would otherwise run it twice (ADR-0012).
+    """
     app_settings = settings if settings is not None else get_settings()
     if app_settings.ca_passphrase is None:
         # Unchanged behaviour: the API generates and uses keys, it does not start without it.
@@ -24,6 +30,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        if not manage_database:
+            yield
+            return
         ensure_sqlite_directory(app_settings.database_url)
         # TODO(release): migrations instead of generate_schemas (ADR-0007).
         async with RegisterTortoise(
@@ -41,6 +50,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         exception_handlers=exception_handlers(),
     )
     app.state.settings = app_settings
+    app.state.launcher = None  # LauncherStatus, set by the launcher
+    # Public routes only on the HTTP listener, everything on HTTPS (ADR-0012).
+    app.add_middleware(ListenerRoutesMiddleware)
     app.include_router(health.router)
     app.include_router(admin.router)
     app.include_router(public.router)
