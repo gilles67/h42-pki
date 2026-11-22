@@ -47,6 +47,5 @@ EXPOSE 8000
 # slim images have no curl: probe /health with the standard library.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
     CMD ["python", "-c", "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4).status == 200 else 1)"]
-# A single worker: scheduled tasks run in the lifespan (docs/ARCHITECTURE.md section 9).
-CMD ["granian", "--interface", "asgi", "--factory", "--host", "0.0.0.0", "--port", "8000", \
-     "--workers", "1", "h42pki.main:create_app"]
+# Interim until the built-in launcher (phase 1.1): one process, uvicorn on one HTTP port.
+CMD ["h42pki", "serve", "--host", "0.0.0.0", "--port", "8000"]

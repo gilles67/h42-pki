@@ -28,7 +28,7 @@ def serve(
     port: Annotated[int, typer.Option(help="Port to listen on.")] = 8000,
     reload: Annotated[bool, typer.Option(help="Reload on code changes (development).")] = False,
 ) -> None:
-    """Run the development server (uvicorn). Production images use Granian."""
+    """Run the server (uvicorn, single process)."""
     if load_settings().ca_passphrase is None:
         fail(f"cannot start the server: {KEY_OPERATIONS_REQUIREMENT}", code=2)
     uvicorn.run("h42pki.main:create_app", factory=True, host=host, port=port, reload=reload)
