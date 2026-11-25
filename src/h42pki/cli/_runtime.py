@@ -1,7 +1,7 @@
 """Shared runtime of the CLI commands: settings, database, readable errors."""
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from typing import NoReturn
 
 import typer
@@ -22,6 +22,13 @@ def fail(message: str, code: int = 1) -> NoReturn:
     """Print an error without a Python traceback and exit with a non-zero code."""
     typer.secho(f"error: {message}", err=True, fg=typer.colors.RED)
     raise typer.Exit(code)
+
+
+def print_table(columns: Sequence[str], rows: Sequence[Sequence[str]]) -> None:
+    widths = [max(len(row[i]) for row in [columns, *rows]) for i in range(len(columns))]
+    for row in [columns, *rows]:
+        line = "  ".join(value.ljust(width) for value, width in zip(row, widths, strict=True))
+        typer.echo(line.rstrip())
 
 
 def validation_message(exc: ValidationError) -> str:
