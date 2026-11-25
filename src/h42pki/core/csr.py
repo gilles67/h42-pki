@@ -19,7 +19,7 @@ from cryptography.x509.oid import NameOID
 from h42pki.core.errors import InvalidCsr, InvalidSan
 from h42pki.core.hostnames import is_ip_address
 from h42pki.core.keys import KeyAlgorithm, SupportedPrivateKey, public_key_algorithm, signature_hash
-from h42pki.core.names import NameAttributes, name_attributes
+from h42pki.core.names import NameAttributes, Subject, name_attributes
 from h42pki.core.profiles import SanType
 
 MIN_RSA_KEY_SIZE = 2048
@@ -136,6 +136,16 @@ def build_csr(key: SupportedPrivateKey, common_name: str, names: Sequence[str]) 
         x509.CertificateSigningRequestBuilder()
         .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, common_name)]))
         .add_extension(x509.SubjectAlternativeName(general_names), critical=False)
+        .sign(key, signature_hash(key))
+    )
+    return csr.public_bytes(serialization.Encoding.DER)
+
+
+def build_ca_csr(key: SupportedPrivateKey, subject: Subject) -> bytes:
+    """DER CSR of a subordinate CA: key and subject only, the parent decides the extensions."""
+    csr = (
+        x509.CertificateSigningRequestBuilder()
+        .subject_name(subject.x509_name())
         .sign(key, signature_hash(key))
     )
     return csr.public_bytes(serialization.Encoding.DER)

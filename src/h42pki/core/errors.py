@@ -67,3 +67,15 @@ class InvalidSetting(InvalidRequest):
 
 class UnknownSetting(NotFound):
     title = "Unknown Setting"
+
+
+class InvalidChain(InvalidRequest):
+    title = "Invalid CA Chain"
+
+
+class FingerprintMismatch(InvalidChain):
+    title = "Fingerprint Mismatch"
+
+
+class InvalidIssuedCertificate(InvalidRequest):
+    title = "Invalid Issued Certificate"
