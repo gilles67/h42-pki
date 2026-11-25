@@ -1,5 +1,6 @@
 """Public certificates of the local CA (AIA caIssuers target, chain). Read-only, no key involved."""
 
+from h42pki.core.publication import AUTHORITY_NAME
 from h42pki.errors import NotFound
 from h42pki.models import Authority, AuthorityKind, AuthorityStatus, Certificate
 from h42pki.services.authority import AuthorityService
@@ -11,6 +12,9 @@ PUBLISHED_STATUSES = (AuthorityStatus.ACTIVE, AuthorityStatus.ROLLING_OVER, Auth
 class PublicationService:
     async def ca_certificate(self, name: str) -> Certificate:
         """Certificate of the local CA called ``name`` (current or retired)."""
+        # Checked first: Tortoise raises on a filter value longer than the column (B48).
+        if not AUTHORITY_NAME.fullmatch(name):
+            raise NotFound("no published certificate authority with this name")
         authority = await Authority.get_or_none(
             name=name, kind=AuthorityKind.LOCAL, status__in=PUBLISHED_STATUSES
         )

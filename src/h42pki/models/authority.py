@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from tortoise import fields
 
+from h42pki.core.publication import validate_authority_name
 from h42pki.models.base import TimestampedModel
 
 if TYPE_CHECKING:
@@ -33,9 +34,9 @@ class AuthorityStatus(StrEnum):
 
 
 class Authority(TimestampedModel):
-    """Not used by any route yet."""
+    """A CA: the local one, its ancestors (``parent``) or the CAs it signed (``child``)."""
 
-    name = fields.CharField(max_length=128, unique=True)
+    name = fields.CharField(max_length=64, unique=True)
     kind = fields.CharEnumField(AuthorityKind, max_length=16)
     status = fields.CharEnumField(
         AuthorityStatus, default=AuthorityStatus.UNINITIALIZED, max_length=32
@@ -65,3 +66,12 @@ class Authority(TimestampedModel):
 
     class Meta:
         table = "authority"
+
+    async def save(self, *args: Any, **kwargs: Any) -> None:
+        """Every creation goes through here: the name enters public URLs (B37).
+
+        Not a field validator, which Tortoise could also run on query filters: a lookup of an
+        invalid name must stay a plain "not found".
+        """
+        validate_authority_name(self.name)
+        await super().save(*args, **kwargs)

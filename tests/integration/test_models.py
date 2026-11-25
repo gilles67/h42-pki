@@ -9,6 +9,7 @@ from httpx import AsyncClient
 from tortoise.exceptions import IntegrityError
 
 from h42pki.config import Settings
+from h42pki.core.errors import InvalidAuthorityName
 from h42pki.core.keys import KeyAlgorithm, SupportedPrivateKey
 from h42pki.core.profiles import BUILTIN_PROFILES, ProfileSpec
 from h42pki.db import tortoise_config
@@ -187,3 +188,14 @@ async def test_certificate_request_relations(client: AsyncClient) -> None:
     assert fetched.certificate_id is None
     with pytest.raises(IntegrityError):  # RESTRICT: a profile with requests stays
         await profile.delete()
+
+
+@pytest.mark.parametrize("kind", list(AuthorityKind))
+@pytest.mark.parametrize("name", ["chain", "Home42", "a/b", "-a", "a" * 65, ""])
+async def test_regression_B37_name_checked_on_every_creation(
+    client: AsyncClient, kind: AuthorityKind, name: str
+) -> None:
+    with pytest.raises(InvalidAuthorityName):
+        await Authority.create(name=name, kind=kind)
+
+    assert await Authority.all().count() == 0

@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
-from tortoise.exceptions import DoesNotExist, IntegrityError
+from tortoise.exceptions import DoesNotExist, IntegrityError, ValidationError
 
 from h42pki.errors import H42Error
 
@@ -156,6 +156,11 @@ async def _integrity_error(request: Request, exc: IntegrityError) -> Response:
     return problem(409, "Conflict", "the request conflicts with existing data")
 
 
+async def _model_validation_error(request: Request, exc: ValidationError) -> Response:
+    # A value too long for its column, also raised on query filters (B48). No echo of the value.
+    return problem(422, "Unprocessable Content", "a value is not valid for its field")
+
+
 def exception_handlers() -> dict[int | type[Exception], ExceptionHandler]:
     """Handlers to pass to ``FastAPI(exception_handlers=...)``."""
     return {
@@ -164,4 +169,5 @@ def exception_handlers() -> dict[int | type[Exception], ExceptionHandler]:
         RequestValidationError: _request_validation_error,
         DoesNotExist: _does_not_exist,
         IntegrityError: _integrity_error,
+        ValidationError: _model_validation_error,
     }

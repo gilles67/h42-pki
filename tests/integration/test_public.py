@@ -172,3 +172,12 @@ async def test_publication_never_touches_a_private_key(
 
     for path in ("/ca/home42-root.crt", "/ca/home42-root.pem", "/ca/chain.pem"):
         assert (await client.get(path)).status_code == 200
+
+
+async def test_regression_B48_overlong_names_are_not_a_server_error(client: AsyncClient) -> None:
+    """Tortoise raises on a filter value longer than its column."""
+    for name in ("a" * 65, "a" * 300):
+        assert (await client.get(f"/ca/{name}.crt")).status_code == 404
+        response = await client.get(f"/api/v1/profiles/{name}")
+        assert response.status_code == 422
+        assert response.headers["content-type"] == "application/problem+json"
