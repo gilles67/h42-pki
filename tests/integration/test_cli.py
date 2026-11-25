@@ -15,6 +15,7 @@ from h42pki.cli._runtime import run
 from h42pki.config import ENV_PREFIX, Settings, get_settings
 from h42pki.keystore import get_keystore
 from h42pki.services import IssuanceService
+from tests.cli_helpers import plain
 from tests.conftest import TEST_PASSPHRASE
 from tests.x509_helpers import csr_pem, make_csr, name
 
@@ -34,7 +35,7 @@ def cli_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
 
 def invoke(*args: str) -> Result:
     result = runner.invoke(app, list(args))
-    assert "Traceback" not in result.output
+    assert "Traceback" not in plain(result)
     return result
 
 
@@ -52,8 +53,8 @@ def test_init_with_defaults(cli_environment: Path) -> None:
     result = invoke(*INIT)
 
     assert result.exit_code == 0, result.output
-    assert "Root CA created." in result.output
-    assert "CN=Home42 Root CA" in result.output
+    assert "Root CA created." in plain(result)
+    assert "CN=Home42 Root CA" in plain(result)
     assert cli_environment.exists()  # the data directory is created
     cert = exported()
     cert.verify_directly_issued_by(cert)
@@ -85,8 +86,8 @@ def test_init_with_options() -> None:
     assert cert.signature_hash_algorithm is None  # Ed25519
     assert cert.extensions.get_extension_for_class(x509.BasicConstraints).value.path_length == 1
     status = invoke("authority", "status")
-    assert "http://pki.home42.test" in status.output
-    assert "Path length      1" in status.output
+    assert "http://pki.home42.test" in plain(status)
+    assert "Path length      1" in plain(status)
 
 
 @pytest.mark.parametrize("days", ["0", "10951", "abc"])
@@ -94,7 +95,7 @@ def test_init_rejects_invalid_validity_before_doing_anything(days: str) -> None:
     result = invoke(*INIT, "--validity-days", days)
 
     assert result.exit_code == 2
-    assert "--validity-days" in result.output
+    assert "--validity-days" in plain(result)
     assert invoke("authority", "status").exit_code == 1  # nothing was created
 
 
@@ -102,7 +103,7 @@ def test_init_rejects_invalid_subject() -> None:
     result = invoke(*INIT, "--country", "france")
 
     assert result.exit_code == 2
-    assert "invalid subject: country_name" in result.output
+    assert "invalid subject: country_name" in plain(result)
 
 
 def test_second_init_is_refused() -> None:
@@ -111,7 +112,7 @@ def test_second_init_is_refused() -> None:
     result = invoke("authority", "init", "--name", "other", "--common-name", "Other")
 
     assert result.exit_code == 1
-    assert "error: a local certificate authority already exists" in result.output
+    assert "error: a local certificate authority already exists" in plain(result)
 
 
 def test_status() -> None:
@@ -122,8 +123,8 @@ def test_status() -> None:
 
     assert result.exit_code == 0
     for label in ("Name", "Status", "Subject", "SHA-256", "Not before", "Not after"):
-        assert label in result.output
-    assert "home42-root" in result.output and "active" in result.output
+        assert label in plain(result)
+    assert "home42-root" in plain(result) and "active" in plain(result)
 
 
 def test_export(tmp_path: Path) -> None:
@@ -141,14 +142,14 @@ def test_export_without_authority() -> None:
     result = invoke("authority", "export")
 
     assert result.exit_code == 1
-    assert "h42pki authority init" in result.output
+    assert "h42pki authority init" in plain(result)
 
 
 def test_profile_list() -> None:
     result = invoke("profile", "list")
 
     assert result.exit_code == 0
-    lines = result.output.splitlines()
+    lines = plain(result).splitlines()
     assert lines[0].split()[:4] == ["NAME", "KIND", "ENABLED", "APPROVAL"]
     tls_server = next(line for line in lines if line.startswith("tls_server"))
     assert tls_server.split()[2:4] == ["yes", "auto"]
@@ -162,33 +163,37 @@ def test_profile_disable_and_enable() -> None:
     result = invoke("profile", "disable", "device")
 
     assert result.exit_code == 0, result.output
-    assert "profile device disabled (issuance.disabled_profiles = ['device'])" in result.stdout
-    assert "applied hot" in result.stdout
-    listing = invoke("profile", "list").stdout.splitlines()
+    assert "profile device disabled (issuance.disabled_profiles = ['device'])" in plain(
+        result, "stdout"
+    )
+    assert "applied hot" in plain(result, "stdout")
+    listing = plain(invoke("profile", "list"), "stdout").splitlines()
     device = next(line for line in listing if line.startswith("device"))
     assert device.split()[2] == "no"
-    assert "already disabled" in invoke("profile", "disable", "device").stdout
-    assert json.loads(invoke("config", "get", "issuance.disabled_profiles").stdout) == ["device"]
+    assert "already disabled" in plain(invoke("profile", "disable", "device"), "stdout")
+    assert json.loads(plain(invoke("config", "get", "issuance.disabled_profiles"), "stdout")) == [
+        "device"
+    ]
 
     result = invoke("profile", "enable", "device")
 
     assert result.exit_code == 0, result.output
-    assert "profile device enabled (issuance.disabled_profiles = [])" in result.stdout
-    assert "already enabled" in invoke("profile", "enable", "device").stdout
+    assert "profile device enabled (issuance.disabled_profiles = [])" in plain(result, "stdout")
+    assert "already enabled" in plain(invoke("profile", "enable", "device"), "stdout")
 
 
 def test_profile_disable_unknown() -> None:
     result = invoke("profile", "disable", "code_signing")
 
     assert result.exit_code == 1
-    assert "profile 'code_signing' does not exist" in result.stderr
+    assert "profile 'code_signing' does not exist" in plain(result, "stderr")
 
 
 def test_profile_show() -> None:
     result = invoke("profile", "show", "sub_ca")
 
     assert result.exit_code == 0
-    profile = json.loads(result.stdout)
+    profile = json.loads(plain(result, "stdout"))
     assert profile["basic_constraints"] == {"ca": True, "path_length": 0}
     assert profile["auto_approve"] is False
 
@@ -197,7 +202,7 @@ def test_profile_show_unknown() -> None:
     result = invoke("profile", "show", "code_signing")
 
     assert result.exit_code == 1
-    assert "profile 'code_signing' does not exist" in result.output
+    assert "profile 'code_signing' does not exist" in plain(result)
 
 
 @pytest.fixture
@@ -228,8 +233,8 @@ def test_init_without_passphrase_is_a_readable_error() -> None:
     result = invoke(*INIT)
 
     assert result.exit_code == 1
-    assert "error: H42_PKI_CA_PASSPHRASE" in result.output
-    assert "required for operations on private keys" in result.output
+    assert "error: H42_PKI_CA_PASSPHRASE" in plain(result)
+    assert "required for operations on private keys" in plain(result)
     assert invoke("authority", "status").exit_code == 1  # nothing was created
 
 
@@ -238,7 +243,7 @@ def test_serve_without_passphrase_is_refused() -> None:
     result = invoke("serve")
 
     assert result.exit_code == 2
-    assert "cannot start the server: H42_PKI_CA_PASSPHRASE" in result.output
+    assert "cannot start the server: H42_PKI_CA_PASSPHRASE" in plain(result)
 
 
 def test_invalid_configuration_is_a_readable_error(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -248,7 +253,7 @@ def test_invalid_configuration_is_a_readable_error(monkeypatch: pytest.MonkeyPat
     result = invoke("profile", "list")
 
     assert result.exit_code == 2
-    assert "invalid configuration: environment:" in result.output
+    assert "invalid configuration: environment:" in plain(result)
 
 
 def test_authority_update_public_base_url() -> None:
@@ -257,21 +262,21 @@ def test_authority_update_public_base_url() -> None:
     result = invoke("authority", "update", "--public-base-url", "http://pki.home42.test/")
 
     assert result.exit_code == 0, result.output
-    assert "Public base URL set to http://pki.home42.test" in result.output
-    assert "Certificates already issued are unchanged" in result.output
-    assert "http://pki.home42.test" in invoke("authority", "status").output
+    assert "Public base URL set to http://pki.home42.test" in plain(result)
+    assert "Certificates already issued are unchanged" in plain(result)
+    assert "http://pki.home42.test" in plain(invoke("authority", "status"))
 
     removed = invoke("authority", "update", "--public-base-url", "")
     assert removed.exit_code == 0
-    assert "Public base URL removed" in removed.output
-    assert "Public base URL  -" in invoke("authority", "status").output
+    assert "Public base URL removed" in plain(removed)
+    assert "Public base URL  -" in plain(invoke("authority", "status"))
 
 
 def test_https_public_base_url_warns() -> None:
     result = invoke(*INIT, "--public-base-url", "https://pki.home42.test")
 
     assert result.exit_code == 0, result.output
-    assert "warning: an https public base URL may cause validation loops" in result.output
+    assert "warning: an https public base URL may cause validation loops" in plain(result)
 
 
 @pytest.mark.parametrize("command", ["init", "update"])
@@ -285,21 +290,21 @@ def test_invalid_public_base_url_fails_before_anything(command: str) -> None:
     result = invoke(*args)
 
     assert result.exit_code == 2
-    assert "must use http or https" in result.output
+    assert "must use http or https" in plain(result)
 
 
 def test_update_without_authority() -> None:
     result = invoke("authority", "update", "--public-base-url", "http://pki.home42.test")
 
     assert result.exit_code == 1
-    assert "h42pki authority init" in result.output
+    assert "h42pki authority init" in plain(result)
 
 
 def test_invalid_authority_name() -> None:
     result = invoke("authority", "init", "--name", "Home42 Root", "--common-name", "Root")
 
     assert result.exit_code == 1
-    assert "invalid CA name" in result.output
+    assert "invalid CA name" in plain(result)
 
 
 def _issue_in_cli_database(profile: str, csr: str) -> str:
@@ -330,7 +335,7 @@ def test_certificate_list(monkeypatch: pytest.MonkeyPatch) -> None:
     servers = invoke("certificate", "list", "--profile", "tls_server", "--limit", "1")
 
     assert everything.exit_code == 0, everything.output
-    lines = everything.stdout.splitlines()
+    lines = plain(everything, "stdout").splitlines()
     assert lines[0].split() == ["SERIAL", "SUBJECT", "PROFILE", "STATUS", "NOT", "AFTER"]
     assert [line.split()[1] for line in lines[1:]] == [
         "CN=b.example.test",
@@ -338,9 +343,9 @@ def test_certificate_list(monkeypatch: pytest.MonkeyPatch) -> None:
         "CN=Home42",  # root subject "CN=Home42 Root CA"
     ]
     assert "(root)" in lines[-1] and "valid" in lines[1]
-    assert "3 of 3 certificate(s)" in everything.output
-    assert servers.stdout.count("tls_server") == 1
-    assert "1 of 2 certificate(s)" in servers.output
+    assert "3 of 3 certificate(s)" in plain(everything)
+    assert plain(servers, "stdout").count("tls_server") == 1
+    assert "1 of 2 certificate(s)" in plain(servers)
 
 
 def test_certificate_list_rejects_invalid_options() -> None:
@@ -378,6 +383,6 @@ def test_certificate_export_errors() -> None:
     )  # fmt: skip
     bad_id = invoke("certificate", "export", "not-a-uuid")
 
-    assert unknown.exit_code == 1 and "does not exist" in unknown.output
-    assert chain_der.exit_code == 2 and "--chain is only available in PEM" in chain_der.output
+    assert unknown.exit_code == 1 and "does not exist" in plain(unknown)
+    assert chain_der.exit_code == 2 and "--chain is only available in PEM" in plain(chain_der)
     assert bad_id.exit_code == 2

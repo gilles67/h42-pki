@@ -23,6 +23,7 @@ import pytest
 from h42pki.cli.health import check
 from h42pki.config import ENV_PREFIX, Settings
 from h42pki.heartbeat import heartbeat_path
+from tests.cli_helpers import plain
 from tests.conftest import TEST_PASSPHRASE
 from tests.integration.server.conftest import free_port
 
@@ -191,7 +192,7 @@ def test_healthcheck_in_idle_mode(instance: Callable[..., Instance]) -> None:
     result = server.cli("healthcheck")
 
     assert result.returncode == 0, result.stderr
-    assert "healthy" in result.stdout
+    assert "healthy" in plain(result, "stdout")
     assert not listening(server.http_port) and not listening(server.https_port)
 
     server.stop()
@@ -211,7 +212,7 @@ def test_serve_requires_the_hostname(instance: Callable[..., Instance]) -> None:
     result = server.cli("serve")
 
     assert result.returncode == 2
-    assert "H42_PKI_SERVER_HOSTNAME" in result.stderr
+    assert "H42_PKI_SERVER_HOSTNAME" in plain(result, "stderr")
 
 
 def test_serve_requires_the_passphrase(instance: Callable[..., Instance]) -> None:
@@ -221,11 +222,11 @@ def test_serve_requires_the_passphrase(instance: Callable[..., Instance]) -> Non
     result = server.cli("serve")
 
     assert result.returncode == 2
-    assert "H42_PKI_CA_PASSPHRASE" in result.stderr
+    assert "H42_PKI_CA_PASSPHRASE" in plain(result, "stderr")
 
 
 def test_serve_has_no_host_and_port_options(instance: Callable[..., Instance]) -> None:
     result = instance().cli("serve", "--port", "8000")
 
     assert result.returncode == 2
-    assert "No such option" in result.stderr
+    assert "No such option" in plain(result, "stderr")
