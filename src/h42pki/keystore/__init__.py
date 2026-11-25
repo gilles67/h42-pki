@@ -6,7 +6,7 @@ from h42pki.keystore.base import KeyStore, StoredKey
 from h42pki.keystore.software import SoftwareKeyStore
 
 KEY_OPERATIONS_REQUIREMENT = (
-    "H42_PKI_CA_PASSPHRASE (or H42_PKI_CA_PASSPHRASE_FILE, or the Docker secret "
+    "H42_PKI_CA_PASSPHRASE (or H42_PKI_CA_PASSPHRASE_FILE, or the container secret "
     "h42_pki_ca_passphrase) is required for operations on private keys"
 )
 

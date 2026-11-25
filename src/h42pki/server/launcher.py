@@ -7,7 +7,7 @@
 - A ``listener`` level setting restarts only the listeners it concerns; ``logging.level`` is
   applied hot; a ``tls_service`` change triggers a certificate check.
 - Idle mode: no listener at all; the settings watcher, the scheduled tasks and the heartbeat
-  keep running and the CLI stays usable (``docker exec``).
+  keep running and the CLI stays usable (``podman exec``).
 
 Signals are handled by the caller (``h42pki serve``), not by Uvicorn: the embedded servers do not
 install handlers, the launcher stops them all.
@@ -143,7 +143,7 @@ class Launcher:
                 log.warning(
                     "idle mode: H42_PKI_HTTP_ENABLED and H42_PKI_HTTPS_ENABLED are both false, "
                     "nothing is served on the network; scheduled tasks keep running and the CLI "
-                    "is available (docker exec ... h42pki ...)"
+                    "is available (podman exec ... h42pki ...)"
                 )
             await stop.wait()
         finally:
