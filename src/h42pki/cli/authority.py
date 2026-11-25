@@ -18,8 +18,9 @@ from h42pki.core.publication import PublicBaseUrl, normalize_public_base_url
 from h42pki.core.validity import DEFAULT_CA_VALIDITY_DAYS, MAX_VALIDITY_DAYS, MIN_VALIDITY_DAYS
 from h42pki.errors import H42Error
 from h42pki.keystore import get_keystore
-from h42pki.models import Authority, Certificate
+from h42pki.models import Authority, AuthorityStatus, Certificate
 from h42pki.services import AuthorityService
+from h42pki.services.subordinate import SubordinateService
 
 app = typer.Typer(help="Manage the local certificate authority.", no_args_is_help=True)
 
@@ -29,16 +30,41 @@ class ExportFormat(StrEnum):
     DER = "der"
 
 
+def _parent_rows(authority: Authority) -> list[tuple[str, str]]:
+    """``parent__certificate`` must be prefetched."""
+    parent = authority.parent
+    if parent is None:
+        return [("Mode", "root")]
+    return [
+        ("Mode", "subordinate"),
+        ("Parent", parent.certificate.subject_dn),
+        ("Parent SHA-256", parent.certificate.sha256_fingerprint),
+        ("Parent URL", parent.federation_url or "-"),
+    ]
+
+
 def _describe(authority: Authority, certificate: Certificate) -> list[tuple[str, str]]:
     path_length = "unlimited" if authority.path_length is None else str(authority.path_length)
     return [
         ("Name", authority.name),
         ("Status", authority.status.value),
+        *_parent_rows(authority),
         ("Subject", certificate.subject_dn),
         ("SHA-256", certificate.sha256_fingerprint),
         ("Not before", certificate.not_before.isoformat()),
         ("Not after", certificate.not_after.isoformat()),
         ("Path length", path_length),
+        ("Public base URL", authority.public_base_url or "-"),
+    ]
+
+
+def _describe_pending(authority: Authority) -> list[tuple[str, str]]:
+    enrolment = authority.pending_enrollment_id
+    return [
+        ("Name", authority.name),
+        ("Status", authority.status.value),
+        *_parent_rows(authority),
+        ("Enrolment", str(enrolment) if enrolment is not None else "not acknowledged yet"),
         ("Public base URL", authority.public_base_url or "-"),
     ]
 
@@ -61,10 +87,106 @@ def _print(rows: list[tuple[str, str]]) -> None:
         typer.echo(f"{label.ljust(width)}  {value}")
 
 
+def _read_token(token: str | None) -> str:
+    if token is None:
+        fail("--token is required (- reads it on standard input)", code=2)
+    return sys.stdin.readline().strip() if token == "-" else token  # noqa: S105 - stdin marker
+
+
+async def _finish(
+    service: SubordinateService, authority: Authority, token: str, wait_minutes: int
+) -> list[tuple[str, str]] | None:
+    """Wait for the decision if needed; the description of the active CA, None if pending."""
+    if authority.status is AuthorityStatus.PENDING_SIGNATURE:
+        typer.echo("Enrolment sent: waiting for the decision of the parent CA...", err=True)
+        authority = await service.wait(token, seconds=wait_minutes * 60, actor=CLI_ACTOR)
+    if authority.status is AuthorityStatus.PENDING_SIGNATURE:
+        return None
+    local = await AuthorityService().get_local()
+    return _describe(local, local.certificate)
+
+
+def _conclude(rows: list[tuple[str, str]] | None) -> None:
+    if rows is None:
+        fail(
+            "still waiting for the approval of the parent CA; resume later with "
+            "`h42pki authority init --resume --token -`",
+            code=3,
+        )
+    typer.secho("Subordinate CA active.", fg=typer.colors.GREEN)
+    _print(rows)
+
+
+def _enrol(
+    *,
+    parent_url: str,
+    parent_fingerprint: str,
+    token: str,
+    name: str,
+    subject: Subject,
+    key_algorithm: KeyAlgorithm,
+    public_base_url: str | None,
+    wait_minutes: int,
+) -> None:
+    async def operation(settings: Settings) -> list[tuple[str, str]] | None:
+        service = SubordinateService(get_keystore(settings))
+        try:
+            authority = await service.start(
+                parent_url=parent_url,
+                parent_fingerprint=parent_fingerprint,
+                token=token,
+                name=name,
+                subject=subject,
+                key_algorithm=key_algorithm,
+                public_base_url=public_base_url,
+                actor=CLI_ACTOR,
+            )
+            return await _finish(service, authority, token, wait_minutes)
+        except H42Error:
+            await _hint(service)
+            raise
+
+    _conclude(run(operation))
+
+
+def _resume(token: str, wait_minutes: int) -> None:
+    async def operation(settings: Settings) -> list[tuple[str, str]] | None:
+        service = SubordinateService()
+        try:
+            authority = await service.resume(token, actor=CLI_ACTOR)
+            return await _finish(service, authority, token, wait_minutes)
+        except H42Error:
+            await _hint(service)
+            raise
+
+    _conclude(run(operation))
+
+
+async def _hint(service: SubordinateService) -> None:
+    """After a failure that leaves the CA pending: what can be done."""
+    if await service.find_pending() is not None:
+        typer.echo(
+            "The enrolment is kept: try again with `h42pki authority init --resume --token -`, "
+            "or drop it with `h42pki authority abandon`.",
+            err=True,
+        )
+
+
+@app.command()
+def abandon() -> None:
+    """Drop the enrolment in progress: the CA waiting for its certificate, and its key."""
+
+    async def operation(settings: Settings) -> str:
+        return await SubordinateService().abandon(actor=CLI_ACTOR)
+
+    typer.secho(f"Enrolment of {run(operation)} abandoned, its key is deleted.", fg="green")
+    typer.echo("If the parent already signed it, revoke it there (`h42pki federation`).")
+
+
 @app.command()
 def init(
-    name: Annotated[str, typer.Option(help="Name of the CA (unique).")],
-    common_name: Annotated[str, typer.Option(help="Subject common name (CN).")],
+    name: Annotated[str | None, typer.Option(help="Name of the CA (unique).")] = None,
+    common_name: Annotated[str | None, typer.Option(help="Subject common name (CN).")] = None,
     organization: Annotated[str | None, typer.Option(help="Subject organization (O).")] = None,
     organizational_unit: Annotated[
         str | None, typer.Option(help="Subject organizational unit (OU).")
@@ -74,24 +196,53 @@ def init(
         KeyAlgorithm, typer.Option(help="Algorithm of the new CA key.")
     ] = KeyAlgorithm.EC_P384,
     validity_days: Annotated[
-        int,
+        int | None,
         typer.Option(
             min=MIN_VALIDITY_DAYS,
             max=MAX_VALIDITY_DAYS,
             help=f"Validity of the root certificate in days ({MIN_VALIDITY_DAYS}-"
-            f"{MAX_VALIDITY_DAYS}).",
+            f"{MAX_VALIDITY_DAYS}, default {DEFAULT_CA_VALIDITY_DAYS}). Root only.",
         ),
-    ] = DEFAULT_CA_VALIDITY_DAYS,
+    ] = None,
     path_length: Annotated[
         int | None,
-        typer.Option(min=0, help="Maximum number of CAs below this one (default: unlimited)."),
+        typer.Option(
+            min=0, help="Maximum number of CAs below this one (default: unlimited). Root only."
+        ),
     ] = None,
     public_base_url: Annotated[
         str | None,
         typer.Option(help="Public HTTP base URL of this CA (stored for AIA publication)."),
     ] = None,
+    parent_url: Annotated[
+        str | None, typer.Option(help="https URL of the parent CA: makes a subordinate CA.")
+    ] = None,
+    token: Annotated[
+        str | None,
+        typer.Option(help="Invitation token; - reads it on standard input (recommended)."),
+    ] = None,
+    parent_fingerprint: Annotated[
+        str | None, typer.Option(help="SHA-256 of the parent CA certificate.")
+    ] = None,
+    wait_minutes: Annotated[
+        int, typer.Option(min=0, max=1440, help="How long to wait for a manual approval.")
+    ] = 10,
+    resume: Annotated[
+        bool, typer.Option("--resume", help="Go on with the enrolment in progress.")
+    ] = False,
 ) -> None:
-    """Create the local root CA: a new key and its root certificate (ADR-0010)."""
+    """Create the local CA: a root (default), or the child of another CA (--parent-url).
+
+    A subordinate CA needs --parent-url, --token and --parent-fingerprint, all given by
+    `h42pki federation invite` on the parent, which decides its validity and path length.
+    """
+    if resume:
+        if any((name, common_name, parent_url, parent_fingerprint, public_base_url)):
+            fail("--resume only takes --token and --wait-minutes", code=2)
+        _resume(_read_token(token), wait_minutes)
+        return
+    if name is None or common_name is None:
+        fail("--name and --common-name are required", code=2)
     try:
         subject = Subject(
             common_name=common_name,
@@ -102,21 +253,40 @@ def init(
     except ValidationError as exc:
         fail(f"invalid subject: {validation_message(exc)}", code=2)
 
+    if public_base_url is not None:
+        _warn(_normalized_url(public_base_url).warnings)
+    if parent_url is not None:
+        if validity_days is not None or path_length is not None:
+            fail("--validity-days and --path-length are decided by the parent CA", code=2)
+        if parent_fingerprint is None:
+            fail("--parent-fingerprint is required with --parent-url", code=2)
+        _enrol(
+            parent_url=parent_url,
+            parent_fingerprint=parent_fingerprint,
+            token=_read_token(token),
+            name=name,
+            subject=subject,
+            key_algorithm=key_algorithm,
+            public_base_url=public_base_url,
+            wait_minutes=wait_minutes,
+        )
+        return
+    if token is not None or parent_fingerprint is not None:
+        fail("--token and --parent-fingerprint go with --parent-url", code=2)
+
     async def operation(settings: Settings) -> list[tuple[str, str]]:
         service = AuthorityService(get_keystore(settings))
         authority = await service.init_root(
             name=name,
             subject=subject,
             key_algorithm=key_algorithm,
-            validity_days=validity_days,
+            validity_days=validity_days or DEFAULT_CA_VALIDITY_DAYS,
             path_length=path_length,
             public_base_url=public_base_url,
             actor=CLI_ACTOR,
         )
         return _describe(authority, await service.certificate_of(authority))
 
-    if public_base_url is not None:
-        _warn(_normalized_url(public_base_url).warnings)
     rows = run(operation)
     typer.secho("Root CA created.", fg=typer.colors.GREEN)
     _print(rows)
@@ -158,7 +328,8 @@ def status() -> None:
         service = AuthorityService()  # read-only: no passphrase needed (B32)
         authority = await service.find_local()
         if authority is None:
-            return None
+            pending = await SubordinateService.find_pending()
+            return _describe_pending(pending) if pending is not None else None
         return _describe(authority, await service.certificate_of(authority))
 
     rows = run(operation)

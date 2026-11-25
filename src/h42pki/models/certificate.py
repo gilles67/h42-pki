@@ -66,6 +66,7 @@ class Certificate(TimestampedModel):
 
     # Foreign key columns created by Tortoise, declared for type checkers.
     issuer_id: UUID | None
+    authority_id: UUID | None
     profile_id: UUID | None
 
     class Meta:

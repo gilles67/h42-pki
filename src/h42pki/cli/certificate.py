@@ -28,6 +28,13 @@ class ExportFormat(StrEnum):
     DER = "der"
 
 
+def _profile(certificate: Certificate) -> str:
+    """Certificates without profile: the root, and the CA certificates signed elsewhere."""
+    if certificate.profile is not None:
+        return certificate.profile.name
+    return "(root)" if certificate.issuer is None else "(ca)"
+
+
 @app.command("list")
 def list_certificates(
     status: Annotated[
@@ -49,7 +56,7 @@ def list_certificates(
             (
                 cert.serial_hex,
                 cert.subject_dn or "-",
-                cert.profile.name if cert.profile is not None else "(root)",
+                _profile(cert),
                 effective_status(cert, now).value,
                 cert.not_after.isoformat(),
             )

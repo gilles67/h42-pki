@@ -4,13 +4,7 @@ Synchronous tests: each runs real processes of the CLI on its own database and t
 directory (where the heartbeat lives).
 """
 
-import os
-import platform
-import signal
-import socket
 import ssl
-import subprocess
-import sys
 import tempfile
 import time
 from collections.abc import Callable, Iterator
@@ -21,98 +15,9 @@ import httpx
 import pytest
 
 from h42pki.cli.health import check
-from h42pki.config import ENV_PREFIX, Settings
-from h42pki.heartbeat import heartbeat_path
+from h42pki.config import ENV_PREFIX
 from tests.cli_helpers import plain
-from tests.conftest import TEST_PASSPHRASE
-from tests.integration.server.conftest import free_port
-
-CLI = [sys.executable, "-c", "from h42pki.cli import app; app()"]
-START_TIMEOUT = 30.0
-POSIX = os.name != "nt"
-# WSL1 cannot share an SQLite database in WAL mode between processes ("locking protocol"); WSL2,
-# Docker and Windows can. These tests run the CLI against the database of a running server.
-WSL1 = "Microsoft" in platform.release()
-shared_database = pytest.mark.skipif(
-    WSL1, reason="WSL1: SQLite WAL cannot be shared between processes (use WSL2 or Docker)"
-)
-
-
-class Instance:
-    def __init__(self, tmp_path: Path, **variables: str) -> None:
-        self.tmp = tmp_path
-        self.http_port = free_port()
-        self.https_port = free_port()
-        database = tmp_path / "data" / "h42pki.sqlite3"
-        self.database_url = f"sqlite://{database.as_posix()}"
-        self.env = {k: v for k, v in os.environ.items() if not k.upper().startswith(ENV_PREFIX)}
-        self.env.update(
-            {
-                f"{ENV_PREFIX}ENVIRONMENT": "test",
-                f"{ENV_PREFIX}SECRETS_DIR": str(tmp_path / "no-secrets"),
-                f"{ENV_PREFIX}DATABASE_URL": self.database_url,
-                f"{ENV_PREFIX}CA_PASSPHRASE": TEST_PASSPHRASE,
-                f"{ENV_PREFIX}SERVER_HOSTNAME": "pki.home42.test",
-                f"{ENV_PREFIX}SERVER_ALT_NAMES": "localhost,127.0.0.1",
-                f"{ENV_PREFIX}HTTP_PORT": str(self.http_port),
-                f"{ENV_PREFIX}HTTPS_PORT": str(self.https_port),
-                # Heartbeat file of this instance (tempfile.gettempdir()).
-                "TMPDIR": str(tmp_path),
-                "TEMP": str(tmp_path),
-                "TMP": str(tmp_path),
-                **{f"{ENV_PREFIX}{k}": v for k, v in variables.items()},
-            }
-        )
-        self.process: subprocess.Popen[str] | None = None
-
-    def cli(self, *args: str) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(  # noqa: S603 - our own CLI, fixed arguments
-            [*CLI, *args], env=self.env, capture_output=True, text=True, timeout=60, check=False
-        )
-
-    def serve(self) -> None:
-        self.process = subprocess.Popen(  # noqa: S603
-            [*CLI, "serve"],
-            env=self.env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-        )
-
-    def settings(self) -> Settings:
-        return Settings(database_url=self.database_url, environment="test")
-
-    @property
-    def heartbeat(self) -> Path:
-        return heartbeat_path(self.database_url)
-
-    def wait(self, condition: Callable[[], bool], what: str) -> None:
-        deadline = time.monotonic() + START_TIMEOUT
-        while not condition():
-            assert self.process is not None
-            if self.process.poll() is not None:
-                output = self.process.stdout.read() if self.process.stdout else ""
-                raise AssertionError(f"the server exited while waiting for {what}:\n{output}")
-            if time.monotonic() > deadline:
-                raise AssertionError(f"timeout waiting for {what}")
-            time.sleep(0.1)
-
-    def stop(self) -> tuple[int, str]:
-        assert self.process is not None
-        if POSIX:
-            self.process.send_signal(signal.SIGTERM)
-        else:  # no SIGTERM delivery on Windows: TerminateProcess
-            self.process.terminate()
-        output, _ = self.process.communicate(timeout=30)
-        return self.process.returncode, output
-
-
-def listening(port: int) -> bool:
-    try:
-        with socket.create_connection(("127.0.0.1", port), timeout=0.5):
-            return True
-    except OSError:
-        return False
+from tests.integration.server.instance import POSIX, Instance, listening, shared_database
 
 
 @pytest.fixture
@@ -126,9 +31,7 @@ def instance(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Callab
 
     yield make
     for item in created:
-        if item.process is not None and item.process.poll() is None:
-            item.process.kill()
-            item.process.communicate(timeout=30)
+        item.kill()
 
 
 @shared_database
