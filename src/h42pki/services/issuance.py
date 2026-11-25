@@ -2,7 +2,8 @@
 
 import asyncio
 import hashlib
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -12,16 +13,19 @@ from cryptography.hazmat.primitives import serialization
 from tortoise.transactions import in_transaction
 
 from h42pki.core.csr import ParsedCsr, build_csr, parse_csr
+from h42pki.core.federation import SubCaConstraints, constrain_sub_ca
 from h42pki.core.issuance import build_issued, plan_issuance
 from h42pki.core.keys import KeyAlgorithm
 from h42pki.core.names import rfc4514
-from h42pki.core.profiles import SERVICE_TLS_PROFILE
-from h42pki.core.publication import ca_certificate_url
+from h42pki.core.profiles import SERVICE_TLS_PROFILE, SUB_CA_PROFILE, ProfileSpec
+from h42pki.core.publication import ca_certificate_url, validate_authority_name
 from h42pki.errors import Conflict, H42Error, NoActiveAuthority, Unprocessable
 from h42pki.keystore import KeyStore, StoredKey
 from h42pki.models import (
     AuditLog,
     Authority,
+    AuthorityKind,
+    AuthorityStatus,
     Certificate,
     CertificateRequest,
     CertificateStatus,
@@ -46,6 +50,39 @@ def _ca_issuers_url(authority: Authority) -> str | None:
     if authority.public_base_url is None:
         return None
     return ca_certificate_url(authority.public_base_url, authority.name)
+
+
+@dataclass(frozen=True)
+class ChildCa:
+    """What a child CA says about itself when it enrols."""
+
+    name: str
+    public_base_url: str | None
+
+
+@dataclass(frozen=True)
+class PreparedRequest:
+    profile: Profile
+    spec: ProfileSpec
+    parsed: ParsedCsr
+    subject_dn: str
+
+
+def child_of(request: CertificateRequest) -> ChildCa | None:
+    """The child CA behind a federation request, None for any other request."""
+    federation = request.metadata.get("federation")
+    if federation is None:
+        return None
+    return ChildCa(name=federation["name"], public_base_url=federation["public_base_url"])
+
+
+def _constraints_of(request: CertificateRequest) -> SubCaConstraints:
+    federation = request.metadata["federation"]
+    return SubCaConstraints(
+        path_length=federation["path_length"],
+        validity_days=federation["validity_days"],
+        auto_approve=federation["auto_approve"],
+    )
 
 
 class IssuanceService:
@@ -82,6 +119,73 @@ class IssuanceService:
         The request is checked against the profile and the active CA before being stored: a
         request that could never be issued is refused (422) instead of waiting for a decision.
         """
+        prepared = await self._prepare(
+            csr=csr,
+            profile_name=profile_name,
+            validity_days=validity_days,
+            actor=actor,
+            channel=channel,
+        )
+        async with in_transaction():
+            request = await self._record(
+                prepared, validity_days=validity_days, actor=actor, channel=channel
+            )
+        if prepared.spec.auto_approve:
+            return await self._issue(
+                request, parsed=prepared.parsed, actor=actor, decided_by=AUTO_APPROVE
+            )
+        return await self.get(request.id)
+
+    async def submit_child(
+        self,
+        *,
+        csr: bytes | str,
+        child: ChildCa,
+        constraints: SubCaConstraints,
+        actor: str,
+        on_recorded: Callable[[CertificateRequest], Awaitable[None]],
+    ) -> CertificateRequest:
+        """Enrolment of a child CA (federation): a ``sub_ca`` request under an invitation.
+
+        ``on_recorded`` runs in the transaction that records the request: it consumes the
+        invitation, and cancels everything by raising. A refused CSR consumes nothing.
+        """
+        prepared = await self._prepare(
+            csr=csr,
+            profile_name=SUB_CA_PROFILE,
+            validity_days=constraints.validity_days,
+            actor=actor,
+            channel=Channel.FEDERATION,
+            constraints=constraints,
+            child=child,
+        )
+        async with in_transaction():
+            request = await self._record(
+                prepared,
+                validity_days=constraints.validity_days,
+                actor=actor,
+                channel=Channel.FEDERATION,
+                federation={**asdict(child), **asdict(constraints)},
+            )
+            await on_recorded(request)
+        if constraints.auto_approve:
+            return await self._issue(
+                request, parsed=prepared.parsed, actor=actor, decided_by=AUTO_APPROVE
+            )
+        return await self.get(request.id)
+
+    async def _prepare(
+        self,
+        *,
+        csr: bytes | str,
+        profile_name: str,
+        validity_days: int | None,
+        actor: str,
+        channel: Channel,
+        constraints: SubCaConstraints | None = None,
+        child: ChildCa | None = None,
+    ) -> PreparedRequest:
+        """Check a request without a key and without storing it; a refusal is audited (B35)."""
         parsed: ParsedCsr | None = None
         try:
             profile = await Profile.get_or_none(name=profile_name)
@@ -95,6 +199,10 @@ class IssuanceService:
                 )
             if profile.name in await ProfileService.disabled():
                 raise Unprocessable(f"profile {profile_name!r} is disabled on this CA")
+            if constraints is not None:
+                spec = constrain_sub_ca(spec, constraints)
+            if child is not None:
+                await self._check_child_name(child.name)
             authority = await self._authorities.get_local()
             parsed = parse_csr(csr)
             now = datetime.now(UTC)
@@ -105,31 +213,56 @@ class IssuanceService:
                 exc, csr=csr, parsed=parsed, profile_name=profile_name, actor=actor, channel=channel
             )
             raise
+        return PreparedRequest(profile, spec, parsed, rfc4514(plan.subject))
 
-        async with in_transaction():
-            request = await CertificateRequest.create(
-                csr_der=parsed.csr.public_bytes(serialization.Encoding.DER),
-                profile=profile,
-                requested_validity_days=validity_days,
-                requester=actor,
-                channel=channel,
-                subject_dn=rfc4514(plan.subject),
-                metadata={"ignored_extensions": list(parsed.ignored_extensions)},
+    async def _record(
+        self,
+        prepared: PreparedRequest,
+        *,
+        validity_days: int | None,
+        actor: str,
+        channel: Channel,
+        federation: dict[str, Any] | None = None,
+    ) -> CertificateRequest:
+        """Store a checked request (inside the transaction of the caller)."""
+        ignored = [*prepared.parsed.ignored_extensions]
+        metadata: dict[str, Any] = {"ignored_extensions": ignored}
+        if federation is not None:
+            metadata["federation"] = federation
+        request = await CertificateRequest.create(
+            csr_der=prepared.parsed.csr.public_bytes(serialization.Encoding.DER),
+            profile=prepared.profile,
+            requested_validity_days=validity_days,
+            requester=actor,
+            channel=channel,
+            subject_dn=prepared.subject_dn,
+            metadata=metadata,
+        )
+        await self._audit(
+            actor,
+            "request.submit",
+            request,
+            {
+                "profile": prepared.profile.name,
+                "subject_dn": request.subject_dn,
+                "requested_validity_days": validity_days,
+                "ignored_extensions": ignored,
+            },
+        )
+        return request
+
+    @staticmethod
+    async def _check_child_name(name: str, *, approving: bool = False) -> None:
+        """409 when the name belongs to a known CA or to another pending enrolment."""
+        validate_authority_name(name)
+        if await Authority.exists(name=name):
+            raise Conflict(f"an authority named {name!r} already exists")
+        if not approving:
+            pending = await CertificateRequest.filter(
+                channel=Channel.FEDERATION, status=RequestStatus.PENDING
             )
-            await self._audit(
-                actor,
-                "request.submit",
-                request,
-                {
-                    "profile": profile.name,
-                    "subject_dn": request.subject_dn,
-                    "requested_validity_days": validity_days,
-                    "ignored_extensions": list(parsed.ignored_extensions),
-                },
-            )
-        if spec.auto_approve:
-            return await self._issue(request, parsed=parsed, actor=actor, decided_by=AUTO_APPROVE)
-        return await self.get(request.id)
+            if any(other.metadata["federation"]["name"] == name for other in pending):
+                raise Conflict(f"an enrolment for a CA named {name!r} is already pending")
 
     async def issue_service_certificate(
         self, names: Sequence[str], *, validity_days: int
@@ -182,6 +315,9 @@ class IssuanceService:
             raise Conflict(
                 f"profile {profile.name!r} is disabled on this CA: the request can only be rejected"
             )
+        child = child_of(request)
+        if child is not None:  # refused before any change: the request can still be rejected
+            await self._check_child_name(child.name, approving=True)
         await self._audit(actor, "request.approve", request, {})
         return await self._issue(
             request, parsed=parse_csr(request.csr_der), actor=actor, decided_by=actor
@@ -233,6 +369,9 @@ class IssuanceService:
         """
         profile = await Profile.get(id=request.profile_id)
         spec = spec_of(profile)
+        child = child_of(request)
+        if child is not None:
+            spec = constrain_sub_ca(spec, _constraints_of(request))
         now = datetime.now(UTC)
         try:
             authority = await self._authorities.get_local()
@@ -276,8 +415,20 @@ class IssuanceService:
                         "purpose": private_key.purpose.value,
                     },
                 )
+            child_authority: Authority | None = None
+            if child is not None:
+                basic = issued.certificate.extensions.get_extension_for_class(x509.BasicConstraints)
+                child_authority = await Authority.create(
+                    name=child.name,
+                    kind=AuthorityKind.CHILD,
+                    status=AuthorityStatus.ACTIVE,
+                    parent=authority,
+                    path_length=basic.value.path_length,
+                    public_base_url=child.public_base_url,
+                )
             certificate = await Certificate.create(
                 issuer=authority,
+                authority=child_authority,
                 profile=profile,
                 channel=request.channel,
                 status=CertificateStatus.VALID,
