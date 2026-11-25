@@ -19,8 +19,8 @@ from h42pki.core.keys import KeyAlgorithm
 from h42pki.core.names import rfc4514
 from h42pki.core.profiles import SERVICE_TLS_PROFILE, SUB_CA_PROFILE, ProfileSpec
 from h42pki.core.publication import ca_certificate_url, validate_authority_name
-from h42pki.errors import Conflict, H42Error, NoActiveAuthority, Unprocessable
-from h42pki.keystore import KeyStore, StoredKey
+from h42pki.errors import Conflict, H42Error, MissingPassphrase, NoActiveAuthority, Unprocessable
+from h42pki.keystore import KEY_OPERATIONS_REQUIREMENT, KeyStore, StoredKey
 from h42pki.models import (
     AuditLog,
     Authority,
@@ -88,17 +88,24 @@ def _constraints_of(request: CertificateRequest) -> SubCaConstraints:
 class IssuanceService:
     """submit -> (auto_approve | approve) -> _issue; reject. ``_issue`` is the single path."""
 
-    def __init__(self, keystore: KeyStore) -> None:
-        self._keystore = keystore
+    def __init__(self, keystore: KeyStore | None = None) -> None:
+        """``keystore`` is only needed by operations that sign (B32)."""
+        self._key_store = keystore
         self._authorities = AuthorityService(keystore)
+
+    @property
+    def _keystore(self) -> KeyStore:
+        if self._key_store is None:
+            raise MissingPassphrase(KEY_OPERATIONS_REQUIREMENT)
+        return self._key_store
 
     # --- queries --------------------------------------------------------------------------
 
     async def get(self, request_id: UUID) -> CertificateRequest:
-        return await CertificateRequest.get(id=request_id).prefetch_related("profile")
+        return await CertificateRequest.get(id=request_id).prefetch_related("profile", "invitation")
 
     async def list(self, status: RequestStatus | None = None) -> list[CertificateRequest]:
-        query = CertificateRequest.all().prefetch_related("profile")
+        query = CertificateRequest.all().prefetch_related("profile", "invitation")
         if status is not None:
             query = query.filter(status=status)
         return await query

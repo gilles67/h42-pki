@@ -13,10 +13,22 @@ class H42Error(Exception):
 
     status_code: ClassVar[int] = 500
     title: ClassVar[str] = "Internal Server Error"
+    headers: ClassVar[dict[str, str]] = {}
 
     def __init__(self, detail: str) -> None:
         super().__init__(detail)
         self.detail = detail
+
+
+class Unauthorized(H42Error):
+    """Bearer token missing or not accepted (the message never says why)."""
+
+    status_code = 401
+    title = "Unauthorized"
+    headers: ClassVar[dict[str, str]] = {
+        "WWW-Authenticate": "Bearer",
+        "Cache-Control": "no-store",
+    }
 
 
 class NotFound(H42Error):

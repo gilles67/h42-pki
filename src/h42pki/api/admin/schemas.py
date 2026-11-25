@@ -30,6 +30,7 @@ from h42pki.models import (
     RequestStatus,
 )
 from h42pki.services.certificates import effective_status
+from h42pki.services.issuance import child_of
 from h42pki.services.profiles import spec_of
 from h42pki.services.settings import SettingView
 
@@ -242,6 +243,10 @@ class RequestOut(Schema):
     requester: str
     channel: Channel
     certificate_id: UUID | None
+    invitation_id: UUID | None = Field(
+        description="Invitation behind a federation request (enrolment of a child CA)."
+    )
+    child_name: str | None = Field(description="Name of the child CA of a federation request.")
     validity_truncated: bool | None = Field(
         description="True when not_after was shortened to the CA certificate's not_after."
     )
@@ -256,8 +261,9 @@ class RequestOut(Schema):
 
     @classmethod
     def from_model(cls, request: CertificateRequest) -> "RequestOut":
-        """``request.profile`` must be prefetched."""
+        """``request.profile`` and ``request.invitation`` must be prefetched."""
         metadata = request.metadata
+        child = child_of(request)
         return cls(
             id=request.id,
             profile=request.profile.name,
@@ -267,6 +273,8 @@ class RequestOut(Schema):
             requester=request.requester,
             channel=request.channel,
             certificate_id=request.certificate_id,
+            invitation_id=request.invitation.id if request.invitation is not None else None,
+            child_name=child.name if child is not None else None,
             validity_truncated=metadata.get("validity_truncated"),
             ignored_extensions=metadata.get("ignored_extensions", []),
             rejection_reason=request.rejection_reason,

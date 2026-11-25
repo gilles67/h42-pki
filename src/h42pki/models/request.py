@@ -12,6 +12,7 @@ from h42pki.models.base import TimestampedModel
 
 if TYPE_CHECKING:
     from h42pki.models.certificate import Certificate
+    from h42pki.models.federation import FederationInvitation
     from h42pki.models.profile import Profile
 
 
@@ -49,6 +50,9 @@ class CertificateRequest(TimestampedModel):
     decided_at = fields.DatetimeField(null=True)
     # e.g. ignored_extensions (never copied, B2), validity_truncated, failure reason.
     metadata: fields.JSONField[dict[str, Any]] = fields.JSONField(default=dict)
+
+    # Reverse side of FederationInvitation.request (federation channel only).
+    invitation: fields.BackwardOneToOneRelation[FederationInvitation]
 
     # Foreign key columns created by Tortoise, declared for type checkers.
     profile_id: UUID

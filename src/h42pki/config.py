@@ -208,6 +208,11 @@ class Settings(BaseSettings):
         return self
 
     @property
+    def https_url(self) -> str | None:
+        """Suggested URL of this server: the published port may differ from the listening one."""
+        return f"https://{self.server_hostname}:{self.https_port}" if self.server_hostname else None
+
+    @property
     def server_names(self) -> list[str]:
         """Names of the built-in HTTPS certificate: the hostname first, then the extra names."""
         return [self.server_hostname, *self.server_alt_names] if self.server_hostname else []

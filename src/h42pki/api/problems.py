@@ -47,6 +47,11 @@ def _problem_response(description: str) -> dict[str, Any]:
     }
 
 
+# For the operations authenticated by a bearer token.
+UNAUTHORIZED_RESPONSE: dict[int | str, dict[str, Any]] = {
+    401: _problem_response("Unauthorized (the same answer whatever the reason)"),
+}
+
 # Declared on the routers. FastAPI then no longer adds its own 422 response (and its
 # HTTPValidationError / ValidationError schemas): it only does so when an operation has no
 # 422, 4XX or default response (fastapi/openapi/utils.py, FastAPI 0.136).
@@ -103,7 +108,7 @@ def problem(
 
 
 async def _h42_error(request: Request, exc: H42Error) -> Response:
-    return problem(exc.status_code, exc.title, exc.detail)
+    return problem(exc.status_code, exc.title, exc.detail, headers=exc.headers)
 
 
 async def _request_validation_error(request: Request, exc: RequestValidationError) -> Response:

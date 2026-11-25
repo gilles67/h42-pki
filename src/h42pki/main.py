@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from tortoise.contrib.fastapi import RegisterTortoise
 
 from h42pki import __version__
-from h42pki.api import admin, health, public
+from h42pki.api import admin, federation, health, public
 from h42pki.api.listener import ListenerRoutesMiddleware
 from h42pki.api.problems import exception_handlers, install_problem_schemas
 from h42pki.config import Settings, get_settings
@@ -55,6 +55,7 @@ def create_app(settings: Settings | None = None, *, manage_database: bool = True
     app.add_middleware(ListenerRoutesMiddleware)
     app.include_router(health.router)
     app.include_router(admin.router)
+    app.include_router(federation.router)
     app.include_router(public.router)
     install_problem_schemas(app)
     return app
