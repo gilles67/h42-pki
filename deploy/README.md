@@ -12,10 +12,13 @@ certificate of its own HTTPS server.
 
 ## Run it
 
-Needs Docker with compose v2, `curl` and `openssl`.
+Needs **Podman** (rootless is fine) with **podman-compose ≥ 1.3**, `curl` and `openssl`. Podman is the reference
+container engine of the project ([ADR-0016](../docs/adr/0016-podman-moteur-de-reference.md)); Docker with Compose
+v2 works too.
 
 ```bash
-deploy/bootstrap.sh            # add --fresh to delete a previous run, volumes included
+deploy/bootstrap.sh                          # add --fresh to delete a previous run, volumes included
+CONTAINER_ENGINE=docker deploy/bootstrap.sh  # same with Docker and Docker Compose v2
 ```
 
 The script:
@@ -25,7 +28,7 @@ The script:
 3. issues a `tls_server` certificate with the issuing CA;
 4. runs `openssl verify -CAfile root.pem -untrusted chain.pem leaf.pem`.
 
-Results are in `deploy/out/` (ignored by git). `docker compose -f deploy/compose.yaml down
+Results are in `deploy/out/` (ignored by git). `podman-compose -f deploy/compose.yaml down
 --volumes` removes everything, CA keys included.
 
 | Service | HTTP | HTTPS |
@@ -42,15 +45,15 @@ With manual approval (the default):
 
 ```bash
 # On the parent: the token is on standard output, shown this one time.
-docker compose exec root h42pki federation invite --label lab --path-length 0
+podman-compose exec root h42pki federation invite --label lab --path-length 0
 
 # On the child: paste the token on standard input (it stays out of the shell history).
-docker compose exec -it child h42pki authority init --name lab --common-name "Lab CA" \
+podman-compose exec child h42pki authority init --name lab --common-name "Lab CA" \
   --parent-url https://root:8443 --parent-fingerprint <sha256> --token -
 
 # On the parent, meanwhile:
-docker compose exec root h42pki request list --status pending
-docker compose exec root h42pki request approve <id>
+podman-compose exec root h42pki request list --status pending
+podman-compose exec root h42pki request approve <id>
 ```
 
 If the child stopped waiting: `h42pki authority init --resume --token -`. To give up:
@@ -59,6 +62,20 @@ If the child stopped waiting: `h42pki authority init --resume --token -`. To giv
 The host of `--parent-url` must be in `H42_PKI_SERVER_HOSTNAME` or `H42_PKI_SERVER_ALT_NAMES` of
 the parent.
 
+## With Podman
+
+- Build the image in the **Docker format**: `podman build --format docker`, or `BUILDAH_FORMAT=docker` for
+  podman-compose (the scripts set it). In the default OCI format, Podman drops the `HEALTHCHECK` and containers never
+  report `healthy`.
+- Rootless containers: run `loginctl enable-linger $USER` once, so that containers and their health checks survive
+  the end of your session.
+- Rootless Podman cannot publish host ports below 1024 by default; the examples use 18081-18083 / 18441-18443.
+- podman-compose has no `up --wait`: the scripts wait for each container with `h42pki healthcheck`.
+- Containers reach each other by service name (`https://root:8443`) through the network DNS (netavark and
+  aardvark-dns, installed with Podman on Debian).
+- Validated on 2026-11-25 with Debian 13, Podman 5.4.2 (rootless) and podman-compose 1.3.0.
+
 ## Other files
 
-- `smoke-test.sh`: builds the image and checks one container alone (health, HTTPS, idle mode).
+- `smoke-test.sh`: builds the image and checks one container alone (health, HTTPS, idle mode). Podman by default,
+  `CONTAINER_ENGINE=docker` for Docker.

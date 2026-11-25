@@ -55,7 +55,7 @@ configuration en base, profils désactivables, lanceur HTTP/HTTPS intégré, cer
   journalisé ni stocké côté fille), approbation par invitation, épinglage de l'AC mère, inscription =
   `CertificateRequest` (`sub_ca`, canal `federation`). Le préfixe du jeton n'apparaît que dans `core/federation.py`.
 
-- **Socle** : `config.py` (`Settings`, variables `H42_PKI_*`, `H42_PKI_*_FILE`, secrets Docker dans `/run/secrets`
+- **Socle** : `config.py` (`Settings`, variables `H42_PKI_*`, `H42_PKI_*_FILE`, secrets de conteneur (Podman ou Docker) dans `/run/secrets`
   ou `H42_PKI_SECRETS_DIR`, contrôle des permissions des fichiers de secrets), `db.py` (config Tortoise), `main.py`
   (`create_app()` + lifespan `RegisterTortoise` puis synchronisation des profils, `generate_schemas=True` jusqu'à la
   première release, ADR-0007 ; `manage_database=False` pour le lanceur), `errors.py` (erreurs métier typées, dont 503
@@ -152,7 +152,7 @@ Règle de dépendance (stricte) : `server → api → services → (core, keysto
 ## 4. Commandes
 
 Configuration des outils (ruff, mypy, pytest) dans `pyproject.toml`. Raccourcis équivalents dans le `Makefile`
-(`make install|fmt|lint|typecheck|test|check|run|docker-build`), utilisable depuis Git Bash.
+(`make install|fmt|lint|typecheck|test|check|run|image`), utilisable depuis Git Bash.
 
 ```bash
 uv sync --all-groups                      # installer (prod + dev)
@@ -168,13 +168,19 @@ uv run h42pki healthcheck                 # base + battement du lanceur (code 0 
 uv run h42pki config show                 # réglages en base ; `config set KEY VALUE`, `config unset KEY`
 uv run h42pki --help                      # CLI
 uv run h42pki authority init --name root --common-name "Test Root CA"   # AC racine locale (base data/)
-docker build -t h42-pki:dev .            # image (non-root, /data, `h42pki serve`, ports 8080 et 8443)
-deploy/bootstrap.sh                      # hiérarchie racine + intermédiaire + émettrice (Docker)
+podman build --format docker -t h42-pki:dev .   # image (non-root, /data, `h42pki serve`, ports 8080 et 8443) ;
+                                         # --format docker garde HEALTHCHECK (ADR-0016)
+deploy/bootstrap.sh                      # hiérarchie racine + intermédiaire + émettrice (Podman ; Docker en option)
 ```
 
 Avant de déclarer une tâche terminée : `ruff check`, `ruff format --check`, `mypy src` et `pytest` passent.
 
 ## 5. Conventions de code
+
+- **Conteneurs** : **Podman rootless** est le moteur de référence (ADR-0016) : exemples, scripts de `deploy/` et
+  tests d'interop l'utilisent par défaut, Docker reste compatible. Image construite avec `--format docker`
+  (`HEALTHCHECK`), compose par `podman-compose` sans fonctionnalité propre à Docker Compose v2, ports ≥ 1024 publiés
+  côté hôte dans les exemples.
 
 - **Langue** : identifiants, docstrings, commentaires, messages de log et de commit en **anglais** ;
   documentation dans `docs/` en **français**.
@@ -204,7 +210,7 @@ Avant de déclarer une tâche terminée : `ruff check`, `ruff format --check`, `
 ## 6. Règles de sécurité (non négociables)
 
 > **API d'administration sans authentification** jusqu'à la première release (ADR-0008) : ne pas en ajouter,
-> mais ne jamais exposer le service hors de `127.0.0.1` / réseau Docker interne. Les mécanismes propres aux
+> mais ne jamais exposer le service hors de `127.0.0.1` / réseau de conteneurs interne. Les mécanismes propres aux
 > protocoles (JWS ACME, challenge SCEP, invitation de fédération, auth EST) sont, eux, implémentés normalement.
 
 1. **Jamais** de clé privée, passphrase, mot de passe de challenge, secret EAB ou jeton dans les logs,
@@ -219,7 +225,7 @@ Avant de déclarer une tâche terminée : `ruff check`, `ruff format --check`, `
 5. Une AC fille ne peut pas recevoir un `pathLen` ≥ à celui de son AC mère ; validité d'un certificat
    émis ≤ validité restante de l'AC émettrice.
 6. Toute émission, révocation, changement de profil, inscription d'AC fille → entrée `AuditLog`.
-7. Secrets fournis par fichier (`*_FILE`, compatible Docker secrets) ou variable d'environnement,
+7. Secrets fournis par fichier (`*_FILE`, compatible secrets Podman / Docker) ou variable d'environnement,
    jamais en dur ni dans le dépôt. `config/pki.json`, `*.sqlite3`, `*.pem`, `*.key` sont ignorés par git.
 8. Comparaisons de secrets en temps constant (`hmac.compare_digest`), mots de passe hachés (argon2 / scrypt).
 9. CRL et AIA servis en **HTTP simple** (pas de redirection HTTPS) pour éviter les boucles de validation ;

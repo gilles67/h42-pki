@@ -17,7 +17,7 @@ un carré arrondi bleu nuit (rayon 28/120).
 | `h42-pki-32.svg` | Petit format (≤ 32 px) : traits renforcés, sans les nœuds latéraux du toit |
 | `h42-pki-16.svg` | 16 px : maison et serrure réduite à un point |
 | `favicon.ico` | 16, 32 et 48 px |
-| `h42-pki-512.png`, `h42-pki-256.png`, `h42-pki-48.png` | Icône de l'image Docker, avatar du dépôt, OpenAPI |
+| `h42-pki-512.png`, `h42-pki-256.png`, `h42-pki-48.png` | Icône de l'image de conteneur, avatar du dépôt, OpenAPI |
 
 Ne pas déformer, recolorer la maison, ni retirer le carré (sauf version monochrome). Zone de protection : 1/8 de la
 largeur du carré tout autour.
@@ -47,4 +47,4 @@ polices, plutôt qu'une image.
 - `docs/assets/brand/` : tous les fichiers ci-dessus.
 - `README.md` : `<img src="docs/assets/brand/h42-pki.svg" width="96" alt="h42-pki">` en en-tête.
 - `src/h42pki/static/favicon.ico` servi en `/favicon.ico` (route publique, HTTP et HTTPS, §6 de l'architecture).
-- Image Docker : label OCI `org.opencontainers.image.logo` (ou icône Docker Hub) avec `h42-pki-512.png`.
+- Image de conteneur : label OCI `org.opencontainers.image.logo` (ou icône Docker Hub) avec `h42-pki-512.png`.

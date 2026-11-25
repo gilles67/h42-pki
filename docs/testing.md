@@ -6,7 +6,7 @@
 |---|---|---|---|---|
 | Unitaire | `tests/unit/` | — | `core/`, `keystore/`, schémas, fonctions pures ; pas de DB ni réseau | chaque commit, < 30 s |
 | Intégration | `tests/integration/` | — | services + API via `httpx.ASGITransport`, Tortoise SQLite en mémoire | chaque commit |
-| Interopérabilité | `tests/interop/` | `@pytest.mark.interop` | vrais clients : `openssl`, `sscep`, `curl`, `lego`/`certbot` | manuel / CI nocturne, nécessite Docker |
+| Interopérabilité | `tests/interop/` | `@pytest.mark.interop` | vrais clients : `openssl`, `sscep`, `curl`, `lego`/`certbot` | manuel / CI nocturne, nécessite Podman (ou Docker) |
 
 `pytest` sans option exclut `interop` (`addopts = "-m 'not interop'"`).
 
@@ -115,7 +115,7 @@ qu'elle tourne : ces tests fonctionnent donc aussi sous WSL1 (B42). Sorties de l
 
 Services : `root`, `intermediate`, `issuing` (h42-pki, HTTP et HTTPS intégrés, sans reverse-proxy, ADR-0012),
 `web` (cible http-01),
-`dns` (cible dns-01), `tools` (openssl, sscep, curl, lego). Les tests `interop` pilotent `docker compose exec tools …`
+`dns` (cible dns-01), `tools` (openssl, sscep, curl, lego). Les tests `interop` pilotent `podman-compose exec tools …` (Podman, moteur de référence, ADR-0016)
 et vérifient les codes de retour. Scénarios minimum :
 
 | Scénario | Outil |

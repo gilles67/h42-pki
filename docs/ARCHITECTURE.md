@@ -148,7 +148,7 @@ status=active)` (ADR-0010). Une seule AC locale non `retired` par conteneur. Mod
 **Avant l'activation** : l'AC n'a pas encore de certificat HTTPS, donc le listener HTTPS n'est pas démarré. Seuls
 le listener HTTP (`/`, `/health`, publication) et la CLI sont disponibles ; `GET /health` indique `"https": "waiting"`.
 Le lanceur regarde toutes les 5 secondes si une AC est active : dès qu'elle l'est (par exemple après `h42pki
-authority init`, lancée par `docker exec` dans un autre processus), elle s'émet son certificat `service_tls` et le
+authority init`, lancée par `podman exec` dans un autre processus), elle s'émet son certificat `service_tls` et le
 lanceur ouvre le HTTPS sans redémarrage (ADR-0012, ADR-0013).
 
 ## 4. Modèle de données
@@ -489,7 +489,7 @@ routage (404 route inconnue, 405 méthode non permise, avec l'en-tête `Allow`) 
   proxy dans l'en-tête `Client-Cert` (RFC 9440) est accepté depuis ces réseaux seulement ; le proxy doit supprimer
   tout en-tête entrant du même nom. Vide (par défaut) : l'en-tête est ignoré. La chaîne d'un certificat reçu ainsi
   n'est pas encore vérifiée par le serveur (B45, phase 4).
-- Ports : 8080 et 8443 dans le conteneur (l'image tourne en non-root), publiés par Docker sur 80 et 443.
+- Ports : 8080 et 8443 dans le conteneur (l'image tourne en non-root), publiés par le moteur de conteneurs (Podman, moteur de référence, ADR-0016), par exemple sur 8080 et 8443 côté hôte en rootless.
 
 ## 7. Configuration
 
@@ -500,7 +500,7 @@ routage (404 route inconnue, 405 méthode non permise, avec l'en-tête `Allow`) 
 ### 7.1 Variables d'environnement
 
 Liste fermée (`Settings`, `config.py`). Les changer impose de redémarrer le conteneur. Tout secret accepte une
-variante `*_FILE` ou un secret Docker (`/run/secrets/h42_pki_<nom>`, dossier modifiable par `H42_PKI_SECRETS_DIR`) :
+variante `*_FILE` ou un secret de conteneur, Podman ou Docker (`/run/secrets/h42_pki_<nom>`, dossier modifiable par `H42_PKI_SECRETS_DIR`) :
 ces variables-là appartiennent au mécanisme de livraison des secrets, pas à la configuration.
 
 | Variable | Défaut | Obligatoire | Rôle |
@@ -616,8 +616,9 @@ Règle : une AC n'émet pas de certificat dont `not_after` dépasse le sien (la 
 
 ## 9. Déploiement
 
-État en place depuis la phase 1.1 (image non encore construite ni validée dans Docker sur le poste de
-développement : scénario rejoué hors conteneur).
+État en place depuis la phase 1.1, **validé le 2026-11-25 sur Debian 13 avec Podman 5.4.2 rootless** et
+podman-compose 1.3.0 (`deploy/smoke-test.sh`, `deploy/bootstrap.sh`). **Podman est le moteur de référence**,
+Docker reste compatible (ADR-0016).
 
 - **Image** : `python:3.13-slim` (ADR-0014), installation via `uv`, utilisateur non-root, un seul volume `/data`
   (la base, qui contient aussi la configuration). OpenSC/pcscd seulement dans une variante `-pkcs11` de l'image
@@ -625,14 +626,18 @@ développement : scénario rejoué hors conteneur).
 - **Processus** : `h42pki serve`, le lanceur maison (ADR-0012), un seul processus. Il démarre le listener HTTP,
   puis le listener HTTPS dès que l'AC a son certificat `service_tls`, et les tâches planifiées. Granian n'est plus
   utilisé.
-- **Ports** : 8080 (HTTP) et 8443 (HTTPS) dans le conteneur, publiés par Docker, par exemple
-  `-p 127.0.0.1:80:8080 -p 127.0.0.1:443:8443`. Chacun peut être désactivé.
+- **Ports** : 8080 (HTTP) et 8443 (HTTPS) dans le conteneur, publiés par exemple par
+  `-p 127.0.0.1:8080:8080 -p 127.0.0.1:8443:8443`. Chacun peut être désactivé. En rootless, les ports hôte < 1024
+  demandent d'abaisser `net.ipv4.ip_unprivileged_port_start` (ou un redirecteur devant).
+- **Moteur** : Podman rootless (ADR-0016). Image construite avec `podman build --format docker` (sinon `HEALTHCHECK`
+  est perdu), `loginctl enable-linger` pour l'utilisateur qui fait tourner les conteneurs. Déploiement durable :
+  unités systemd Quadlet, à documenter en phase 7.
 - **Mode « à vide »** : avec HTTP et HTTPS désactivés, le conteneur ne sert rien sur le réseau ; les tâches
-  continuent et la CLI s'utilise par `docker exec`. Utile pour une racine hors ligne.
-- **Santé** : `HEALTHCHECK` Docker par `h42pki healthcheck` (indépendant des ports : la base répond et le battement
+  continuent et la CLI s'utilise par `podman exec`. Utile pour une racine hors ligne.
+- **Santé** : `HEALTHCHECK` de l'image (format docker) par `h42pki healthcheck` (indépendant des ports : la base répond et le battement
   du lanceur a moins de 60 s) ; `GET /health` sur chaque listener actif pour la supervision et la future interface
   web. Le battement est un petit fichier du dossier temporaire (`h42pki-<empreinte de l'URL de la base>.heartbeat`),
-  écrit toutes les 10 s et supprimé à l'arrêt : pas d'écriture en base toutes les 10 s, et `docker exec … h42pki
+  écrit toutes les 10 s et supprimé à l'arrêt : pas d'écriture en base toutes les 10 s, et `podman exec … h42pki
   healthcheck` retrouve le même fichier parce qu'il lit les mêmes variables.
 - **Arrêt** : SIGTERM / SIGINT arrêtent proprement les deux listeners (chaque connexion ouverte a 5 s pour se
   terminer) et les tâches.
@@ -640,13 +645,13 @@ développement : scénario rejoué hors conteneur).
   modification du paquet.
 - **Exemple** :
   ```bash
-  docker run -d --name pki-int \
-    -e H42_PKI_CA_PASSPHRASE_FILE=/run/secrets/ca_passphrase \
+  podman secret create h42_pki_ca_passphrase ./passphrase.txt
+  podman run -d --name pki-int --secret h42_pki_ca_passphrase \
     -e H42_PKI_SERVER_HOSTNAME=pki-int.home42.lan \
     -e H42_PKI_SERVER_ALT_NAMES=pki-int \
-    -v pki-int-data:/data -p 127.0.0.1:80:8080 -p 127.0.0.1:443:8443 gilles67/h42-pki
+    -v pki-int-data:/data -p 127.0.0.1:8080:8080 -p 127.0.0.1:8443:8443 gilles67/h42-pki
   ```
-- **`deploy/compose.yaml`** (phase 2, avec `bootstrap.sh`) : racine + intermédiaire + émettrice, chacune avec le nom de son service
+- **`deploy/compose.yaml`** (phase 2, avec `bootstrap.sh`, `podman-compose` par défaut) : racine + intermédiaire + émettrice, chacune avec le nom de son service
   dans `H42_PKI_SERVER_ALT_NAMES` pour que les conteneurs se joignent en HTTPS. Plus de reverse-proxy obligatoire ;
   un exemple avec proxy (`H42_PKI_TRUSTED_PROXIES`) pourra être fourni.
 - **Sauvegarde** : un fichier (la base SQLite) et la passphrase. La perte de la passphrase rend les clés

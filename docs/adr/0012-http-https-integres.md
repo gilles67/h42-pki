@@ -44,10 +44,10 @@ client à l'application. Une expérience autonome a tranché la question (`docs/
   - **HTTPS** : tout, y compris les routes HTTP ci-dessus ; `/api/v1/*`, la fédération, EST et ACME y sont
     **exclusivement**.
 - **Mode « à vide »** : HTTP et HTTPS peuvent être désactivés tous les deux. Le lanceur tourne alors sans listener,
-  les tâches planifiées continuent et la CLI reste utilisable par `docker exec` (cas d'une racine hors ligne). Un
+  les tâches planifiées continuent et la CLI reste utilisable par `podman exec` (cas d'une racine hors ligne). Un
   message l'indique au démarrage.
 - **Santé du service** :
-  - `h42pki healthcheck`, indépendant de tout port, utilisé par le `HEALTHCHECK` Docker. Il vérifie la base et le
+  - `h42pki healthcheck`, indépendant de tout port, utilisé par le `HEALTHCHECK` de l'image. Il vérifie la base et le
     battement du lanceur (mis à jour régulièrement par le lanceur) ;
   - `GET /health` sur chaque listener actif, pour la future interface web : base, battement, statut de l'AC,
     listeners actifs, expiration du certificat HTTPS. Statuts seulement, jamais de secret ni de détail interne.

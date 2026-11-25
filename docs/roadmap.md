@@ -24,8 +24,7 @@ Les numéros `B…` renvoient à `docs/etat-des-lieux.md`.
 **Fait quand** : `uv run pytest` passe (même avec peu de tests), l'image se construit et `/health` répond.
 
 > État au lot 1 (2026-11-21) : `pytest`, `ruff`, `mypy` verts et `/health` vérifié sous uvicorn et Granian.
-> **La construction de l'image Docker et son état `healthy` restent à valider** (Docker indisponible sur le poste
-> de développement) : `docker build -t h42-pki:dev .` puis `docker run -e H42_PKI_CA_PASSPHRASE=… h42-pki:dev`.
+> Image et état `healthy` validés le 2026-11-25 sur Debian 13 / Podman 5.4.2 rootless (`deploy/smoke-test.sh`).
 
 ## Phase 1 — Noyau d'AC — ✅ terminée (2026-11-22)
 
@@ -87,15 +86,15 @@ s'appuiera sur ce socle : la fille joint la mère en HTTPS intégré.
 - ✅ **Tests** : scénarios U1 à U14 de `docs/spikes/2026-11-tls-launcher.md` sur le vrai lanceur
   (`tests/integration/server/`, vrais sockets), en plus des tests des réglages, de la CLI et de l'API.
 
-**Fait quand** : dans Docker, avec une base vide et `H42_PKI_SERVER_HOSTNAME` défini, `h42pki authority init`
+**Fait quand** : dans un conteneur, avec une base vide et `H42_PKI_SERVER_HOSTNAME` défini, `h42pki authority init`
 ouvre le HTTPS sans redémarrage ; `curl --cacert root.pem https://<hostname>:8443/health` répond ; l'API
 d'administration ne répond plus en HTTP ; un certificat client présenté est visible de l'application ; le
 renouvellement forcé du certificat HTTPS est pris à chaud ; le conteneur est `healthy` avec HTTP et HTTPS
 désactivés.
 
 > État au 2026-11-22 : tous ces points sont vérifiés par les tests et par un scénario manuel **hors conteneur**
-> (Windows), Docker n'étant pas disponible sur le poste de développement. **Restent à valider dans Docker** :
-> l'image elle-même (`docker build`), l'état `healthy` du conteneur, avec et sans listener.
+> (Windows). **Validé en conteneur le 2026-11-25** sur Debian 13 / Podman 5.4.2 rootless : image, état `healthy`
+> avec et sans listener, HTTPS ouvert par `authority init` (`deploy/smoke-test.sh`).
 
 **Reporté** :
 - passage à chaud du mTLS facultatif à obligatoire et ajout d'une ancre de confiance client **sans** redémarrer le
@@ -115,12 +114,13 @@ désactivés.
 - ✅ `deploy/compose.yaml`, `deploy/bootstrap.sh`, `deploy/smoke-test.sh`.
 - ✅ Nom d'AC contrôlé à toute création (B37).
 
-**Fait quand** : la hiérarchie à trois niveaux se monte par `docker compose up` + deux invitations, et un certificat
+**Fait quand** : la hiérarchie à trois niveaux se monte par `podman-compose up` + deux invitations, et un certificat
 de l'émettrice se vérifie jusqu'à la racine.
 
 > État au 2026-11-25 : vérifié par les tests (mères réelles en sous-processus, HTTPS) et en exécutant `bootstrap.sh` avec
-> un substitut de `docker` qui lance des `h42pki serve` locaux. **Restent à lancer dans Docker** : `deploy/smoke-test.sh`
-> (phase 1.1) et `deploy/bootstrap.sh`.
+> un substitut de `docker` qui lance des `h42pki serve` locaux. **Validé en conteneur le 2026-11-25** sur
+> Debian 13 / Podman 5.4.2 / podman-compose 1.3.0 : `deploy/bootstrap.sh --fresh` aboutit (`leaf.pem: OK`), une fois
+> `up --wait` remplacé par une attente explicite (correctif de script à faire, ADR-0016).
 
 **Reporté en phase 3** : contrôle par la fille de son propre statut (OCSP de la mère), effet visible de la révocation
 d'une AC fille, publication d'une racine arrêtée (décision ouverte n° 1). **Non planifié** : NameConstraints, mode

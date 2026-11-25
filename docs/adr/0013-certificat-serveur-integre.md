@@ -45,7 +45,7 @@ de devoir fournir un certificat de l'extérieur à certains conteneurs et garde 
 
 - Tout client qui fait confiance à la racine de la hiérarchie valide le HTTPS de n'importe quel conteneur, ce qui
   sert directement la fédération (une fille vérifie sa mère).
-- Le nom sous lequel les autres conteneurs joignent celui-ci (par exemple le nom du service `docker compose`) doit
+- Le nom sous lequel les autres conteneurs joignent celui-ci (par exemple le nom du service dans `deploy/compose.yaml`) doit
   figurer dans `H42_PKI_SERVER_ALT_NAMES`, sinon la vérification TLS échoue entre conteneurs.
 - C'est la première tâche planifiée du projet (`tasks/`), avant celles des CRL.
 

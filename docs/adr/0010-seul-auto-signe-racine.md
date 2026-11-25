@@ -27,7 +27,7 @@ de création de certificats, hors profils et hors `Authority`.
 - **Garder l'auto-signature par API** pour les tests ou des usages ponctuels : un certificat d'entité finale
   auto-signé n'a pas d'usage dans ce projet, et une racine créée hors `Authority` ne pourrait rien émettre.
 - **Initialiser la racine par API** : sans authentification (ADR-0008), n'importe qui pourrait créer l'AC d'un
-  conteneur vierge. La CLI (`docker exec`) suppose un accès à l'hôte.
+  conteneur vierge. La CLI (`podman exec` ou `docker exec`) suppose un accès à l'hôte.
 
 ## Conséquences
 

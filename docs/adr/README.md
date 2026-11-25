@@ -17,5 +17,6 @@
 | [0013](0013-certificat-serveur-integre.md) | Certificat du serveur HTTPS émis par l'AC locale | accepté |
 | [0014](0014-python-3-13.md) | Passage à Python 3.13 | accepté |
 | [0015](0015-federation-invitations.md) | Fédération : invitations, épinglage et approbation | accepté |
+| [0016](0016-podman-moteur-de-reference.md) | Podman, moteur de conteneurs de référence | accepté |
 
 Nouvelle décision : copier `0000-template.md`, numéro suivant, mettre à jour ce tableau.

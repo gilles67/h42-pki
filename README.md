@@ -30,12 +30,12 @@ the CA issues and renews the certificate of its own HTTPS server
 > [!WARNING]
 > **Early development, not for production use.**
 > The admin API has **no authentication** until the first release ([ADR-0008](docs/adr/0008-api-admin-sans-authentification.md)):
-> only expose it on `127.0.0.1` or on an internal Docker network. The database schema can change without migrations
+> only expose it on `127.0.0.1` or on an internal container network. The database schema can change without migrations
 > ([ADR-0007](docs/adr/0007-pas-de-migration-avant-release.md)): do not store a real CA in it.
 
 ## Quick start
 
-Requirements: [uv](https://docs.astral.sh/uv/) (and Docker for the container image).
+Requirements: [uv](https://docs.astral.sh/uv/) (and [Podman](https://podman.io/), or Docker, for the container image).
 
 ```bash
 uv sync --all-groups                               # install dependencies (runtime + dev)
@@ -88,24 +88,30 @@ curl -s -o chain.pem http://127.0.0.1:8080/ca/chain.pem   # CA chain, root inclu
 openssl verify -CAfile chain.pem leaf.pem
 ```
 
-### Docker
+### Container (Podman)
+
+Podman (rootless) is the reference container engine; Docker works the same way (`docker` instead of `podman`).
 
 ```bash
-make docker-build
-docker run -d --name h42pki \
+make image                       # podman build --format docker (keeps the HEALTHCHECK)
+podman run -d --name h42pki \
   -e H42_PKI_CA_PASSPHRASE='change-me' \
   -e H42_PKI_SERVER_HOSTNAME=pki.home42.lan \
   -e H42_PKI_SERVER_ALT_NAMES=localhost,127.0.0.1 \
-  -v h42pki-data:/data -p 127.0.0.1:80:8080 -p 127.0.0.1:443:8443 \
+  -v h42pki-data:/data -p 127.0.0.1:8080:8080 -p 127.0.0.1:8443:8443 \
   gilles67/h42-pki:latest
-docker exec h42pki h42pki authority init --name home42-root --common-name "Home42 Root CA"
-docker exec h42pki h42pki authority export > root.pem
-curl --cacert root.pem https://localhost/health
+podman exec h42pki h42pki authority init --name home42-root --common-name "Home42 Root CA"
+podman exec h42pki h42pki authority export > root.pem
+curl --cacert root.pem https://localhost:8443/health
 ```
+
+Rootless Podman cannot publish ports below 1024 by default: keep 8080/8443 on the host, or lower
+`net.ipv4.ip_unprivileged_port_start`. Run `loginctl enable-linger $USER` so that containers survive the end of
+your session.
 
 The container is `healthy` when the database answers and the launcher is alive (`h42pki healthcheck`, independent of
 the ports). With `H42_PKI_HTTP_ENABLED=false` and `H42_PKI_HTTPS_ENABLED=false` it serves nothing on the network
-(idle mode, for example an offline root) and stays usable through `docker exec`.
+(idle mode, for example an offline root) and stays usable through `podman exec`.
 
 The admin API has no authentication yet: keep the ports on `127.0.0.1` or on an internal network.
 
@@ -125,12 +131,12 @@ h42pki request list --status pending
 h42pki request approve <id>
 ```
 
-[`deploy/`](deploy/README.md) builds a root → intermediate → issuing hierarchy with `docker compose`.
+[`deploy/`](deploy/README.md) builds a root → intermediate → issuing hierarchy with `podman-compose` (or Docker Compose).
 
 ### Configuration
 
 A fixed list of environment variables, read at start-up; each secret can also be given as a file, either with
-`H42_PKI_<NAME>_FILE` or as a Docker secret in `/run/secrets/h42_pki_<name>` (directory configurable with
+`H42_PKI_<NAME>_FILE` or as a container secret (Podman or Docker) in `/run/secrets/h42_pki_<name>` (directory configurable with
 `H42_PKI_SECRETS_DIR`):
 
 | Variable | Default | Description |
@@ -172,10 +178,10 @@ CI (GitHub Actions) runs lint and type checking on Python 3.13, tests on Python 
 
 | Phase | Content | Status |
 |---|---|---|
-| 0 | Clean-up: installable package, settings, tooling, tests, Docker image, CI | ✅ done |
+| 0 | Clean-up: installable package, settings, tooling, tests, container image, CI | ✅ done |
 | 1 | CA core: key store, certificate profiles, single issuance path, data model, admin API, CLI, AIA publication | ✅ done |
 | 1.1 | Operations base: Python 3.13, configuration in the database, built-in HTTP/HTTPS launcher, self-issued HTTPS certificate, health check | ✅ done |
-| 2 | Hierarchy: subordinate CA enrolment with its parent (federation), multi-level `docker compose` | ✅ done |
+| 2 | Hierarchy: subordinate CA enrolment with its parent (federation), multi-level compose (`podman-compose`) | ✅ done |
 | 3 | Revocation: CRL (full/delta) and OCSP responder | 🚧 next |
 | 4 | EST enrolment (RFC 7030) | ⏳ |
 | 5 | SCEP enrolment (RFC 8894) | ⏳ |

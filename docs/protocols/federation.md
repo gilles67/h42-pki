@@ -57,7 +57,7 @@ sequenceDiagram
 
 `status` d'une inscription : `pending`, `issued`, `rejected`, `failed` (émission impossible après approbation).
 Les décisions passent par `/api/v1/requests/{id}/approve|reject` ; une demande expose `invitation_id` et `child_name`.
-`parent_url` est indicative : le port publié par Docker peut différer.
+`parent_url` est indicative : le port publié par le moteur de conteneurs peut différer.
 Raisons de révocation : `unspecified`, `key_compromise`, `ca_compromise`, `affiliation_changed`, `superseded`,
 `cessation_of_operation`.
 
@@ -123,4 +123,4 @@ Tortoise est global au processus : une mère et une fille ne peuvent pas avoir c
 - `tests/integration/test_subordinate.py` : la fille face à une mère simulée (réponses perdues, incohérentes, attente).
 - `tests/integration/server/test_federation.py` : **mère réelle en sous-processus, en HTTPS**, pilotée par son API ;
   trois niveaux, avec une intermédiaire comme ancre épinglée.
-- `tests/interop/test_compose.py` : `deploy/bootstrap.sh` (Docker).
+- `tests/interop/test_compose.py` : `deploy/bootstrap.sh` (Podman par défaut, ADR-0016).

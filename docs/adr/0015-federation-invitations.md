@@ -58,7 +58,7 @@ Choisie **par invitation** (`auto_approve`, faux par défaut), et non par le pro
 Tant que l'API n'est pas authentifiée (ADR-0008), **quiconque atteint le port HTTPS peut créer une invitation
 auto-approuvée, donc une AC fille**, capable d'émettre des certificats acceptés par tous ceux qui font confiance à la
 racine. Les mesures compensatoires de l'ADR-0008 s'appliquent donc pleinement : port publié sur `127.0.0.1` ou réseau
-Docker interne, aucune vraie AC. L'authentification reste un prérequis bloquant de la release.
+de conteneurs interne, aucune vraie AC. L'authentification reste un prérequis bloquant de la release.
 
 ## Alternatives considérées
 

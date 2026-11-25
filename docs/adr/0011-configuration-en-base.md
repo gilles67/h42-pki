@@ -10,7 +10,7 @@ configuration éparpillée entre un fichier TOML, des variables d'environnement 
 la restauration et la future interface web d'administration.
 
 Certains réglages doivent pourtant être connus **avant** d'ouvrir la base, ou concernent l'environnement d'exécution
-du conteneur (ports publiés par Docker, nom d'hôte) plutôt que l'AC elle-même.
+du conteneur (ports publiés par le moteur de conteneurs, nom d'hôte) plutôt que l'AC elle-même.
 
 ## Décision
 
@@ -19,7 +19,7 @@ du conteneur (ports publiés par Docker, nom d'hôte) plutôt que l'AC elle-mêm
 | Variable | Défaut | Obligatoire | Rôle |
 |---|---|---|---|
 | `H42_PKI_DATABASE_URL` | `sqlite:///data/h42pki.sqlite3` | non | Connexion à la base |
-| `H42_PKI_CA_PASSPHRASE` (ou `_FILE`, ou secret Docker) | — | **oui**, pour le serveur et les commandes qui utilisent une clé | Chiffrement des clés privées |
+| `H42_PKI_CA_PASSPHRASE` (ou `_FILE`, ou secret de conteneur) | — | **oui**, pour le serveur et les commandes qui utilisent une clé | Chiffrement des clés privées |
 | `H42_PKI_SERVER_HOSTNAME` | — | **oui**, pour le serveur | FQDN du service : CN et premier SAN du certificat HTTPS intégré (ADR-0013) |
 | `H42_PKI_SERVER_ALT_NAMES` | vide | non | Noms supplémentaires du certificat HTTPS : DNS (noms courts admis) et IP, séparés par des virgules |
 | `H42_PKI_ENVIRONMENT` | `production` | non | `dev`, `test` ou `production` |
@@ -68,7 +68,7 @@ Les commandes de la CLI qui n'utilisent ni clé ni serveur ne demandent ni passp
 
 - **Fichier TOML** (prévu dans la v1 de l'architecture) : lisible, mais un second fichier à sauvegarder et à garder
   cohérent avec la base, et non modifiable par une future interface web.
-- **Tout en variables d'environnement** : simple dans Docker, mais chaque changement impose de recréer le conteneur,
+- **Tout en variables d'environnement** : simple dans un conteneur, mais chaque changement impose de recréer le conteneur,
   et les réglages de l'AC ne voyagent pas avec sa sauvegarde.
 
 ## Conséquences
@@ -76,7 +76,7 @@ Les commandes de la CLI qui n'utilisent ni clé ni serveur ne demandent ni passp
 - Sauvegarde et restauration d'une AC = un fichier (SQLite) + la passphrase.
 - Le §7 de l'architecture est réécrit ; `H42_PKI_CONFIG` et le fichier TOML disparaissent.
 - Changer un port ou un nom d'hôte impose de recréer le conteneur, ce qui va de pair avec la publication des ports
-  par Docker.
+  par le moteur de conteneurs.
 - Comme le schéma de base (ADR-0007), le schéma des réglages évolue sans migration jusqu'à la première release.
 
 ## Mise en œuvre (phase 1.1, 2026-11-22)

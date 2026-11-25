@@ -26,7 +26,7 @@ réelles : aucune AC de production n'existe avant la première release (ADR-0007
 ## Mesures compensatoires (obligatoires tant que la décision est en vigueur)
 
 - `h42pki serve` écoute par défaut sur `127.0.0.1`.
-- Le port du conteneur n'est publié qu'en local (`-p 127.0.0.1:80:8080 -p 127.0.0.1:443:8443`) ou sur un réseau Docker interne, jamais sur
+- Le port du conteneur n'est publié qu'en local (`-p 127.0.0.1:80:8080 -p 127.0.0.1:443:8443`) ou sur un réseau de conteneurs interne, jamais sur
   une interface accessible depuis le LAN ou Internet.
 - Aucune vraie AC (clé racine de production) n'est créée avec une version sans authentification.
 
