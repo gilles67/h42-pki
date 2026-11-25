@@ -59,8 +59,8 @@ async def health(request: Request, response: Response) -> Health:
     database = await _database_ok()
     authority = "unknown"
     if database:
-        local = await AuthorityService().find_local()
-        authority = local.status.value if local is not None else "none"
+        local = await AuthorityService.local_status()
+        authority = local.value if local is not None else "none"
 
     age: float | None = None
     listeners: list[str] = []

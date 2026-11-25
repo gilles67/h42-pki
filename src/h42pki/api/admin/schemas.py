@@ -130,9 +130,18 @@ def certificate_pem(der: bytes) -> bytes:
 # --- authority ------------------------------------------------------------------------------
 
 
+class ParentOut(Schema):
+    name: str = Field(description="Local name: certificates do not carry CA names.")
+    subject_dn: str
+    sha256_fingerprint: str
+    url: str | None = Field(description="Where this CA enrolled.")
+
+
 class AuthorityOut(Schema):
     name: str
     status: AuthorityStatus
+    mode: Literal["root", "subordinate"]
+    parent: ParentOut | None
     certificate_id: UUID
     subject_dn: str
     sha256_fingerprint: str
@@ -144,11 +153,21 @@ class AuthorityOut(Schema):
 
     @classmethod
     def from_model(cls, authority: Authority, certificate: Certificate) -> "AuthorityOut":
-        """``authority.private_key`` must be prefetched."""
-        assert authority.private_key is not None  # noqa: S101 - set by init_root
+        """``authority.private_key`` and ``parent__certificate`` must be prefetched."""
+        assert authority.private_key is not None  # noqa: S101 - set at creation
+        parent = authority.parent
         return cls(
             name=authority.name,
             status=authority.status,
+            mode="root" if parent is None else "subordinate",
+            parent=ParentOut(
+                name=parent.name,
+                subject_dn=parent.certificate.subject_dn,
+                sha256_fingerprint=parent.certificate.sha256_fingerprint,
+                url=parent.federation_url,
+            )
+            if parent is not None
+            else None,
             certificate_id=certificate.id,
             subject_dn=certificate.subject_dn,
             sha256_fingerprint=certificate.sha256_fingerprint,

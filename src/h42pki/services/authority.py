@@ -68,7 +68,9 @@ class AuthorityService:
             .exclude(status=AuthorityStatus.RETIRED)
             .exists()
         ):
-            raise Conflict("a local certificate authority already exists")
+            raise Conflict(
+                "a local certificate authority already exists (see `h42pki authority status`)"
+            )
         if await Authority.exists(name=name):
             raise Conflict(f"an authority named {name!r} already exists")
 
@@ -128,7 +130,7 @@ class AuthorityService:
                     "sha256_fingerprint": fields["sha256_fingerprint"],
                 },
             )
-        return authority
+        return await self.get_local()
 
     async def update_public_base_url(
         self, public_base_url: str | None, *, actor: str
@@ -159,9 +161,22 @@ class AuthorityService:
         """The active local CA, if any (certificate and key prefetched)."""
         return (
             await Authority.filter(kind=AuthorityKind.LOCAL, status=AuthorityStatus.ACTIVE)
-            .prefetch_related("certificate", "private_key")
+            .prefetch_related("certificate", "private_key", "parent__certificate")
             .first()
         )
+
+    @staticmethod
+    async def local_status() -> AuthorityStatus | None:
+        """Status of the current local CA, waiting for its certificate or not."""
+        authority = (
+            await Authority.filter(
+                kind=AuthorityKind.LOCAL,
+                status__in=[AuthorityStatus.ACTIVE, AuthorityStatus.PENDING_SIGNATURE],
+            )
+            .order_by("status")  # active first
+            .first()
+        )
+        return authority.status if authority is not None else None
 
     async def get_local(self) -> Authority:
         authority = await self.find_local()
