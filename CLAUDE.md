@@ -28,11 +28,11 @@ Granian.
 
 ## 2. État actuel du code (important)
 
-**Phases 1 et 1.1 terminées** : outillage, sécurité, modèle de données, API `/api/v1`, AC racine par CLI, profils,
+**Phases 1, 1.1 et 2 terminées** : outillage, sécurité, modèle de données, API `/api/v1`, AC racine par CLI, profils,
 demandes, émission depuis un CSR, publication `/ca/*` et AIA caIssuers, liste des certificats (phase 1) ; Python 3.13,
 configuration en base, profils désactivables, lanceur HTTP/HTTPS intégré, certificat HTTPS émis par l'AC locale, santé
-(phase 1.1). Le code suit la structure en couches cible ; ce qui n'existe pas encore est marqué « à venir » au §3.
-**Prochaine étape : phase 2 (fédération).**
+(phase 1.1) ; fédération : invitations, inscription d'une AC fille, chaîne complète (phase 2). Le code suit la structure en couches cible ; ce qui n'existe pas encore est marqué « à venir » au §3.
+**Prochaine étape : phase 3 (révocation : CRL et OCSP).**
 
 **Décisions du 2026-11-22, en place depuis la phase 1.1** — à respecter :
 - **Configuration en base** (ADR-0011) : hors de la base, seulement une **liste fermée** de variables d'environnement
@@ -51,6 +51,9 @@ configuration en base, profils désactivables, lanceur HTTP/HTTPS intégré, cer
 - **Profils désactivables** (`issuance.disabled_profiles`, complément de l'ADR-0009) : tous actifs par défaut, sur
   toute AC.
 - **Python 3.13** (ADR-0014).
+- **Fédération** (ADR-0015, 2026-11-25) : invitation à usage unique (jeton montré une fois, SHA-256 stocké, jamais
+  journalisé ni stocké côté fille), approbation par invitation, épinglage de l'AC mère, inscription =
+  `CertificateRequest` (`sub_ca`, canal `federation`). Le préfixe du jeton n'apparaît que dans `core/federation.py`.
 
 - **Socle** : `config.py` (`Settings`, variables `H42_PKI_*`, `H42_PKI_*_FILE`, secrets Docker dans `/run/secrets`
   ou `H42_PKI_SECRETS_DIR`, contrôle des permissions des fichiers de secrets), `db.py` (config Tortoise), `main.py`
@@ -68,18 +71,19 @@ configuration en base, profils désactivables, lanceur HTTP/HTTPS intégré, cer
   interne `service_tls`), `csr.py` (`parse_csr`, `build_csr`), `issuance.py` (`build_self_signed` pour la racine, `plan_issuance` / `build_issued` pour le reste,
   AIA caIssuers), `publication.py` (`public_base_url`, noms d'AC, URL caIssuers), `inspection.py` (SAN et AIA relus
   depuis le DER), `hostnames.py` (FQDN, noms supplémentaires, CIDR), `settings_schema.py` (`RuntimeSettings`, niveaux
-  d'application), `service_tls.py` (quand réémettre le certificat HTTPS), `validity.py`, `serial.py`, `errors.py`.
+  d'application), `service_tls.py` (quand réémettre le certificat HTTPS), `federation.py` (jeton, contraintes d'une AC
+  fille), `chain.py` (épinglage, chaîne, certificat d'AC reçu), `validity.py`, `serial.py`, `errors.py`.
 - **`keystore/`** : `KeyStore` (protocole : `generate`, `load`, `export_encrypted` pour la clé TLS), `SoftwareKeyStore` (seul détenteur de la
   passphrase), `get_keystore(settings)`. Seul `keystore` appelle les fonctions de (dé)chiffrement de `core.keys`.
 - **`services/`** : `AuthorityService` (`init_root`, AC locale), `IssuanceService` (`submit` → `auto_approve` ou
   `approve` / `reject` → `_issue`, **seul chemin d'émission**, y compris `issue_service_certificate`), `ProfileService`
   (synchronisation des profils intégrés, lecture, activation), `SettingsService` / `SettingsWatcher` (réglages en
-  base, relecture par révision), `TlsServiceManager` (certificat `service_tls`), `PublicationService` (certificats publiés, chaîne), `KeyService`, `CertificateService`
+  base, relecture par révision), `FederationService` (mère), `SubordinateService` et `federation_client` (fille), `TlsServiceManager` (certificat `service_tls`), `PublicationService` (certificats publiés, chaîne), `KeyService`, `CertificateService`
   (lecture, recherche paginée, chaîne, statut effectif). Transactions, audit, crypto via `asyncio.to_thread` ; le
   keystore est passé explicitement et n'est construit que pour les opérations sur une clé (passphrase facultative
   ailleurs, B32).
 - **Modèles** `models/` (un fichier par agrégat : `private_key` (`purpose` `ca|tls`), `authority`, `profile`,
-  `certificate`, `request` (canal `system`), `audit`, `setting` (`Setting`, `SettingsRevision`), base
+  `certificate`, `request` (canal `system`), `audit`, `setting` (`Setting`, `SettingsRevision`), `federation` (`FederationInvitation`), base
   `TimestampedModel`) : FK sans cycle (B27), stockage DER, `AuditLog.record()`. Un certificat est
   toujours enregistré signé.
 - **API** : `api/admin/` (`routes.py`, `schemas.py` écrits à la main, `extra="forbid"`, `deps.py` : keystore,
@@ -87,8 +91,10 @@ configuration en base, profils désactivables, lanceur HTTP/HTTPS intégré, cer
   `application/problem+json`, schéma `Problem` déclaré dans l'OpenAPI), `api/public/` (`/ca/{name}.crt|.pem`,
   `/ca/chain.pem` en HTTP, cache `ETag` / 304 partagé dans `cache.py`, aucune clé touchée ; `/favicon.ico`, fichier
   de `static/` lu une fois par `assets.py`), `api/health.py` (`GET /`, `GET /health`),
-  `api/listener.py` (routes publiques seules en HTTP), `api/client_cert.py` (certificat client d'une requête).
-- **CLI** `cli/` : `version`, `serve` (lanceur, `--reload`), `healthcheck`, `authority init|status|export|update`,
+  `api/listener.py` (routes publiques seules en HTTP), `api/client_cert.py` (certificat client d'une requête),
+  `api/federation/` (invitations, `enroll`, AC filles ; HTTPS seulement).
+- **CLI** `cli/` : `version`, `serve` (lanceur, `--reload`), `healthcheck`, `authority init|status|export|update|abandon`,
+  `request list|show|approve|reject`, `federation invite|invitations|revoke-invitation|children|revoke-child`,
   `profile list|show|enable|disable`, `certificate list|export`, `config show|get|set|unset` ; `_runtime.py`
   ouvre la même base que le serveur et transforme les erreurs en message
   lisible (code de sortie non nul).
@@ -116,21 +122,24 @@ src/h42pki/
   errors.py          # erreurs métier typées (NotFound, Conflict, Unprocessable, InvalidRequest)
   core/              # DOMAINE CRYPTO PUR : synchrone, sans I/O, sans ORM, sans FastAPI
     keys.py  names.py  extensions.py  profiles.py  csr.py  issuance.py  publication.py  inspection.py
-    hostnames.py  settings_schema.py  service_tls.py  validity.py  serial.py  errors.py      — en place
-    crl.py  ocsp.py  cms.py  chain.py                                           — à venir
+    hostnames.py  settings_schema.py  service_tls.py  federation.py  chain.py  validity.py  serial.py
+    errors.py                                                                   — en place
+    crl.py  ocsp.py  cms.py                                           — à venir
   keystore/          # base.py (KeyStore), software.py — en place ; pkcs11.py en phase 7
-  models/            # private_key, authority, profile, certificate, request, audit, setting — en place
+  models/            # private_key, authority, profile, certificate, request, audit, setting, federation — en place
   services/          # authority, issuance, profiles, publication, keys, certificates, settings, tls_service,
-                     # x509_fields — en place ;
-                     # revocation, crl, ocsp, federation à venir
+                     # federation, federation_client, subordinate, x509_fields — en place ;
+                     # revocation, crl, ocsp à venir
   api/
     problems.py      # handlers application/problem+json (RFC 9457)        — en place
     listener.py  client_cert.py  health.py                                  — en place
     admin/           # /api/v1/... (routes, schemas, deps ; sans auth jusqu'à la release, ADR-0008) — en place
     public/          # /ca/* (HTTP public, AIA caIssuers, chaîne), /favicon.ico — en place ; /crl/* en phase 3
-    ocsp/  est/  scep/  acme/  federation/
+    federation/      # /api/v1/federation — en place
+    ocsp/  est/  scep/  acme/
   tasks/             # tâches périodiques : tls_service (certificat HTTPS) — en place ; CRL, purges, expirations à venir
-  cli/               # Typer : authority, profile, certificate, config, healthcheck, serve — en place
+  cli/               # Typer : authority, profile, certificate, request, federation, config, healthcheck, serve
+deploy/              # compose.yaml (3 niveaux), bootstrap.sh, smoke-test.sh
 tests/
   unit/  integration/  interop/  conftest.py
 docs/
@@ -160,7 +169,7 @@ uv run h42pki config show                 # réglages en base ; `config set KEY 
 uv run h42pki --help                      # CLI
 uv run h42pki authority init --name root --common-name "Test Root CA"   # AC racine locale (base data/)
 docker build -t h42-pki:dev .            # image (non-root, /data, `h42pki serve`, ports 8080 et 8443)
-docker compose -f deploy/compose.yaml up  # hiérarchie racine + intermédiaire + émettrice (phase 2)
+deploy/bootstrap.sh                      # hiérarchie racine + intermédiaire + émettrice (Docker)
 ```
 
 Avant de déclarer une tâche terminée : `ruff check`, `ruff format --check`, `mypy src` et `pytest` passent.

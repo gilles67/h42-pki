@@ -96,7 +96,7 @@ docker run -d --name h42pki \
   -e H42_PKI_CA_PASSPHRASE='change-me' \
   -e H42_PKI_SERVER_HOSTNAME=pki.home42.lan \
   -e H42_PKI_SERVER_ALT_NAMES=localhost,127.0.0.1 \
-  -v h42pki-data:/data -p 80:8080 -p 443:8443 \
+  -v h42pki-data:/data -p 127.0.0.1:80:8080 -p 127.0.0.1:443:8443 \
   gilles67/h42-pki:latest
 docker exec h42pki h42pki authority init --name home42-root --common-name "Home42 Root CA"
 docker exec h42pki h42pki authority export > root.pem
@@ -106,6 +106,26 @@ curl --cacert root.pem https://localhost/health
 The container is `healthy` when the database answers and the launcher is alive (`h42pki healthcheck`, independent of
 the ports). With `H42_PKI_HTTP_ENABLED=false` and `H42_PKI_HTTPS_ENABLED=false` it serves nothing on the network
 (idle mode, for example an offline root) and stays usable through `docker exec`.
+
+The admin API has no authentication yet: keep the ports on `127.0.0.1` or on an internal network.
+
+### Hierarchy
+
+A container becomes the child of another one with a **single-use invitation**: the child pins the fingerprint of the
+parent CA, then enrols over HTTPS ([ADR-0015](docs/adr/0015-federation-invitations.md)).
+
+```bash
+# On the parent: prints the token (once, on stdout), the fingerprint and the command to run
+h42pki federation invite --path-length 0
+# On the child: the token is read on standard input and never stored
+h42pki authority init --name issuing --common-name "Issuing CA" \
+  --parent-url https://root.pki.test:8443 --parent-fingerprint <sha256> --token -
+# On the parent, unless the invitation was created with --auto-approve
+h42pki request list --status pending
+h42pki request approve <id>
+```
+
+[`deploy/`](deploy/README.md) builds a root → intermediate → issuing hierarchy with `docker compose`.
 
 ### Configuration
 
@@ -155,8 +175,8 @@ CI (GitHub Actions) runs lint and type checking on Python 3.13, tests on Python 
 | 0 | Clean-up: installable package, settings, tooling, tests, Docker image, CI | ✅ done |
 | 1 | CA core: key store, certificate profiles, single issuance path, data model, admin API, CLI, AIA publication | ✅ done |
 | 1.1 | Operations base: Python 3.13, configuration in the database, built-in HTTP/HTTPS launcher, self-issued HTTPS certificate, health check | ✅ done |
-| 2 | Hierarchy: subordinate CA enrolment with its parent (federation), multi-level `docker compose` | 🚧 next |
-| 3 | Revocation: CRL (full/delta) and OCSP responder | ⏳ |
+| 2 | Hierarchy: subordinate CA enrolment with its parent (federation), multi-level `docker compose` | ✅ done |
+| 3 | Revocation: CRL (full/delta) and OCSP responder | 🚧 next |
 | 4 | EST enrolment (RFC 7030) | ⏳ |
 | 5 | SCEP enrolment (RFC 8894) | ⏳ |
 | 6 | ACME (RFC 8555): http-01, dns-01, then tls-alpn-01, EAB, renewal info | ⏳ |

@@ -141,9 +141,9 @@ stateDiagram-v2
 **Initialisation (lot 5a).** Le mode est choisi une fois pour toutes par la commande `h42pki authority init`, et non
 par un réglage (précision apportée à l'ADR-0001). Mode `root` : nouvelle clé, certificat de la racine
 (`--validity-days`, 3650 jours par défaut, de 1 à 10950 ; `--path-length` optionnel), `Authority(kind=local,
-status=active)` (ADR-0010). Une seule AC locale non `retired` par conteneur. Les modes `subordinate` et `external`
-arrivent avec la fédération (phase 2) : URL de la mère, invitation et empreinte sont passées à la commande, et
-l'invitation n'est jamais stockée (ADR-0011).
+status=active)` (ADR-0010). Une seule AC locale non `retired` par conteneur. Mode `subordinate` (phase 2) : URL de la mère, jeton et empreinte sont passés à la commande
+(`--parent-url`, `--token -`, `--parent-fingerprint`) ; le jeton n'est jamais stocké (ADR-0011, ADR-0015). Le mode
+`external` n'est pas implémenté.
 
 **Avant l'activation** : l'AC n'a pas encore de certificat HTTPS, donc le listener HTTPS n'est pas démarré. Seuls
 le listener HTTP (`/`, `/health`, publication) et la CLI sont disponibles ; `GET /health` indique `"https": "waiting"`.
@@ -164,6 +164,7 @@ erDiagram
     Profile ||--o{ Certificate : "appliqué à"
     CertificateRequest ||--o| Certificate : produit
     Profile ||--o{ CertificateRequest : ""
+    FederationInvitation |o--o| CertificateRequest : "donne droit à"
     Authority ||--o{ Crl : publie
     Certificate ||--o| PrivateKey : "clé détenue (OCSP, RA, serverkeygen)"
     EnrollmentCredential }o--|| Profile : "autorise"
@@ -211,7 +212,11 @@ inscrites dans les certificats). Le **certificat de l'AC** est l'inverse de `Cer
 (`authority.certificate`) : une FK `Authority.certificate` formerait un cycle avec `Certificate.issuer`, que Tortoise
 1.1.7 ne sait pas créer (B27). Un renouvellement de certificat d'AC passe donc par une nouvelle `Authority`, avec une
 nouvelle clé et un nouveau nom (cf. §8.3).
-*(plus tard)* : `federation_url` (pour `parent`/`child`), `name_constraints` (JSON).
+Fédération (ADR-0015) : `federation_url` et `pinned_fingerprint` sur la mère directe (`kind=parent`) ;
+`pending_enrollment_id` et `pending_csr_der` sur l'AC locale `pending_signature`, vidés à l'activation. La règle de
+nommage est contrôlée par `Authority.save()`, donc à toute création (B37). Les ascendants, dont le certificat ne porte
+pas de nom h42-pki, sont nommés `<slug du CN>-<12 hex de l'empreinte>`.
+*(plus tard)* : `name_constraints` (JSON).
 
 **`Profile`** — gabarit d'émission. Les profils **intégrés** sont définis dans `core/profiles.py`, écrits en base au
 démarrage et réalignés sur le code, en **lecture seule** (ADR-0009).
@@ -250,10 +255,11 @@ pour la racine), `channel` (`cli|api`), `serial_hex` (unique par émetteur), `su
 Le sujet structuré (JSON) et les extensions demandées ne sont plus stockés : ils se déduisent du DER, et les
 extensions viennent du profil.
 Le statut `expired` est calculé à la lecture depuis le lot 5b (B34) ; il n'est pas encore écrit en base.
+Canal `federation` : certificat d'une AC fille, certificat reçu de la mère et certificats des ascendants (ADR-0015).
 Canal `system` depuis la phase 1.1 : certificat du serveur HTTPS intégré, avec sa demande (`requester = system`) et
 sa clé (`private_key`, `purpose = tls`).
 *(plus tard)* : `sans` (colonne de recherche), `ski`, `aki`, statut `on_hold` et `expired` persistant (phase 3),
-canaux `est|scep|acme|federation`.
+canaux `est|scep|acme`.
 
 **`CertificateRequest`**
 Implémenté : `csr_der`, `profile` → `Profile`, `status` (`pending|issued|rejected|failed` : l'approbation émet
@@ -268,15 +274,21 @@ toutefois audité (`request.refuse`, avec le profil, la raison et l'empreinte SH
 `authority`, `crl_number` (entier monotone par AC), `is_delta`, `base_crl_number`, `this_update`, `next_update`, `der`.
 La CRL courante = la plus récente non expirée ; les anciennes sont conservées pour audit.
 
-**`EnrollmentCredential`** — secrets d'enrôlement partagés par EST/SCEP/fédération.
-`kind` (`est_basic|scep_challenge|federation_token|acme_eab`), `identifier`, `secret_hash` (argon2/scrypt ;
+**`FederationInvitation`** — invitation à usage unique d'une AC fille (ADR-0015). Implémenté : `label`, `secret_hash`
+(SHA-256 d'un secret de 256 bits), `path_length`, `validity_days`, `auto_approve`, `expires_at`, `status`
+(`active|used|revoked` ; `expired` calculé à la lecture), `created_by`, `used_at`, `request` → `CertificateRequest`
+(OneToOne, `RESTRICT`). Les contraintes et le nom de la fille sont recopiés dans `CertificateRequest.metadata`.
+
+**`EnrollmentCredential`** — secrets d'enrôlement partagés par EST, SCEP et ACME.
+`kind` (`est_basic|scep_challenge|acme_eab`), `identifier`, `secret_hash` (argon2/scrypt ;
 pour `acme_eab`, clé HMAC chiffrée car elle doit être relue), `profile`, `expires_at`, `max_uses`, `use_count`,
 `allowed_subjects` (motif).
 
 **`AuditLog`** — `timestamp`, `actor`, `action`, `object_type`, `object_id`, `details` (JSON, sans secret) ;
 `source_ip` *(plus tard)*. Actions enregistrées : `private_key.generate`, `private_key.delete`, `authority.init`,
 `authority.update`, `request.submit`, `request.refuse`, `request.approve`, `request.reject`, `request.fail`,
-`certificate.issue` (avec le canal), `profile.create`, `profile.realign`, `config.set` et `config.unset`, dans la
+`authority.activate`, `authority.abandon`, `certificate.issue` (avec le canal), `federation.invite`,
+`federation.invitation_revoke`, `federation.enroll`, `federation.child_revoke`, `profile.create`, `profile.realign`, `config.set` et `config.unset`, dans la
 même transaction que l'opération. Acteur : `anonymous` pour l'API jusqu'à l'authentification (ADR-0008), `cli` pour la
 ligne de commande, `system` pour la synchronisation des profils et les tâches planifiées (certificat HTTPS).
 
@@ -291,8 +303,7 @@ serveur le relit toutes les 5 secondes pour prendre en compte une écriture de l
 verrait pas un `unset`, qui supprime sa ligne).
 
 Tables spécifiques aux protocoles (détails dans `docs/protocols/`) :
-`ScepTransaction`, `AcmeAccount`, `AcmeOrder`, `AcmeAuthorization`, `AcmeChallenge`, `AcmeNonce`,
-`ChildAuthorityEnrollment` (fédération).
+`ScepTransaction`, `AcmeAccount`, `AcmeOrder`, `AcmeAuthorization`, `AcmeChallenge`, `AcmeNonce`.
 
 ### 4.3 Choix de persistance
 
@@ -315,7 +326,7 @@ privée pour qu'aucun appelant ne contourne l'approbation).
 
 ```mermaid
 sequenceDiagram
-    participant C as Canal (API ; EST/SCEP/ACME/Fédération plus tard)
+    participant C as Canal (API, fédération ; EST/SCEP/ACME plus tard)
     participant IS as IssuanceService
     participant CSR as core.csr
     participant B as core.issuance
@@ -355,14 +366,15 @@ n'existe pas.
 `RevocationService.revoke(cert, reason, invalidity_date)` → met à jour `Certificate`, journalise, puis
 **déclenche la régénération immédiate de la CRL** (et invalide le cache OCSP). Accessible via l'API d'admin,
 ACME `revokeCert`, et la fédération (révocation d'une AC fille par sa mère).
+Phase 2 : seule la révocation d'une AC fille existe (certificat et `Authority` marqués), sans CRL ni OCSP (phase 3).
 
 ### 5.3 Inscription d'une AC fille
 
-Voir `docs/protocols/federation.md`. Résumé : invitation à usage unique créée sur la mère →
-la fille génère clé + CSR et appelle `POST /api/v1/federation/enroll` → la mère applique le profil `sub_ca`
-(contrôle `pathLen`, NameConstraints) → approbation automatique ou manuelle → la fille récupère certificat + chaîne.
-Les échanges passent par le HTTPS intégré de la mère : la fille le valide par la chaîne de la hiérarchie **et** par
-l'empreinte de la mère communiquée avec l'invitation. Pas de mTLS entre conteneurs en v1 (ADR-0003).
+Implémenté en phase 2 : `docs/protocols/federation.md` et ADR-0015. Résumé : invitation à usage unique créée sur la mère →
+la fille épingle l'empreinte de l'AC mère, génère clé et CSR et appelle `POST /api/v1/federation/enroll` → la mère
+enregistre une `CertificateRequest` (`sub_ca`, canal `federation`) avec les contraintes de l'invitation (`pathLen`,
+validité) → approbation automatique ou manuelle, choisie par invitation → la fille contrôle le certificat reçu et devient
+`active`. HTTPS intégré de la mère, validé par la seule AC épinglée ; pas de mTLS entre conteneurs (ADR-0003).
 
 ### 5.4 Certificat du serveur HTTPS intégré
 
@@ -429,7 +441,7 @@ chaque requête ; un middleware ASGI (`api/listener.py`) laisse passer en HTTP `
 | `/scep[/{profile}]` (`pkiclient.exe` accepté) | oui | oui | challenge password | CMS (`application/x-pki-message`) — phase 5 |
 | `/.well-known/est/[{label}/]...` | **non** | oui | certificat client (mTLS facultatif) ou Basic | PKCS#10 / PKCS#7 base64 — phase 4 |
 | `/acme/...` | **non** | oui | JWS (RFC 8555) | `application/jose+json` — phase 6 |
-| `/api/v1/federation/...` | **non** | oui | invitation à usage unique | JSON — phase 2 |
+| `/api/v1/federation/...` | **non** | oui | `enroll` : jeton d'invitation ; le reste : aucune avant la release | JSON — **implémenté (phase 2)**, `docs/protocols/federation.md` §3 |
 | `/api/v1/...`, `/docs`, `/openapi.json` | **non** | oui | aucune avant la release (ADR-0008), puis jeton d'API (Bearer) | JSON |
 | `/metrics` | à définir | à définir | réseau privé | Prometheus — phase 7 |
 
@@ -446,7 +458,7 @@ routage (404 route inconnue, 405 méthode non permise, avec l'en-tête `Allow`) 
 | POST | `/api/v1/private-keys` `{algorithm}` | 201 `{id, algorithm, backend, public_key_pem, created_at}` |
 | GET | `/api/v1/private-keys/{id}` | 200, 404 |
 | DELETE | `/api/v1/private-keys/{id}` | 204, 404, 409 (clé utilisée par un certificat ou une AC) |
-| GET | `/api/v1/authority` | AC locale : `name`, `status`, `certificate_id`, `subject_dn`, `sha256_fingerprint`, dates, `path_length`, `key_algorithm`, `public_base_url` ; 404 si aucune |
+| GET | `/api/v1/authority` | AC locale : `name`, `status`, `mode` (`root` / `subordinate`), `parent` (nom, sujet, empreinte, URL), `certificate_id`, `subject_dn`, `sha256_fingerprint`, dates, `path_length`, `key_algorithm`, `public_base_url` ; 404 si aucune |
 | GET | `/api/v1/profiles` · `/api/v1/profiles/{name}` | profils (lecture seule ; 405 en écriture), avec `enabled` et `internal` |
 | GET | `/api/v1/config` | `{items: [{key, value, default, origin, level, listeners, description, updated_at, updated_by}]}` : réglages effectifs ; 405 en écriture, qui se fait par la CLI jusqu'à l'authentification (ADR-0011) |
 | POST | `/api/v1/requests` `{csr_pem, profile, validity_days?}` | 201, `status` = `issued` (avec `certificate_id`) ou `pending` ; 422 si le profil refuse la demande, est désactivé ou interne ; 503 sans AC active |
@@ -614,7 +626,7 @@ développement : scénario rejoué hors conteneur).
   puis le listener HTTPS dès que l'AC a son certificat `service_tls`, et les tâches planifiées. Granian n'est plus
   utilisé.
 - **Ports** : 8080 (HTTP) et 8443 (HTTPS) dans le conteneur, publiés par Docker, par exemple
-  `-p 80:8080 -p 443:8443`. Chacun peut être désactivé.
+  `-p 127.0.0.1:80:8080 -p 127.0.0.1:443:8443`. Chacun peut être désactivé.
 - **Mode « à vide »** : avec HTTP et HTTPS désactivés, le conteneur ne sert rien sur le réseau ; les tâches
   continuent et la CLI s'utilise par `docker exec`. Utile pour une racine hors ligne.
 - **Santé** : `HEALTHCHECK` Docker par `h42pki healthcheck` (indépendant des ports : la base répond et le battement
@@ -632,9 +644,9 @@ développement : scénario rejoué hors conteneur).
     -e H42_PKI_CA_PASSPHRASE_FILE=/run/secrets/ca_passphrase \
     -e H42_PKI_SERVER_HOSTNAME=pki-int.home42.lan \
     -e H42_PKI_SERVER_ALT_NAMES=pki-int \
-    -v pki-int-data:/data -p 80:8080 -p 443:8443 gilles67/h42-pki
+    -v pki-int-data:/data -p 127.0.0.1:80:8080 -p 127.0.0.1:443:8443 gilles67/h42-pki
   ```
-- **`deploy/compose.yaml`** *(phase 2)* : racine + intermédiaire + émettrice, chacune avec le nom de son service
+- **`deploy/compose.yaml`** (phase 2, avec `bootstrap.sh`) : racine + intermédiaire + émettrice, chacune avec le nom de son service
   dans `H42_PKI_SERVER_ALT_NAMES` pour que les conteneurs se joignent en HTTPS. Plus de reverse-proxy obligatoire ;
   un exemple avec proxy (`H42_PKI_TRUSTED_PROXIES`) pourra être fourni.
 - **Sauvegarde** : un fichier (la base SQLite) et la passphrase. La perte de la passphrase rend les clés

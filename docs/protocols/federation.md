@@ -1,27 +1,18 @@
 # Fédération inter-AC (hiérarchie de conteneurs)
 
-Protocole propre à h42-pki permettant à un conteneur « fille » d'obtenir son certificat d'AC auprès d'un conteneur
-« mère ». Succède aux routes expérimentales `/api/pki/ca/request` et `/api/pki/ca/sign`, supprimées car non
-authentifiées et dangereuses (bogues B2, B3).
-Justification du choix d'un protocole dédié plutôt qu'EST : ADR-0003.
+Protocole propre à h42-pki : un conteneur « fille » obtient son certificat d'AC auprès d'un conteneur « mère ».
+**Implémenté en phase 2.** Décisions : ADR-0003 (protocole dédié) et ADR-0015 (invitations, épinglage, approbation).
 
 ## 1. Principes
 
-- **Aucun secret long terme** entre conteneurs en v1 : chaque inscription (et chaque renouvellement de l'AC fille)
-  consomme une **invitation à usage unique** créée par un administrateur sur la mère.
-- La mère **impose** les contraintes de l'AC fille (`pathLen`, NameConstraints, validité, sujet) via le profil `sub_ca`
-  et les paramètres de l'invitation ; le CSR de la fille ne peut que les restreindre, jamais les élargir.
-- La fille **vérifie** la mère sans ancre de confiance préalable, par **épinglage** :
-  1. elle télécharge `/ca/chain.pem` de la mère ;
-  2. elle vérifie que l'empreinte SHA-256 du certificat de l'AC mère, communiquée avec l'invitation, correspond ;
-  3. elle utilise cette chaîne comme ancre pour valider le HTTPS de la mère, dont le certificat `service_tls` est
-     émis par l'AC mère elle-même (ADR-0012, ADR-0013).
-  Il n'y a pas de mTLS entre conteneurs en v1.
-- Le nom utilisé dans l'URL de la mère doit figurer dans son certificat HTTPS : `H42_PKI_SERVER_HOSTNAME` ou
-  `H42_PKI_SERVER_ALT_NAMES` de la mère (par exemple le nom du service `docker compose`).
-- Tous les échanges d'inscription passent par le HTTPS de la mère : ses routes `/api/v1/federation/*` n'existent
-  pas en HTTP.
-- Les endpoints publics (chaîne, CRL, OCSP) de la mère restent accessibles sans authentification.
+- **Aucun secret long terme** entre conteneurs : chaque inscription consomme une **invitation à usage unique**. Un futur
+  renouvellement d'AC fille en consommera une nouvelle.
+- La mère **impose** `pathLen` et validité ; le CSR ne fournit que la clé et le sujet.
+- L'approbation est choisie **par invitation** : manuelle par défaut, immédiate avec `auto_approve`.
+- La fille vérifie la mère par **épinglage** de l'empreinte SHA-256 de son certificat d'AC, reçue avec l'invitation.
+- Pas de mTLS entre conteneurs. Les routes `/api/v1/federation/*` n'existent qu'en HTTPS.
+- Le nom d'hôte de l'URL de la mère doit figurer dans son certificat HTTPS (`H42_PKI_SERVER_HOSTNAME` ou
+  `H42_PKI_SERVER_ALT_NAMES`, par exemple le nom du service compose).
 
 ## 2. Séquence
 
@@ -30,83 +21,106 @@ sequenceDiagram
     actor Admin
     participant M as Conteneur mère
     participant F as Conteneur fille
-    Admin->>M: POST /api/v1/federation/invitations {name, path_length, name_constraints, validity_days, auto_approve}
-    M-->>Admin: {token (affiché une seule fois), parent_fingerprint, expires_at}
-    Admin->>F: h42pki authority init --parent-url … --token … --parent-fingerprint … (invitation jamais stockée)
-    F->>M: GET /ca/chain.pem
-    F->>F: empreinte de l'AC mère == empreinte épinglée ? chaîne = ancre TLS
-    F->>F: génère clé AC + CSR (BasicConstraints CA, KU keyCertSign/cRLSign)
-    F->>M: POST /api/v1/federation/enroll (Bearer token) {csr, name, public_base_url}
-    M->>M: vérifie token, CSR, contraintes ; crée ChildAuthorityEnrollment
+    Admin->>M: h42pki federation invite (ou POST /api/v1/federation/invitations)
+    M-->>Admin: jeton (une seule fois), parent_fingerprint
+    Admin->>F: h42pki authority init --parent-url … --parent-fingerprint … --token -
+    F->>M: GET /ca/chain.pem (TLS non vérifié, rien n'est envoyé)
+    F->>F: empreinte épinglée ? chaîne cohérente jusqu'à la racine ?
+    Note over F,M: à partir d'ici, TLS vérifié avec l'AC mère épinglée
+    F->>F: clé + CSR, AC locale pending_signature, ascendants enregistrés
+    F->>M: POST /api/v1/federation/enroll (Bearer jeton) {csr_pem, name, public_base_url}
+    M->>M: jeton, nom, CSR, contraintes ; CertificateRequest (sub_ca, canal federation)
     alt auto_approve
-        M->>M: IssuanceService.issue(profile=sub_ca)
-        M-->>F: 201 {status: issued, certificate, chain}
+        M-->>F: 201 {status: issued, certificate_pem, chain_pem}
     else approbation manuelle
         M-->>F: 202 {status: pending, enrollment_id} + Retry-After
-        Admin->>M: POST /api/v1/federation/enrollments/{id}/approve
-        F->>M: GET /api/v1/federation/enroll/{id} (Bearer token)
-        M-->>F: 200 {status: issued, certificate, chain}
+        Admin->>M: h42pki request approve ID (ou reject)
+        F->>M: GET /api/v1/federation/enroll/{enrollment_id} (Bearer jeton)
+        M-->>F: 200 {status: issued | rejected | failed, …}
     end
-    F->>F: valide certificat (clé = CSR, émetteur = mère, chaîne → ancre, empreinte épinglée)
-    F->>F: Authority.status = active
+    F->>F: contrôle du certificat reçu, AC locale active
 ```
 
-## 3. Endpoints (côté mère)
+## 3. Côté mère
 
-| Méthode | Chemin | Auth | Description |
+### Endpoints (HTTPS, erreurs `problem+json`, `Cache-Control: no-store`)
+
+| Méthode | Chemin (`/api/v1/federation`) | Auth | Réponse |
 |---|---|---|---|
-| POST | `/api/v1/federation/invitations` | admin | Crée une invitation ; renvoie le jeton en clair **une seule fois** |
-| GET | `/api/v1/federation/invitations` | admin | Liste (sans jetons) |
-| DELETE | `/api/v1/federation/invitations/{id}` | admin | Révoque une invitation non utilisée |
-| POST | `/api/v1/federation/enroll` | jeton d'invitation | Soumet le CSR de l'AC fille |
-| GET | `/api/v1/federation/enroll/{id}` | jeton d'invitation | Statut / récupération du certificat (jeton invalidé après la première récupération réussie + délai de grâce) |
-| GET | `/api/v1/federation/enrollments` | admin | Demandes en attente / traitées |
-| POST | `/api/v1/federation/enrollments/{id}/approve` · `/reject` | admin | Décision manuelle |
-| GET | `/api/v1/federation/children` | admin | AC filles connues (`Authority.kind = child`) |
-| POST | `/api/v1/federation/children/{id}/revoke` | admin | Révoque le certificat d'une AC fille |
-| GET | `/ca/chain.pem` | aucune | Chaîne de la mère jusqu'à la racine |
+| POST | `/invitations` `{label?, path_length?, validity_days?, auto_approve?, expires_in_hours?}` | aucune (ADR-0008) | 201 `{invitation, token, parent_fingerprint, parent_url, effective_path_length, expires_at}` ; 422, 503 |
+| GET | `/invitations` · `/invitations/{id}` | aucune | sans jeton ; `status` `active\|used\|revoked\|expired` (calculé) |
+| DELETE | `/invitations/{id}` | aucune | 200, invitation révoquée ; 409 si utilisée ou déjà révoquée |
+| POST | `/enroll` `{csr_pem, name, public_base_url?}` | jeton | 201 `issued`, 202 `pending` + `Retry-After`, 200 si rejouée après un refus ; 401, 409 (nom pris), 422, 503 |
+| GET | `/enroll/{enrollment_id}` | jeton | 200 `{status, enrollment_id, certificate_pem, chain_pem, reason}` ; 401 |
+| GET | `/children` | aucune | AC filles |
+| POST | `/children/{name}/revoke` `{reason}` | aucune | 200 ; 404, 409 si déjà révoquée |
 
-Format du jeton : `h42fed_<invitation_id>.<secret 32 octets base64url>`. Seul le hachage du secret est stocké
-(`EnrollmentCredential.kind = federation_token`).
+`status` d'une inscription : `pending`, `issued`, `rejected`, `failed` (émission impossible après approbation).
+Les décisions passent par `/api/v1/requests/{id}/approve|reject` ; une demande expose `invitation_id` et `child_name`.
+`parent_url` est indicative : le port publié par Docker peut différer.
+Raisons de révocation : `unspecified`, `key_compromise`, `ca_compromise`, `affiliation_changed`, `superseded`,
+`cessation_of_operation`.
 
-## 4. Contrôles côté mère
+### CLI
+- `h42pki federation invite [--label] [--path-length] [--validity-days] [--auto-approve] [--expires-in-hours]` : le
+  jeton seul sur **stdout**, le reste (empreinte, `pathLen` effectif, commande pour la fille) sur **stderr** ;
+- `h42pki federation invitations | revoke-invitation ID | children | revoke-child NAME --reason …` ;
+- `h42pki request list [--status] | show ID | approve ID | reject ID --reason …` (toutes les demandes).
 
-1. Jeton valide, non expiré, non consommé ; comparaison en temps constant.
-2. `csr.is_signature_valid`, algorithme de clé autorisé par le profil `sub_ca`.
-3. `path_length` effectif = `min(invitation.path_length, mère.path_length - 1)` ; refus si la mère a `pathLen = 0`.
-4. NameConstraints : celles de l'invitation, qui doivent être un sous-ensemble de celles de la mère.
-5. Validité ≤ `invitation.validity_days` et ≤ `mère.not_after`.
-6. Sujet : `CN` fourni par la fille, autres attributs (`O`, `C`…) selon la politique du profil `sub_ca`.
-7. Enregistrement `Authority(kind=child, parent=mère, public_base_url, …)` + `AuditLog`.
+### Contrôles
+1. Jeton utilisable, sinon **toujours la même réponse 401**. `expires_at` borne la première utilisation ; ensuite, accès
+   à sa seule demande jusqu'à 24 h après la décision.
+2. Même CSR, nom et URL → état courant (idempotent) ; autre contenu → 401.
+3. Nom valide (B37), ni déjà connu ni dans une inscription en attente (409) ; revérifié à l'approbation.
+4. Profil `sub_ca` activé ; CSR signé, algorithme et sujet admis par le profil.
+5. `path_length` effectif = `min(invitation, mère - 1)` ; refus si la mère a 0.
+6. Validité ≤ invitation ≤ profil, ramenée au `not_after` de la mère.
+7. `Authority(kind=child, parent=AC locale)` créée avec son certificat.
 
-## 5. Côté fille
+Audit : `federation.invite`, `federation.invitation_revoke`, `federation.enroll`, `federation.child_revoke`, plus les
+entrées de demande et de certificat. Jamais le jeton.
 
-- CLI **seulement** : `h42pki authority init --parent-url URL --token INVITATION --parent-fingerprint SHA256`
-  fait l'inscription. L'invitation n'est **jamais stockée** (ADR-0011) ; l'URL de la mère et l'empreinte le sont.
-  Si la mère répond `202`, la commande attend en interrogeant selon `Retry-After`. Interrompue, elle se reprend par
-  `h42pki authority init --resume --token INVITATION`.
-- Tant que l'AC fille n'est pas `active`, son conteneur ne sert que le HTTP (pas de certificat `service_tls`) ; dès
-  l'activation, elle s'émet son certificat HTTPS et le lanceur ouvre le port sans redémarrage (ADR-0013).
-- Tâche périodique : vérifie quotidiennement le statut de son propre certificat via l'OCSP de la mère (URL dans l'AIA).
-  Si `revoked` → `Authority.status = revoked`, arrêt de toute émission, alerte dans les logs.
-- Renouvellement : nouvelle invitation + `h42pki authority renew` (nouvelle clé recommandée, cf. ARCHITECTURE §8.3).
+## 4. Côté fille
+
+`h42pki authority init --parent-url URL --parent-fingerprint SHA256 --token - --name … --common-name …
+[--organization …] [--key-algorithm …] [--public-base-url …] [--wait-minutes 10]`
+
+- `--token -` lit le jeton sur l'entrée standard (conseillé : un argument se voit dans `ps` et l'historique).
+- `--validity-days` et `--path-length` sont refusés : la mère décide.
+- `pending` : attente selon `Retry-After` (borné à 1–60 s) jusqu'à `--wait-minutes`, puis code de sortie **3** ;
+  reprise par `h42pki authority init --resume --token -`.
+- `rejected`, `failed`, ou refus 4xx du **premier** envoi : l'AC en attente, sa clé et ses ascendants sont supprimés.
+- Erreur réseau, TLS ou 5xx, certificat reçu incohérent : l'AC en attente est gardée. `h42pki authority abandon` y renonce.
+- Après l'activation, l'AC s'émet son certificat `service_tls` et le lanceur ouvre le HTTPS sans redémarrage.
+- `/ca/chain.pem` publie l'AC locale, ses ascendants et la racine.
+
+Enregistré sur la mère directe (`kind=parent`) : `federation_url`, `pinned_fingerprint`. Sur l'AC locale en attente :
+`pending_enrollment_id`, `pending_csr_der`, vidés à l'activation. Jamais le jeton.
+
+## 5. Reporté en phase 3
+
+- Contrôle quotidien par la fille de son propre statut (OCSP de la mère, URL dans l'AIA) : si `revoked`, arrêt de
+  toute émission. D'ici là, une AC fille révoquée continue d'émettre sans le savoir.
+- Effet de la révocation pour les clients (CRL, OCSP).
+- Renouvellement d'une AC fille : nouvelle invitation, nouvelle clé (ARCHITECTURE §8.3).
+
+Hors périmètre : NameConstraints, mode `external`, mTLS entre conteneurs.
 
 ## 6. Racine hors ligne
 
-Une racine peut être arrêtée entre deux signatures. Contraintes :
-- CRL de la racine à longue validité (ex. `crl.validity_hours = 4380`, ~6 mois) et régénérée lors de chaque démarrage ;
-- la racine doit être **joignable en HTTPS** pendant l'inscription d'une fille. Entre deux inscriptions, elle peut
-  tourner en mode « à vide » (`H42_PKI_HTTP_ENABLED=false`, `H42_PKI_HTTPS_ENABLED=false`) : ses tâches planifiées
-  continuent et la CLI reste utilisable par `docker exec` (ADR-0012) ;
-- **Décision ouverte** : qui sert la CRL et le certificat de la racine quand elle est arrêtée ? Option proposée :
-  `mirror_parent = true` sur l'AC fille, qui met en cache `/crl/{parent}.crl` et `/ca/{parent}.crt` et les sert
-  sur sa propre `public_base_url` ; la racine utilise alors comme `public_base_url` un nom DNS pointant vers les filles.
+Une racine peut être arrêtée entre deux signatures ; elle doit être **joignable en HTTPS** pendant une inscription.
+Entre deux, elle peut tourner en mode « à vide » (ADR-0012). À traiter avec les CRL en **phase 3** :
+- CRL de la racine à longue validité (par exemple `crl.validity_hours = 4380`) ;
+- **décision ouverte** : qui sert la CRL et le certificat d'une racine arrêtée ? Option proposée :
+  `mirror_parent = true` sur la fille, qui les met en cache et les sert sur sa `public_base_url`.
 
 ## 7. Tests
 
-- Unitaires : contrôles §4 (chaque refus a son test), format du jeton, validation de chaîne côté fille.
-- Intégration : deux applications FastAPI dans le même test (mère + fille) reliées par `httpx.ASGITransport`
-  — aucune socket réseau nécessaire.
-- Interop : `docker compose` racine → intermédiaire → émettrice, **sans reverse-proxy**, chacune avec le nom de son
-  service dans `H42_PKI_SERVER_ALT_NAMES` ; puis `openssl verify -CAfile root.pem -untrusted chain.pem leaf.pem`, et
-  vérification que chaque conteneur présente en HTTPS un certificat valide pour la racine.
+Tortoise est global au processus : une mère et une fille ne peuvent pas avoir chacune leur base dans le même.
+
+- `tests/unit/core/test_federation.py`, `test_chain.py` : jeton, contraintes, chaîne, certificat reçu.
+- `tests/integration/test_federation_api.py`, `test_cli_federation.py` : la mère dans le processus du test.
+- `tests/integration/test_subordinate.py` : la fille face à une mère simulée (réponses perdues, incohérentes, attente).
+- `tests/integration/server/test_federation.py` : **mère réelle en sous-processus, en HTTPS**, pilotée par son API ;
+  trois niveaux, avec une intermédiaire comme ancre épinglée.
+- `tests/interop/test_compose.py` : `deploy/bootstrap.sh` (Docker).

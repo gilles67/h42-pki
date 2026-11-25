@@ -104,22 +104,32 @@ désactivés.
 - purge des anciennes clés et anciens certificats `service_tls` → tâches de purge, phase 3 (B44) ;
 - CDP / OCSP dans les certificats, attendus par les clients Windows (B41) → phase 3.
 
-## Phase 2 — Hiérarchie (fédération)
+## Phase 2 — Hiérarchie (fédération) — ✅ terminée (2026-11-25)
 
-- `docs/protocols/federation.md` complet : invitations, `enroll`, approbation, validation de chaîne côté fille,
-  vérification périodique du statut de l'AC fille.
-- Inscription par la CLI (`h42pki authority init --parent-url … --token … --parent-fingerprint …`, invitation
-  jamais stockée), épinglage de la mère par l'empreinte de son AC, échanges en HTTPS intégré, sans mTLS.
-- `deploy/compose.yaml` racine + intermédiaire + émettrice, **sans reverse-proxy**, chaque service dans
-  `H42_PKI_SERVER_ALT_NAMES`.
-- Validation de `Authority.name` pour les AC créées par la fédération (B37).
+- ✅ **Mère** : invitations à usage unique (`FederationInvitation`), `enroll` par demande `sub_ca` sur le canal
+  `federation`, approbation par invitation, AC filles et leur révocation, par l'API et la CLI
+  (`h42pki federation …`, `h42pki request …`). ADR-0015.
+- ✅ **Fille** : `h42pki authority init --parent-url … --parent-fingerprint … --token -`, épinglage, contrôle de la
+  chaîne et du certificat reçu, `--resume`, `h42pki authority abandon` ; jeton jamais stocké.
+- ✅ Chaîne complète dans `/ca/chain.pem` et `chain.pem` des certificats ; mode et mère dans `GET /api/v1/authority`.
+- ✅ `deploy/compose.yaml`, `deploy/bootstrap.sh`, `deploy/smoke-test.sh`.
+- ✅ Nom d'AC contrôlé à toute création (B37).
 
 **Fait quand** : la hiérarchie à trois niveaux se monte par `docker compose up` + deux invitations, et un certificat
 de l'émettrice se vérifie jusqu'à la racine.
 
+> État au 2026-11-25 : vérifié par les tests (mères réelles en sous-processus, HTTPS) et en exécutant `bootstrap.sh` avec
+> un substitut de `docker` qui lance des `h42pki serve` locaux. **Restent à lancer dans Docker** : `deploy/smoke-test.sh`
+> (phase 1.1) et `deploy/bootstrap.sh`.
+
+**Reporté en phase 3** : contrôle par la fille de son propre statut (OCSP de la mère), effet visible de la révocation
+d'une AC fille, publication d'une racine arrêtée (décision ouverte n° 1). **Non planifié** : NameConstraints, mode
+`external`, renouvellement d'une AC fille.
+
 ## Phase 3 — Révocation : CRL + OCSP
 
 - `RevocationService`, raisons RFC 5280, suspension/levée.
+- Contrôle quotidien par une AC fille de son propre statut auprès de sa mère (reporté de la phase 2).
 - CDP et AIA OCSP ajoutés aux certificats émis (absents jusque-là, lot 5a).
 - `core/crl.py`, `CrlService`, tâche périodique, endpoints `/crl/*` avec cache HTTP.
 - `core/ocsp.py`, répondeur délégué auto-renouvelé, endpoints POST/GET, nonce, cache.
@@ -171,7 +181,7 @@ Prérequis bloquants avant de taguer une version déployable avec des données �
 1. Publication CRL/certificat d'une racine arrêtée (miroir sur les filles ?) — federation.md §6.
 2. ~~Nom du paquet Python~~ → `h42pki` (adopté au lot 1).
 3. Base de production visée : SQLite suffit-elle, ou PostgreSQL dès la phase 1 ?
-4. Approbation manuelle par défaut pour les AC filles, ou auto-approbation avec invitation ?
+4. ~~Approbation des AC filles~~ → choisie par invitation, manuelle par défaut (ADR-0015, 2026-11-25).
 5. Interface web d'administration : hors périmètre v1, mais **prévue** : `GET /health` et `GET /api/v1/config`
    sont pensés pour elle (2026-11-22).
 6. ~~Casse des champs JSON~~ → **snake_case** (ADR-0006, 2026-11-21).

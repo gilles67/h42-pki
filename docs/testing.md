@@ -41,7 +41,7 @@ markers = ["interop: requires external tools / docker", "slow: long-running"]
 - `client` : `httpx.AsyncClient(transport=ASGITransport(app=create_app(settings)), base_url="http://testserver")`
   avec lifespan géré (tâches planifiées **désactivées** en test, appelées explicitement).
 - `admin_headers` : jeton d'admin créé en base.
-- `proxy_client_cert(cert)` : en-têtes simulant le reverse-proxy mTLS (pour EST/fédération).
+- `proxy_client_cert(cert)` : en-têtes simulant le reverse-proxy mTLS (pour EST).
 
 ## 4. Règles
 
@@ -103,6 +103,13 @@ Limites connues :
   qui lancent la CLI pendant que le serveur tourne y sont ignorés ;
 - non couverts (non implémentés) : ajout à chaud d'une ancre de confiance et passage à chaud du mTLS facultatif à
   obligatoire, sans redémarrer le listener.
+
+## 4 ter. Fédération
+
+Détail dans `docs/protocols/federation.md` §7. Tortoise étant global au processus, la mère tourne dans un
+**sous-processus** (`tests/integration/server/instance.py`) et se pilote par son API HTTPS, jamais par sa CLI pendant
+qu'elle tourne : ces tests fonctionnent donc aussi sous WSL1 (B42). Sorties de la CLI : toujours par
+`tests/cli_helpers.plain`.
 
 ## 5. Interopérabilité (`deploy/compose.interop.yaml`)
 

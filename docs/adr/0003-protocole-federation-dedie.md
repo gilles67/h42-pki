@@ -1,6 +1,6 @@
 # ADR-0003 — Protocole de fédération dédié plutôt qu'EST entre AC
 
-- **Statut** : proposé
+- **Statut** : accepté (mis en œuvre en phase 2, précisé par ADR-0015)
 - **Date** : 2026-11-21
 
 ## Contexte

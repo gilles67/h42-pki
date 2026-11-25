@@ -13,7 +13,7 @@
 #
 # `h42pki serve` is the built-in launcher (ADR-0012): HTTP on 8080 (public routes: /, /health,
 # /ca/*), HTTPS on 8443 (everything) as soon as the CA is active and has issued the certificate
-# of its own server (ADR-0013). Publish them with -p 80:8080 -p 443:8443.
+# of its own server (ADR-0013). Publish them with -p 127.0.0.1:80:8080 -p 127.0.0.1:443:8443.
 # The SQLite database (data and configuration) lives in the /data volume.
 
 ARG PYTHON_VERSION=3.13
