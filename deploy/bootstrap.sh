@@ -4,8 +4,9 @@
 #
 # Usage: deploy/bootstrap.sh [--fresh] [OUTPUT_DIRECTORY]
 #   --fresh   remove the containers and VOLUMES of this compose project first (all its CAs!)
-# Needs docker (compose v2), curl and openssl. Invitation tokens only travel through pipes: they
-# are neither printed, nor written to a file, nor visible in a process list.
+# Needs podman with podman-compose >= 1.3 (or CONTAINER_ENGINE=docker: docker with compose v2), curl
+# and openssl. Invitation tokens only travel through pipes: they are neither printed, nor written to a
+# file, nor visible in a process list.
 set -euo pipefail
 
 FRESH=false
@@ -14,32 +15,53 @@ if [ "${1:-}" = --fresh ]; then
   shift
 fi
 HERE="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=deploy/engine.sh
+. "$HERE/engine.sh"
+need_compose
+need curl "install curl"
+need openssl "install openssl"
 OUT="${1:-$HERE/out}"
 ISSUING_HTTPS_PORT="${ISSUING_HTTPS_PORT:-18443}"
+START_TIMEOUT="${START_TIMEOUT:-120}" # seconds, per container
 mkdir -p "$OUT"
 OUT="$(cd "$OUT" && pwd)"
 cd "$HERE"
 
-compose() { docker compose -f compose.yaml "$@"; }
-pki() { # pki SERVICE ARGS...: the CLI of one CA
+compose() { "${COMPOSE[@]}" -f compose.yaml "$@"; }
+pki_stdin() { # pki_stdin SERVICE ARGS...: the CLI of one CA, reading standard input
   local service="$1"
   shift
   compose exec -T "$service" h42pki "$@"
 }
+# podman-compose always runs `exec --interactive`: do not let it swallow the input of the script.
+pki() { pki_stdin "$@" </dev/null; }
 step() { printf '\n== %s\n' "$*"; }
+
+wait_healthy() { # portable replacement of `up --wait`, unknown to podman-compose 1.3
+  local service="$1" deadline=$((SECONDS + START_TIMEOUT))
+  until pki "$service" healthcheck >/dev/null 2>&1; do
+    if [ "$SECONDS" -ge "$deadline" ]; then
+      echo "$service is not healthy after $START_TIMEOUT s" >&2
+      pki "$service" healthcheck >&2 || true
+      compose logs "$service" >&2 || true
+      return 1
+    fi
+    sleep 2
+  done
+}
 
 wait_https() { # the launcher opens HTTPS by itself once the CA is active
   local service="$1"
   for _ in $(seq 1 60); do
     if pki "$service" authority status >/dev/null 2>&1 &&
       compose exec -T "$service" python -c \
-        "import socket; socket.create_connection(('127.0.0.1', 8443), 2).close()" 2>/dev/null; then
+        "import socket; socket.create_connection(('127.0.0.1', 8443), 2).close()" </dev/null 2>/dev/null; then
       return 0
     fi
     sleep 1
   done
   echo "HTTPS of $service does not open" >&2
-  compose logs "$service" >&2
+  compose logs "$service" >&2 || true
   return 1
 }
 
@@ -49,7 +71,7 @@ enrol() { # enrol PARENT CHILD COMMON_NAME PATH_LENGTH
     openssl x509 -noout -fingerprint -sha256 | cut -d= -f2)"
   pki "$parent" federation invite --label "$child" --path-length "$path_length" \
     --auto-approve --expires-in-hours 1 |
-    pki "$child" authority init --name "$child" --common-name "$common_name" \
+    pki_stdin "$child" authority init --name "$child" --common-name "$common_name" \
       --parent-url "https://$parent:8443" --parent-fingerprint "$fingerprint" --token - \
       --public-base-url "http://$child.pki.test:8080"
 }
@@ -63,7 +85,10 @@ if "$FRESH"; then
 fi
 
 step "start the three containers"
-compose up -d --build --wait
+compose up -d --build
+for service in root intermediate issuing; do
+  wait_healthy "$service"
+done
 
 step "root"
 pki root authority init --name root --common-name "Home42 Example Root CA" --path-length 2 \

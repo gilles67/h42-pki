@@ -26,7 +26,7 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"   # même boucle que les fixtures (connexions Tortoise)
 addopts = "-m 'not interop' --strict-markers"
-markers = ["interop: requires external tools / docker", "slow: long-running"]
+markers = ["interop: requires external tools / a container engine", "slow: long-running"]
 ```
 
 ## 3. Fixtures de base (`tests/conftest.py`)

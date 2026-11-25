@@ -71,7 +71,7 @@ asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"
 addopts = "-m 'not interop' --strict-markers"
 markers = [
-    "interop: requires external tools / docker",
+    "interop: requires external tools / a container engine",
     "slow: long-running",
 ]
 

@@ -41,14 +41,15 @@ Ports can be changed with `ROOT_HTTP_PORT`, `ROOT_HTTPS_PORT`, and so on.
 
 ## Enrol a child by hand
 
-With manual approval (the default):
+With manual approval (the default). Run the commands from `deploy/`, where `compose.yaml` is; `CHILD` stands for the
+service of a container that has no CA yet:
 
 ```bash
 # On the parent: the token is on standard output, shown this one time.
 podman-compose exec root h42pki federation invite --label lab --path-length 0
 
 # On the child: paste the token on standard input (it stays out of the shell history).
-podman-compose exec child h42pki authority init --name lab --common-name "Lab CA" \
+podman-compose exec CHILD h42pki authority init --name lab --common-name "Lab CA" \
   --parent-url https://root:8443 --parent-fingerprint <sha256> --token -
 
 # On the parent, meanwhile:
@@ -70,7 +71,10 @@ the parent.
 - Rootless containers: run `loginctl enable-linger $USER` once, so that containers and their health checks survive
   the end of your session.
 - Rootless Podman cannot publish host ports below 1024 by default; the examples use 18081-18083 / 18441-18443.
-- podman-compose has no `up --wait`: the scripts wait for each container with `h42pki healthcheck`.
+- podman-compose has no `up --wait`: `bootstrap.sh` waits for each container with `h42pki healthcheck` (120 s at
+  most, `START_TIMEOUT` to change it), and shows its logs on failure.
+- podman-compose always keeps standard input open in `exec`: in a script, add `</dev/null` to the commands that must
+  not read it.
 - Containers reach each other by service name (`https://root:8443`) through the network DNS (netavark and
   aardvark-dns, installed with Podman on Debian).
 - Validated on 2026-11-25 with Debian 13, Podman 5.4.2 (rootless) and podman-compose 1.3.0.
@@ -79,3 +83,5 @@ the parent.
 
 - `smoke-test.sh`: builds the image and checks one container alone (health, HTTPS, idle mode). Podman by default,
   `CONTAINER_ENGINE=docker` for Docker.
+- `engine.sh`: choice of the engine, sourced by both scripts.
+

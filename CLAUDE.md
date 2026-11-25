@@ -139,7 +139,7 @@ src/h42pki/
     ocsp/  est/  scep/  acme/
   tasks/             # tâches périodiques : tls_service (certificat HTTPS) — en place ; CRL, purges, expirations à venir
   cli/               # Typer : authority, profile, certificate, request, federation, config, healthcheck, serve
-deploy/              # compose.yaml (3 niveaux), bootstrap.sh, smoke-test.sh
+deploy/              # compose.yaml (3 niveaux), bootstrap.sh, smoke-test.sh, engine.sh (choix du moteur)
 tests/
   unit/  integration/  interop/  conftest.py
 docs/
