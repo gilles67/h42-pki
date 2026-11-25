@@ -3,6 +3,7 @@
 from h42pki.models.audit import AuditLog
 from h42pki.models.authority import Authority, AuthorityKind, AuthorityStatus
 from h42pki.models.certificate import Certificate, CertificateStatus
+from h42pki.models.federation import FederationInvitation, InvitationStatus
 from h42pki.models.private_key import KeyBackend, KeyPurpose, PrivateKey
 from h42pki.models.profile import Profile
 from h42pki.models.request import CertificateRequest, Channel, RequestStatus
@@ -14,6 +15,7 @@ __models__ = [
     Profile,
     Certificate,
     CertificateRequest,
+    FederationInvitation,
     AuditLog,
     Setting,
     SettingsRevision,
@@ -28,6 +30,8 @@ __all__ = [
     "CertificateRequest",
     "CertificateStatus",
     "Channel",
+    "FederationInvitation",
+    "InvitationStatus",
     "KeyBackend",
     "KeyPurpose",
     "PrivateKey",

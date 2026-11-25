@@ -27,6 +27,7 @@ class Channel(StrEnum):
 
     CLI = "cli"
     API = "api"
+    FEDERATION = "federation"  # child CA enrolled with an invitation (ADR-0015)
     SYSTEM = "system"  # issued by the CA for itself: built-in HTTPS server (ADR-0013)
 
 

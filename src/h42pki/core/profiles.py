@@ -136,12 +136,14 @@ CA_SUBJECT = SubjectPolicy(
 
 # Internal profile of the built-in HTTPS server certificate (ADR-0013).
 SERVICE_TLS_PROFILE = "service_tls"
+# Profile of the CAs signed by this one, by request or by federation (ADR-0015).
+SUB_CA_PROFILE = "sub_ca"
 
 BUILTIN_PROFILES: dict[str, ProfileSpec] = {
     spec.name: spec
     for spec in (
         ProfileSpec(
-            name="sub_ca",
+            name=SUB_CA_PROFILE,
             kind=ProfileKind.SUB_CA,
             description="Subordinate CA certificate (pathLen 0). Requires manual approval.",
             auto_approve=False,
