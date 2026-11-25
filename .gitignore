@@ -215,3 +215,6 @@ config/pki.json
 *.sqlite3*
 *.pem
 *.key
+
+# Results of deploy/bootstrap.sh
+deploy/out/

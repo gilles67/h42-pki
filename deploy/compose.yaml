@@ -1,0 +1,67 @@
+# Example hierarchy: root -> intermediate -> issuing, one container per CA (see README.md).
+#
+# The admin API has no authentication yet (ADR-0008): ports are only published on 127.0.0.1.
+# The passphrases below are EXAMPLES, committed in the repository: never use them for a real CA.
+
+x-ca: &ca
+  build: ..
+  image: ${H42_PKI_IMAGE:-h42-pki:dev}
+  restart: unless-stopped
+  networks: [pki]
+
+services:
+  root:
+    <<: *ca
+    environment:
+      H42_PKI_SERVER_HOSTNAME: root.pki.test
+      # The service name is how the other containers reach this one over HTTPS.
+      H42_PKI_SERVER_ALT_NAMES: root,localhost,127.0.0.1
+    secrets:
+      - source: root_passphrase
+        target: h42_pki_ca_passphrase
+    volumes: ["root-data:/data"]
+    ports:
+      - "127.0.0.1:${ROOT_HTTP_PORT:-18081}:8080"
+      - "127.0.0.1:${ROOT_HTTPS_PORT:-18441}:8443"
+
+  intermediate:
+    <<: *ca
+    environment:
+      H42_PKI_SERVER_HOSTNAME: intermediate.pki.test
+      H42_PKI_SERVER_ALT_NAMES: intermediate,localhost,127.0.0.1
+    secrets:
+      - source: intermediate_passphrase
+        target: h42_pki_ca_passphrase
+    volumes: ["intermediate-data:/data"]
+    ports:
+      - "127.0.0.1:${INTERMEDIATE_HTTP_PORT:-18082}:8080"
+      - "127.0.0.1:${INTERMEDIATE_HTTPS_PORT:-18442}:8443"
+
+  issuing:
+    <<: *ca
+    environment:
+      H42_PKI_SERVER_HOSTNAME: issuing.pki.test
+      H42_PKI_SERVER_ALT_NAMES: issuing,localhost,127.0.0.1
+    secrets:
+      - source: issuing_passphrase
+        target: h42_pki_ca_passphrase
+    volumes: ["issuing-data:/data"]
+    ports:
+      - "127.0.0.1:${ISSUING_HTTP_PORT:-18083}:8080"
+      - "127.0.0.1:${ISSUING_HTTPS_PORT:-18443}:8443"
+
+networks:
+  pki:
+
+volumes:
+  root-data:
+  intermediate-data:
+  issuing-data:
+
+secrets:
+  root_passphrase:
+    file: ./secrets/EXAMPLE-root-passphrase.txt
+  intermediate_passphrase:
+    file: ./secrets/EXAMPLE-intermediate-passphrase.txt
+  issuing_passphrase:
+    file: ./secrets/EXAMPLE-issuing-passphrase.txt
