@@ -55,6 +55,13 @@ class Authority(TimestampedModel):
     )
     path_length = fields.IntField(null=True)
     public_base_url = fields.CharField(max_length=255, null=True)
+    # Direct parent (kind=parent): where this CA enrolled, and what it pinned (ADR-0015).
+    federation_url = fields.CharField(max_length=255, null=True)
+    pinned_fingerprint = fields.CharField(max_length=64, null=True)
+    # Local CA in pending_signature: identifier of the enrolment on the parent (not a foreign
+    # key), and the CSR, kept so that a lost answer can be asked again with the same request.
+    pending_enrollment_id = fields.UUIDField(null=True)
+    pending_csr_der = fields.BinaryField(null=True)
 
     # The CA's own certificate: reverse side of Certificate.authority. A foreign key on this
     # table would form a cycle with Certificate.issuer, which Tortoise cannot create.
