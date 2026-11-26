@@ -79,3 +79,7 @@ class FingerprintMismatch(InvalidChain):
 
 class InvalidIssuedCertificate(InvalidRequest):
     title = "Invalid Issued Certificate"
+
+
+class InvalidRevocation(InvalidRequest):
+    title = "Invalid Revocation"
