@@ -71,8 +71,8 @@ openssl verify -CAfile root.pem leaf.pem
 ```
 
 > [!NOTE]
-> On Windows, `curl` (Schannel) refuses certificates that carry no revocation information until CRL and OCSP exist
-> (phase 3): add `--ssl-no-revoke`.
+> On Windows, `curl` (Schannel) refuses certificates that carry no revocation information: create the CA with
+> `--crl` or `--ocsp` and a public base URL (see [Revocation](#revocation)), or add `--ssl-no-revoke`.
 
 Profiles decide what a certificate contains (`uv run h42pki profile list`): `tls_server` certificates last 90 days
 (200 at most). A profile can be disabled on a CA (`h42pki profile disable device`). Certificates are listed with
@@ -87,6 +87,31 @@ curl -s http://127.0.0.1:8080/ca/home42-root.crt | openssl x509 -inform DER -noo
 curl -s -o chain.pem http://127.0.0.1:8080/ca/chain.pem   # CA chain, root included
 openssl verify -CAfile chain.pem leaf.pem
 ```
+
+### Revocation
+
+CRL and OCSP are **chosen when the CA is created** and cannot be changed afterwards
+([ADR-0017](docs/adr/0017-revocation.md)); both are off by default. With a public base URL, every certificate the CA
+issues then carries a CRL distribution point and/or an OCSP URL. Revocation is final (no `certificateHold`).
+
+```bash
+uv run h42pki authority init --name home42-root --common-name "Home42 Root CA" \
+  --crl --ocsp --public-base-url http://127.0.0.1:8080
+# … issue leaf.pem as above, then revoke it (API: POST /api/v1/certificates/<id>/revoke)
+uv run h42pki certificate list                      # the ID column
+uv run h42pki certificate revoke <id> --reason key_compromise
+uv run h42pki crl show                              # number, dates, revoked serials
+curl -s http://127.0.0.1:8080/crl/home42-root.crl | openssl crl -inform DER -noout -text
+openssl verify -crl_check -CAfile root.pem \
+  -CRLfile <(curl -s http://127.0.0.1:8080/crl/home42-root.crl | openssl crl -inform DER) leaf.pem
+# -> error 23 at 0 depth lookup: certificate revoked
+openssl ocsp -issuer root.pem -cert leaf.pem -url http://127.0.0.1:8080/ocsp -CAfile root.pem
+# -> leaf.pem: revoked
+```
+
+The CRL is regenerated at each revocation and every 15 minutes when due (`crl.validity_hours`, 168 by default);
+OCSP answers are signed by the CA key and cached when they carry no nonce. A subordinate CA checks its own status with
+the OCSP of its parent every day (`h42pki authority check-parent` to do it now): once revoked, it stops issuing.
 
 ### Container (Podman)
 
@@ -111,7 +136,8 @@ your session.
 
 The container is `healthy` when the database answers and the launcher is alive (`h42pki healthcheck`, independent of
 the ports). With `H42_PKI_HTTP_ENABLED=false` and `H42_PKI_HTTPS_ENABLED=false` it serves nothing on the network
-(idle mode, for example an offline root) and stays usable through `podman exec`.
+(idle mode, for example an offline root) and stays usable through `podman exec`. A CA created with `--crl` or
+`--ocsp` refuses idle mode: an offline root is created without them.
 
 The admin API has no authentication yet: keep the ports on `127.0.0.1` or on an internal network.
 
@@ -131,7 +157,8 @@ h42pki request list --status pending
 h42pki request approve <id>
 ```
 
-[`deploy/`](deploy/README.md) builds a root → intermediate → issuing hierarchy with `podman-compose` (or Docker Compose).
+[`deploy/`](deploy/README.md) builds a root → intermediate → issuing hierarchy with `podman-compose` (or Docker Compose),
+every CA with CRL and OCSP; `deploy/revocation-test.sh` then checks revocation with `openssl`.
 
 ### Configuration
 
@@ -182,8 +209,8 @@ CI (GitHub Actions) runs lint and type checking on Python 3.13, tests on Python 
 | 1 | CA core: key store, certificate profiles, single issuance path, data model, admin API, CLI, AIA publication | ✅ done |
 | 1.1 | Operations base: Python 3.13, configuration in the database, built-in HTTP/HTTPS launcher, self-issued HTTPS certificate, health check | ✅ done |
 | 2 | Hierarchy: subordinate CA enrolment with its parent (federation), multi-level compose (`podman-compose`) | ✅ done |
-| 3 | Revocation: CRL (full/delta) and OCSP responder | 🚧 next |
-| 4 | EST enrolment (RFC 7030) | ⏳ |
+| 3 | Revocation: CRL and OCSP chosen per CA, revocation API and CLI, child CA status check | ✅ done |
+| 4 | EST enrolment (RFC 7030) | 🚧 next |
 | 5 | SCEP enrolment (RFC 8894) | ⏳ |
 | 6 | ACME (RFC 8555): http-01, dns-01, then tls-alpn-01, EAB, renewal info | ⏳ |
 | 7 | Hardening: PKCS#11 (smart card / HSM), PostgreSQL, metrics, CA key rollover, operations runbook | ⏳ |

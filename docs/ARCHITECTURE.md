@@ -1,7 +1,8 @@
 # Architecture — h42-pki
 
-> Statut : **v1.1** (2026-11-22). Les phases 0 et 1 sont réalisées ; le document décrit l'existant et les décisions
-> prises pour la suite (configuration en base, HTTP et HTTPS intégrés : ADR-0011 à 0014). Les décisions
+> Statut : **v1.3** (2026-11-26). Les phases 0 à 3 sont réalisées ; le document décrit l'existant et les décisions
+> prises pour la suite (configuration en base, HTTP et HTTPS intégrés : ADR-0011 à 0014 ; fédération : ADR-0015 ;
+> révocation : ADR-0017). Les décisions
 > structurantes sont tracées dans `docs/adr/`. Les points marqués **« À vérifier »** doivent être confirmés par un
 > spike avant implémentation.
 
@@ -106,7 +107,7 @@ flowchart LR
 | `core/` | Construction/vérification d'objets X.509, CRL, OCSP, CMS | Pur, synchrone, testable sans DB ni réseau (vérifié par `tests/unit/core/test_purity.py`) ; ses fonctions de clés (`core/keys.py`) ne sont appelées que par `keystore` |
 | `keystore/` | Détention des clés privées, opérations de signature/déchiffrement | Seul composant qui détient la passphrase et (dé)chiffre une clé ; en v1 il remet l'objet `cryptography` au service, qui le passe aux builders de `core` (ADR-0004, cf. §8.1) |
 | `models/` | Persistance Tortoise | Aucun import de `api` |
-| `tasks/` | Tâches planifiées, lancées par le lanceur : renouvellement du certificat HTTPS (`tls_service.py`, ADR-0013) ; CRL, purges, expirations à venir | Idempotentes ; continuent en mode « à vide » (aucun listener) |
+| `tasks/` | Tâches planifiées, lancées par le lanceur : renouvellement du certificat HTTPS (`tls_service.py`, ADR-0013) ; `periodic.py` et `maintenance.py` (ADR-0017) : CRL (15 min), statut `expired` (1 h), purge des clés `service_tls` remplacées (1 jour), contrôle du statut auprès de la mère (1 jour) | Idempotentes ; continuent en mode « à vide » (aucun listener) ; état exposé par `/health` |
 
 ## 3. Modes de fonctionnement d'un conteneur
 
@@ -123,6 +124,14 @@ flowchart LR
 
 Le mode `external` permet de rattacher h42-pki à une racine existante (AD CS, racine hors ligne sur clé USB, etc.).
 
+**Révocation (phase 3, ADR-0017).** `h42pki authority init` accepte `--crl` et `--ocsp`, quel que soit le mode,
+désactivés par défaut et **immuables** : ils décident des URL (CDP, AIA OCSP) inscrites dans tous les certificats
+émis par l'AC. Une AC avec l'un ou l'autre **refuse le mode « à vide »** ; une racine destinée à rester hors ligne se
+crée donc sans révocation. Une AC subordonnée vérifie chaque jour son propre statut auprès de l'OCSP de sa mère
+(`h42pki authority check-parent` pour le faire tout de suite) : si la mère la dit `revoked`, elle passe `revoked`,
+refuse toute émission (503, y compris son certificat HTTPS) mais continue de publier sa CRL et de répondre en OCSP.
+Mère injoignable ou sans OCSP : simple avertissement.
+
 Cycle de vie d'une AC locale (`Authority.status`) :
 
 ```mermaid
@@ -134,7 +143,7 @@ stateDiagram-v2
     pending_signature --> uninitialized: rejet par la mère
     active --> rolling_over: renouvellement de clé
     rolling_over --> retired: nouvelle AC active
-    active --> revoked: révocation par la mère
+    active --> revoked: contrôle quotidien auprès de l'OCSP de la mère
     retired --> [*]
 ```
 
@@ -185,10 +194,10 @@ erDiagram
 
 Toutes les tables ont `id` (UUID), `created_at`, `updated_at` (UTC aware).
 
-> **État d'implémentation (phase 1.1).** Les tables `PrivateKey`, `Authority`, `Profile`, `Certificate`,
-> `CertificateRequest`, `AuditLog`, `Setting` et `SettingsRevision` existent (`src/h42pki/models/`). Les champs
-> marqués *(plus tard)* ne sont pas encore implémentés ; les autres tables (`Crl`, `EnrollmentCredential`, …)
-> arrivent avec leur phase.
+> **État d'implémentation (phase 3).** Les tables `PrivateKey`, `Authority`, `Profile`, `Certificate`,
+> `CertificateRequest`, `FederationInvitation`, `Crl`, `AuditLog`, `Setting` et `SettingsRevision` existent
+> (`src/h42pki/models/`). Les champs marqués *(plus tard)* ne sont pas encore implémentés ; les autres tables
+> (`EnrollmentCredential`, …) arrivent avec leur phase.
 > Les clés étrangères pointent toujours « vers le bas » (Certificate → Authority / PrivateKey / Profile,
 > CertificateRequest → Profile / Certificate) : pas de cycle (B27).
 
@@ -216,6 +225,10 @@ Fédération (ADR-0015) : `federation_url` et `pinned_fingerprint` sur la mère 
 `pending_enrollment_id` et `pending_csr_der` sur l'AC locale `pending_signature`, vidés à l'activation. La règle de
 nommage est contrôlée par `Authority.save()`, donc à toute création (B37). Les ascendants, dont le certificat ne porte
 pas de nom h42-pki, sont nommés `<slug du CN>-<12 hex de l'empreinte>`.
+Révocation (phase 3, ADR-0017) : `crl_enabled`, `ocsp_enabled` (AC locale, posés par `authority init`, jamais
+modifiés) ; `parent_check_at`, `parent_check_result` (dernier contrôle par une AC subordonnée de son statut auprès de
+sa mère : `good|revoked|unknown|unreachable|no_ocsp|invalid_response`). L'« AC locale courante » est l'AC locale
+`active` ou `revoked` ; seule une AC `active` émet.
 *(plus tard)* : `name_constraints` (JSON).
 
 **`Profile`** — gabarit d'émission. Les profils **intégrés** sont définis dans `core/profiles.py`, écrits en base au
@@ -254,12 +267,14 @@ pour la racine), `channel` (`cli|api`), `serial_hex` (unique par émetteur), `su
 `not_before`, `not_after`, `revoked_at`, `revocation_reason` (enum RFC 5280), `invalidity_date`.
 Le sujet structuré (JSON) et les extensions demandées ne sont plus stockés : ils se déduisent du DER, et les
 extensions viennent du profil.
-Le statut `expired` est calculé à la lecture depuis le lot 5b (B34) ; il n'est pas encore écrit en base.
+Le statut `expired` est écrit en base par la tâche `expiry` (toutes les heures et au démarrage, B34, phase 3) ; le
+calcul à la lecture (lot 5b) reste comme filet. `revoked_at`, `revocation_reason` (`x509.ReasonFlags`, sans
+`certificate_hold` ni `remove_from_crl`) et `invalidity_date` sont posés par `RevocationService` (ADR-0017).
 Canal `federation` : certificat d'une AC fille, certificat reçu de la mère et certificats des ascendants (ADR-0015).
 Canal `system` depuis la phase 1.1 : certificat du serveur HTTPS intégré, avec sa demande (`requester = system`) et
 sa clé (`private_key`, `purpose = tls`).
-*(plus tard)* : `sans` (colonne de recherche), `ski`, `aki`, statut `on_hold` et `expired` persistant (phase 3),
-canaux `est|scep|acme`.
+*(plus tard)* : `sans` (colonne de recherche), `ski`, `aki`, canaux `est|scep|acme`. Pas de statut `on_hold` : pas de
+suspension (ADR-0017).
 
 **`CertificateRequest`**
 Implémenté : `csr_der`, `profile` → `Profile`, `status` (`pending|issued|rejected|failed` : l'approbation émet
@@ -270,9 +285,11 @@ demandé), `rejection_reason`, `decided_by` (`auto-approve` ou l'acteur), `decid
 Une demande qui ne respecte pas son profil est refusée (422) **sans être enregistrée** comme demande ; le refus est
 toutefois audité (`request.refuse`, avec le profil, la raison et l'empreinte SHA-256 du CSR, B35).
 
-**`Crl`**
-`authority`, `crl_number` (entier monotone par AC), `is_delta`, `base_crl_number`, `this_update`, `next_update`, `der`.
-La CRL courante = la plus récente non expirée ; les anciennes sont conservées pour audit.
+**`Crl`** (phase 3, ADR-0017) — une CRL complète signée, en DER. Implémenté : `authority` → `Authority`
+(`RESTRICT`), `crl_number` (monotone par AC, unique avec `authority`, jamais réutilisé), `this_update`, `next_update`,
+`entries_as_of` (moment de la lecture des certificats révoqués : une révocation postérieure n'y est pas),
+`entries`, `der`. La CRL courante = le plus grand numéro ; les anciennes sont conservées pour audit. Pas de CRL
+delta.
 
 **`FederationInvitation`** — invitation à usage unique d'une AC fille (ADR-0015). Implémenté : `label`, `secret_hash`
 (SHA-256 d'un secret de 256 bits), `path_length`, `validity_days`, `auto_approve`, `expires_at`, `status`
@@ -288,9 +305,12 @@ pour `acme_eab`, clé HMAC chiffrée car elle doit être relue), `profile`, `exp
 `source_ip` *(plus tard)*. Actions enregistrées : `private_key.generate`, `private_key.delete`, `authority.init`,
 `authority.update`, `request.submit`, `request.refuse`, `request.approve`, `request.reject`, `request.fail`,
 `authority.activate`, `authority.abandon`, `certificate.issue` (avec le canal), `federation.invite`,
-`federation.invitation_revoke`, `federation.enroll`, `federation.child_revoke`, `profile.create`, `profile.realign`, `config.set` et `config.unset`, dans la
-même transaction que l'opération. Acteur : `anonymous` pour l'API jusqu'à l'authentification (ADR-0008), `cli` pour la
-ligne de commande, `system` pour la synchronisation des profils et les tâches planifiées (certificat HTTPS).
+`federation.invitation_revoke`, `federation.enroll`, `federation.child_revoke`, `profile.create`, `profile.realign`,
+`config.set` et `config.unset`, et depuis la phase 3 `certificate.revoke`, `crl.generate`, `certificate.expire`
+(une entrée par passage de la tâche), `certificate.purge`, `private_key.delete` (purge) et
+`authority.revoked_by_parent`, dans la même transaction que l'opération. Acteur : `anonymous` pour l'API jusqu'à
+l'authentification (ADR-0008), `cli` pour la ligne de commande, `system` pour la synchronisation des profils et les
+tâches planifiées.
 
 **`Setting`** — configuration de l'instance (ADR-0011). Une ligne par réglage **modifié** : `key` (`section.nom`),
 `value` (texte JSON : un réglage peut être une simple chaîne, un nombre ou `null`), `updated_at`, `updated_by`. Les
@@ -358,15 +378,37 @@ l'émetteur** (`validity_truncated`) ; une AC fille reçoit un `pathLen` stricte
 quand l'AC a une `public_base_url` (validée et normalisée : http ou https avec avertissement, hôte requis, ni requête
 ni fragment, pas de barre finale) et que le profil a `include_aia` ; jamais sur le certificat de la racine. Changer
 l'URL (`h42pki authority update`) ne touche pas les certificats déjà émis.
-**À venir** : `CRLDistributionPoints` et OCSP (phase 3) : aucune URL n'est inscrite tant que le service correspondant
-n'existe pas.
+**CDP et AIA OCSP (phase 3, ADR-0017)** : `CRLDistributionPoints` `{public_base_url}/crl/{authority}.crl` si l'AC a
+été créée avec `--crl`, AIA OCSP `{public_base_url}/ocsp` si elle a été créée avec `--ocsp`, non critiques, dans tous
+les certificats qu'elle émet (AC filles et `service_tls` compris, indépendamment de `include_aia`), seulement avec
+une `public_base_url` ; jamais sur le certificat de la racine. Une AC `revoked` n'émet plus (503).
 
 ### 5.2 Révocation
 
-`RevocationService.revoke(cert, reason, invalidity_date)` → met à jour `Certificate`, journalise, puis
-**déclenche la régénération immédiate de la CRL** (et invalide le cache OCSP). Accessible via l'API d'admin,
-ACME `revokeCert`, et la fédération (révocation d'une AC fille par sa mère).
-Phase 2 : seule la révocation d'une AC fille existe (certificat et `Authority` marqués), sans CRL ni OCSP (phase 3).
+Implémenté en phase 3 (ADR-0017, `docs/protocols/crl.md` §4, `ocsp.md`) :
+`RevocationService.revoke(cert, reason, invalidity_date, actor)` → refuse la suspension (422) et ce qui ne se révoque
+pas ici (409 : déjà révoqué, certificat d'une AC locale, `service_tls`, certificat non émis par une AC locale), met
+à jour `Certificate` (et l'`Authority` d'une AC fille), journalise `certificate.revoke`, puis **régénère
+immédiatement la CRL** de l'émetteur et invalide le cache OCSP du processus. Accessible par l'API d'admin
+(`POST /api/v1/certificates/{id}/revoke`), la CLI (`h42pki certificate revoke`), la fédération (révocation d'une AC
+fille par sa mère) et, en phase 6, ACME `revokeCert`. Une révocation est définitive.
+
+```mermaid
+sequenceDiagram
+    participant A as API / CLI / fédération
+    participant RS as RevocationService
+    participant DB as Base
+    participant CS as CrlService
+    participant K as Keystore
+    participant OC as Cache OCSP
+    A->>RS: revoke(id, motif, invalidity_date?)
+    RS->>DB: Certificate revoked (+ AC fille) + AuditLog (transaction)
+    RS->>OC: invalider (émetteur, numéro de série)
+    RS->>CS: ensure_fresh(émetteur, force) si CRL activée
+    CS->>K: clé de l'AC
+    CS->>DB: Crl n+1 (DER) + AuditLog crl.generate
+    Note over DB: /crl/{name}.crl sert la dernière CRL stockée ;<br/>/ocsp relit le statut à chaque requête
+```
 
 ### 5.3 Inscription d'une AC fille
 
@@ -425,19 +467,19 @@ Deux listeners, servis par le lanceur (ADR-0012) : **HTTP** (`H42_PKI_HTTP_PORT`
 les routes publiques sont servies sur les deux, tout le reste **uniquement en HTTPS**.
 
 Mise en œuvre : le protocole du lanceur pose `scope["extensions"]["h42pki.listener"]` (`"http"` ou `"https"`) sur
-chaque requête ; un middleware ASGI (`api/listener.py`) laisse passer en HTTP `/`, `/health`, `/favicon.ico` et `/ca/*` seulement
-(`/crl/*`, `/ocsp` et `/scep` s'y ajouteront avec leur phase) et renvoie pour tout le reste un `404`
+chaque requête ; un middleware ASGI (`api/listener.py`) laisse passer en HTTP `/`, `/health`, `/favicon.ico`, `/ca/*`,
+`/crl/*` et `/ocsp` seulement (`/scep` s'y ajoutera avec sa phase) et renvoie pour tout le reste un `404`
 `application/problem+json` (« this route is only served over HTTPS »), sans redirection. `/docs` et
 `/openapi.json` sont donc HTTPS uniquement. Sans l'extension (application appelée directement, comme
 `httpx.ASGITransport` dans les tests), toutes les routes répondent : ce mode est réservé aux tests.
 
 | Préfixe | HTTP | HTTPS | Auth | Contenu |
 |---|---|---|---|---|
-| `/`, `/health` | oui | oui | aucune | `{"name", "version"}` ; santé : `status` (`ok`, `degraded`, `unavailable` → 503), `database`, `heartbeat_age_seconds`, `authority` (statut de l'AC locale), `listeners`, `https` (`serving`, `waiting`, `disabled`), `https_certificate` (`not_after`, `renewal` `ok`/`failing`), `warnings` — statuts seulement, jamais de secret |
+| `/`, `/health` | oui | oui | aucune | `{"name", "version"}` ; santé : `status` (`ok`, `degraded`, `unavailable` → 503), `database`, `heartbeat_age_seconds`, `authority` (statut de l'AC locale), `listeners`, `https` (`serving`, `waiting`, `disabled`), `https_certificate` (`not_after`, `renewal` `ok`/`failing`), `crl` (`enabled`, `crl_number`, `this_update`, `next_update`, `age_seconds`, `refresh`), `ocsp` (`enabled`/`disabled`), `parent_check` (`result`, `checked_at`), `warnings` — statuts seulement, jamais de secret |
 | `/favicon.ico` | oui | oui | aucune | favicon du projet (`image/x-icon`, ICO 16/32/48 px, `src/h42pki/static/`, charte graphique), lu une fois au démarrage ; cache `ETag` / 304, `Cache-Control: public, max-age=86400` ; absent de l'OpenAPI |
 | `/ca/{name}.crt`, `/ca/{name}.pem`, `/ca/chain.pem` | oui | oui | aucune | AIA caIssuers (DER), PEM, chaîne avec la racine — **implémenté (lot 5b)**, cache `ETag` / 304 |
-| `/crl/{name}.crl`, `/crl/{name}-delta.crl` | oui | oui | aucune | CRL DER (`application/pkix-crl`) — phase 3 |
-| `/ocsp` (POST), `/ocsp/{b64}` (GET) | oui | oui | aucune | `application/ocsp-request` / `-response` — phase 3 |
+| `/crl/{name}.crl` | oui | oui | aucune | CRL DER (`application/pkix-crl`), dernière CRL stockée, cache `ETag` / 304 — **implémenté (phase 3)**, `docs/protocols/crl.md` |
+| `/ocsp` (POST), `/ocsp/{b64}` (GET) | oui | oui | aucune | `application/ocsp-request` / `-response`, signé par l'AC, cache — **implémenté (phase 3)**, `docs/protocols/ocsp.md` |
 | `/scep[/{profile}]` (`pkiclient.exe` accepté) | oui | oui | challenge password | CMS (`application/x-pki-message`) — phase 5 |
 | `/.well-known/est/[{label}/]...` | **non** | oui | certificat client (mTLS facultatif) ou Basic | PKCS#10 / PKCS#7 base64 — phase 4 |
 | `/acme/...` | **non** | oui | JWS (RFC 8555) | `application/jose+json` — phase 6 |
@@ -458,14 +500,16 @@ routage (404 route inconnue, 405 méthode non permise, avec l'en-tête `Allow`) 
 | POST | `/api/v1/private-keys` `{algorithm}` | 201 `{id, algorithm, backend, public_key_pem, created_at}` |
 | GET | `/api/v1/private-keys/{id}` | 200, 404 |
 | DELETE | `/api/v1/private-keys/{id}` | 204, 404, 409 (clé utilisée par un certificat ou une AC) |
-| GET | `/api/v1/authority` | AC locale : `name`, `status`, `mode` (`root` / `subordinate`), `parent` (nom, sujet, empreinte, URL), `certificate_id`, `subject_dn`, `sha256_fingerprint`, dates, `path_length`, `key_algorithm`, `public_base_url` ; 404 si aucune |
+| GET | `/api/v1/authority` | AC locale courante : `name`, `status`, `mode` (`root` / `subordinate`), `parent` (nom, sujet, empreinte, URL), `certificate_id`, `subject_dn`, `sha256_fingerprint`, dates, `path_length`, `key_algorithm`, `public_base_url`, `crl_enabled`, `ocsp_enabled` ; 404 si aucune |
 | GET | `/api/v1/profiles` · `/api/v1/profiles/{name}` | profils (lecture seule ; 405 en écriture), avec `enabled` et `internal` |
 | GET | `/api/v1/config` | `{items: [{key, value, default, origin, level, listeners, description, updated_at, updated_by}]}` : réglages effectifs ; 405 en écriture, qui se fait par la CLI jusqu'à l'authentification (ADR-0011) |
 | POST | `/api/v1/requests` `{csr_pem, profile, validity_days?}` | 201, `status` = `issued` (avec `certificate_id`) ou `pending` ; 422 si le profil refuse la demande, est désactivé ou interne ; 503 sans AC active |
 | GET | `/api/v1/requests` (`?status=`) · `/api/v1/requests/{id}` | demandes, avec `validity_truncated` et `ignored_extensions` |
 | POST | `/api/v1/requests/{id}/approve` · `/api/v1/requests/{id}/reject` `{reason}` | décision manuelle ; 409 si déjà décidée, ou approbation d'un profil désactivé |
 | GET | `/api/v1/certificates` (`status`, `profile`, `channel`, `q`, `limit` ≤ 500, `offset`) | `{items, total, limit, offset}`, plus récents d'abord ; `status` effectif (un `valid` échu est `expired`, B34) |
-| GET | `/api/v1/certificates/{id}` | 200 `{id, serial_hex, subject_dn, status, not_before, not_after, sha256_fingerprint, profile, channel, issuer, issuer_id, sans, ca_issuers_url}` |
+| GET | `/api/v1/certificates/{id}` | 200 `{id, serial_hex, subject_dn, status, not_before, not_after, sha256_fingerprint, profile, channel, issuer, issuer_id, sans, ca_issuers_url, ocsp_url, crl_url, revoked_at, revocation_reason, invalidity_date}` |
+| POST | `/api/v1/certificates/{id}/revoke` `{reason, invalidity_date?}` | 200 certificat révoqué ; 404 ; 409 (déjà révoqué, AC locale, `service_tls`, non émis ici) ; 422 (motif inconnu ou de suspension, date future ou sans fuseau) ; 503 sans passphrase si la CRL doit être signée |
+| GET | `/api/v1/crl` | métadonnées de la CRL de l'AC locale `{authority, crl_number, this_update, next_update, entries, url}` ; 404 sans CRL |
 | GET | `/api/v1/certificates/{id}/chain.pem` | certificat puis émetteurs jusqu'à la racine incluse (`application/x-pem-file`) |
 | GET | `/api/v1/certificates/{id}.pem` | `application/x-pem-file` |
 | GET | `/api/v1/certificates/{id}.crt` | `application/pkix-cert` (DER) |
@@ -473,8 +517,7 @@ routage (404 route inconnue, 405 méthode non permise, avec l'en-tête `Allow`) 
 **Supprimés au lot 5a** (ADR-0010) : `POST /api/v1/certificates` et `POST /api/v1/certificates/{id}/self-sign`
 (404/405). Une AC racine se crée par `h42pki authority init`.
 
-**À venir** : jetons d'API (avant la release, ADR-0008), `/crl/*` et `/ocsp` (phase 3), protocoles d'enrôlement
-(phases 4 à 6).
+**À venir** : jetons d'API (avant la release, ADR-0008), protocoles d'enrôlement (phases 4 à 6).
 
 **TLS et mTLS (ADR-0012, validé par l'expérience `docs/spikes/2026-11-tls-launcher.md`).**
 - Le listener HTTPS termine TLS lui-même (TLS 1.2 minimum) avec le certificat `service_tls` de l'AC (ADR-0013).
@@ -548,8 +591,8 @@ ce qui le concerne. Chaque réglage déclare son niveau d'application :
 | `logging.format` | `text` | process | 1.1 |
 | `database.pool_size` | défaut Tortoise (ignoré en SQLite) | process | 1.1 |
 | `keystore.backend` | `software` | process | phase 7 |
-| `crl.validity_hours` / `crl.regenerate_before_hours` / `crl.delta_enabled` | 168 / 48 / `false` | hot | phase 3 |
-| `ocsp.enabled` / `ocsp.responder` / `ocsp.response_validity_hours` | `true` / `delegated` / 24 | hot | phase 3 |
+| `crl.validity_hours` / `crl.regenerate_before_hours` | 168 (≤ 8784) / 48 (< validité) | hot | 3 |
+| `ocsp.response_validity_hours` | 24 (≤ 168), jamais au-delà du `next_update` de la CRL | hot | 3 |
 | `est.enabled`, `est.default_profile`, `est.client_trust_anchors` | `false`, … | hot | phase 4 |
 | `scep.enabled`, `scep.allow_legacy_crypto` | `false`, `false` | hot | phase 5 |
 | `acme.enabled`, `acme.default_profile`, `acme.require_eab`, `acme.allowed_domains`, `acme.dns_resolvers` | `false`, `tls_server`, `false`, … | hot | phase 6 |
@@ -559,7 +602,8 @@ Uvicorn (`keep_alive_timeout`, `limit_concurrency`, `backlog`, `max_header_size`
 contexte TLS est construit **avant** l'arrêt de l'ancien listener : s'il échoue, l'ancien reste en service.
 
 `Authority.public_base_url` n'est pas un réglage : il appartient à l'AC et se modifie par
-`h42pki authority update`.
+`h42pki authority update`. `crl_enabled` et `ocsp_enabled` non plus : ils sont choisis par `authority init` et ne
+changent plus (ADR-0017) ; il n'y a donc ni CRL delta, ni réglage `ocsp.enabled` / `ocsp.responder`.
 
 ## 8. Sécurité
 
@@ -584,11 +628,13 @@ contexte TLS est construit **avant** l'arrêt de l'ancien listener : s'il échou
 
 Pour limiter l'usage de la clé de l'AC :
 
-- **Répondeur OCSP délégué** : certificat dédié (EKU `id-kp-OCSPSigning`, extension `id-pkix-ocsp-nocheck`,
-  validité courte, renouvelé automatiquement).
+- **OCSP** : **pas de répondeur délégué** (ADR-0017). Les réponses sont signées par la clé de l'AC ; pour limiter
+  son usage, les réponses sans nonce sont mises en cache (mi-validité, statut inchangé). Une requête avec nonce
+  provoque une signature (B54). Avec PKCS#11 (phase 7), un répondeur délégué pourra revenir (ADR-0004).
 - **Certificat RA SCEP** : clé RSA dédiée (le chiffrement CMS exige RSA + `keyEncipherment`), signée par l'AC.
 - **Certificat du serveur HTTPS** : clé dédiée (`purpose = tls`), certificat `service_tls` de 47 jours
-  renouvelé automatiquement (ADR-0013). La clé de l'AC n'est jamais utilisée pour TLS.
+  renouvelé automatiquement (ADR-0013) ; les clés et certificats remplacés et expirés sont purgés chaque jour (B44).
+  La clé de l'AC n'est jamais utilisée pour TLS.
 
 ### 8.3 Renouvellement de l'AC
 
@@ -633,7 +679,8 @@ Docker reste compatible (ADR-0016).
   est perdu), `loginctl enable-linger` pour l'utilisateur qui fait tourner les conteneurs. Déploiement durable :
   unités systemd Quadlet, à documenter en phase 7.
 - **Mode « à vide »** : avec HTTP et HTTPS désactivés, le conteneur ne sert rien sur le réseau ; les tâches
-  continuent et la CLI s'utilise par `podman exec`. Utile pour une racine hors ligne.
+  continuent et la CLI s'utilise par `podman exec`. Utile pour une racine hors ligne, **créée sans `--crl` ni
+  `--ocsp`** : une AC avec révocation refuse ce mode (`h42pki serve` sort avec le code 2, ADR-0017).
 - **Santé** : `HEALTHCHECK` de l'image (format docker) par `h42pki healthcheck` (indépendant des ports : la base répond et le battement
   du lanceur a moins de 60 s) ; `GET /health` sur chaque listener actif pour la supervision et la future interface
   web. Le battement est un petit fichier du dossier temporaire (`h42pki-<empreinte de l'URL de la base>.heartbeat`),

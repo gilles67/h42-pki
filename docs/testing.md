@@ -98,9 +98,9 @@ expiration, matériel chargé avec la clé chiffrée), `tests/unit/core/test_ser
 
 Limites connues :
 - sous **Windows**, SIGTERM ne peut pas être envoyé à un processus : les assertions de U14 ne tournent que sous
-  POSIX (WSL) ;
-- sous **WSL1**, SQLite en mode WAL ne se partage pas entre processus (B42) : les deux tests de `test_process.py`
-  qui lancent la CLI pendant que le serveur tourne y sont ignorés ;
+  POSIX ;
+- les tests qui lancent la CLI pendant que le serveur tourne demandent un Linux réel, WSL2, Windows ou un conteneur
+  (B42, clos : WSL1 n'est plus un environnement de développement) ;
 - non couverts (non implémentés) : ajout à chaud d'une ancre de confiance et passage à chaud du mTLS facultatif à
   obligatoire, sans redémarrer le listener.
 
@@ -108,23 +108,35 @@ Limites connues :
 
 Détail dans `docs/protocols/federation.md` §7. Tortoise étant global au processus, la mère tourne dans un
 **sous-processus** (`tests/integration/server/instance.py`) et se pilote par son API HTTPS, jamais par sa CLI pendant
-qu'elle tourne : ces tests fonctionnent donc aussi sous WSL1 (B42). Sorties de la CLI : toujours par
-`tests/cli_helpers.plain`.
+qu'elle tourne. Le contrôle du statut d'une fille auprès de sa mère (`test_parent_check.py`, phase 3) suit le même
+modèle. Sorties de la CLI : toujours par `tests/cli_helpers.plain`.
 
-## 5. Interopérabilité (`deploy/compose.interop.yaml`)
+## 4 quater. Révocation (phase 3)
 
-Services : `root`, `intermediate`, `issuing` (h42-pki, HTTP et HTTPS intégrés, sans reverse-proxy, ADR-0012),
-`web` (cible http-01),
-`dns` (cible dns-01), `tools` (openssl, sscep, curl, lego). Les tests `interop` pilotent `podman-compose exec tools …` (Podman, moteur de référence, ADR-0016)
-et vérifient les codes de retour. Scénarios minimum :
+`docs/protocols/crl.md` §5 et `ocsp.md` §6. Unitaires `test_crl.py`, `test_ocsp.py` (fixture
+`tests/fixtures/ocsp-two-certids.der`, produite par `openssl`, `cryptography` ne sachant pas construire deux CertID) ;
+intégration `test_revocation.py`, `test_cli_revocation.py`, `test_revocation_options.py`, `test_ocsp.py`,
+`test_tasks.py` (`time_machine`), `test_health_revocation.py`, `server/test_parent_check.py`,
+`server/test_process.py` (mode « à vide » refusé avec révocation). Non-régression : B34, B41, B44.
 
-| Scénario | Outil |
-|---|---|
-| Chaîne racine → intermédiaire → émettrice valide | `openssl verify` |
-| Révocation visible dans la CRL et en OCSP | `openssl crl`, `openssl ocsp` |
-| Enrôlement / réenrôlement EST | `curl` + `openssl pkcs7` |
-| Enrôlement SCEP | `sscep getca`, `sscep enroll` |
-| Émission ACME http-01 et dns-01, révocation | `lego` |
+## 5. Interopérabilité (`-m interop`)
+
+Outils de l'hôte (`openssl`, `curl`, `bash`) et moteur de conteneurs (Podman par défaut, ADR-0016) ; pas de conteneur
+`tools` dédié :
+
+- `tests/interop/test_openssl.py`, sans conteneur : certificats lus et vérifiés par `openssl` ; CRL (`openssl crl
+  -inform DER -text`, `openssl verify -crl_check`) ; OCSP (`openssl ocsp -reqout` puis `-reqin -respin`, avec et sans
+  nonce) ;
+- `tests/interop/test_compose.py` : `deploy/bootstrap.sh` (hiérarchie `root`, `intermediate`, `issuing` de
+  `deploy/compose.yaml`, toutes avec `--crl --ocsp`) puis `deploy/revocation-test.sh`.
+
+| Scénario | Outil | État |
+|---|---|---|
+| Chaîne racine → intermédiaire → émettrice valide | `openssl verify` | ✅ phase 2 |
+| Révocation visible dans la CRL et en OCSP, émettrice révoquée par l'intermédiaire | `openssl crl`, `openssl verify -crl_check[_all]`, `openssl ocsp` | ✅ phase 3 |
+| Enrôlement / réenrôlement EST | `curl` + `openssl pkcs7` | phase 4 |
+| Enrôlement SCEP | `sscep getca`, `sscep enroll` | phase 5 |
+| Émission ACME http-01 et dns-01, révocation | `lego` | phase 6 |
 
 ## 6. Couverture et qualité
 

@@ -16,8 +16,8 @@ Chaque niveau fournit :
 | API d'administration | gestion clés, profils, certificats, révocation | — | `docs/ARCHITECTURE.md` §6 |
 | Fédération inter-AC | inscription d'une AC fille auprès de son AC mère | — | `docs/protocols/federation.md` |
 | AIA | publication du certificat de l'AC et de la chaîne | RFC 5280 §4.2.2.1 | `docs/protocols/crl.md` |
-| CRL | listes de révocation (complète + delta optionnelle) | RFC 5280 | `docs/protocols/crl.md` |
-| OCSP | statut de révocation en ligne | RFC 6960, RFC 5019, RFC 8954 | `docs/protocols/ocsp.md` |
+| CRL | liste de révocation complète, optionnelle par AC (ADR-0017) | RFC 5280 | `docs/protocols/crl.md` |
+| OCSP | statut en ligne, signé par l'AC, optionnel par AC (ADR-0017) | RFC 6960, RFC 5019, RFC 8954 | `docs/protocols/ocsp.md` |
 | EST | enrôlement sur TLS | RFC 7030 | `docs/protocols/est.md` |
 | SCEP | enrôlement équipements réseau / MDM | RFC 8894 | `docs/protocols/scep.md` |
 | ACME | enrôlement automatisé (type Let's Encrypt) | RFC 8555 (+ RFC 8737, RFC 9773) | `docs/protocols/acme.md` |
@@ -28,11 +28,13 @@ Granian.
 
 ## 2. État actuel du code (important)
 
-**Phases 1, 1.1 et 2 terminées** : outillage, sécurité, modèle de données, API `/api/v1`, AC racine par CLI, profils,
-demandes, émission depuis un CSR, publication `/ca/*` et AIA caIssuers, liste des certificats (phase 1) ; Python 3.13,
-configuration en base, profils désactivables, lanceur HTTP/HTTPS intégré, certificat HTTPS émis par l'AC locale, santé
-(phase 1.1) ; fédération : invitations, inscription d'une AC fille, chaîne complète (phase 2). Le code suit la structure en couches cible ; ce qui n'existe pas encore est marqué « à venir » au §3.
-**Prochaine étape : phase 3 (révocation : CRL et OCSP).**
+**Phases 1, 1.1, 2 et 3 terminées** : outillage, sécurité, modèle de données, API `/api/v1`, AC racine par CLI,
+profils, demandes, émission depuis un CSR, publication `/ca/*` et AIA caIssuers, liste des certificats (phase 1) ;
+Python 3.13, configuration en base, profils désactivables, lanceur HTTP/HTTPS intégré, certificat HTTPS émis par l'AC
+locale, santé (phase 1.1) ; fédération : invitations, inscription d'une AC fille, chaîne complète (phase 2) ;
+révocation : CRL, OCSP, statut `expired` en base, purge, contrôle par une AC fille de son statut (phase 3). Le code
+suit la structure en couches cible ; ce qui n'existe pas encore est marqué « à venir » au §3.
+**Prochaine étape : phase 4 (EST).**
 
 **Décisions du 2026-11-22, en place depuis la phase 1.1** — à respecter :
 - **Configuration en base** (ADR-0011) : hors de la base, seulement une **liste fermée** de variables d'environnement
@@ -54,6 +56,13 @@ configuration en base, profils désactivables, lanceur HTTP/HTTPS intégré, cer
 - **Fédération** (ADR-0015, 2026-11-25) : invitation à usage unique (jeton montré une fois, SHA-256 stocké, jamais
   journalisé ni stocké côté fille), approbation par invitation, épinglage de l'AC mère, inscription =
   `CertificateRequest` (`sub_ca`, canal `federation`). Le préfixe du jeton n'apparaît que dans `core/federation.py`.
+- **Révocation** (ADR-0017, 2026-11-26) : CRL et OCSP **optionnels**, choisis par `h42pki authority init --crl --ocsp`
+  (racine et subordonnée, désactivés par défaut) et **immuables** (`Authority.crl_enabled`, `ocsp_enabled`) ; ils
+  décident du CDP et de l'AIA OCSP inscrits dans **tous** les certificats émis (avec `public_base_url`). Une AC avec
+  révocation **refuse le mode « à vide »**. Une CRL complète par AC, pas de delta ; OCSP **signé par la clé de l'AC**
+  (pas de répondeur délégué) avec cache des réponses sans nonce ; **pas de suspension** (`certificate_hold`,
+  `remove_from_crl` refusés). Une AC fille contrôle chaque jour son statut auprès de l'OCSP de sa mère ; `revoked` →
+  plus aucune émission (503), publication maintenue.
 
 - **Socle** : `config.py` (`Settings`, variables `H42_PKI_*`, `H42_PKI_*_FILE`, secrets de conteneur (Podman ou Docker) dans `/run/secrets`
   ou `H42_PKI_SECRETS_DIR`, contrôle des permissions des fichiers de secrets), `db.py` (config Tortoise), `main.py`
@@ -64,7 +73,9 @@ configuration en base, profils désactivables, lanceur HTTP/HTTPS intégré, cer
   à chaud du certificat, redémarrage d'un seul listener, mode « à vide », battement), `protocol.py` (sous-classe de
   `H11Protocol` d'Uvicorn : extensions `h42pki.listener` et `tls`), `tls.py` (extension ASGI `tls`),
   `ssl_context.py` (`SSLContext`, clé chiffrée via un dossier temporaire privé), `run.py` (base, journaux, signaux).
-- **`tasks/`** : `tls_service.py` (renouvellement quotidien du certificat HTTPS, nouvelle tentative le lendemain).
+- **`tasks/`** : `tls_service.py` (renouvellement quotidien du certificat HTTPS, nouvelle tentative le lendemain),
+  `periodic.py` (`PeriodicTask` : au démarrage puis à intervalle, état pour `/health`), `maintenance.py` (CRL toutes les
+  15 min, statut `expired` toutes les heures, purge `service_tls` et contrôle auprès de la mère chaque jour).
 - **`core/`** (pur, synchrone, testé par `tests/unit/core/test_purity.py`) : `keys.py` (`KeyAlgorithm` RSA/EC/Ed25519,
   génération, PKCS#8 DER chiffré, hachage de signature), `names.py` (`NameAttributes`, `Subject`, `rfc4514`),
   `extensions.py` (`Extensions`, `validate_for_key`), `profiles.py` (`ProfileSpec`, `BUILTIN_PROFILES`, dont le profil
@@ -72,35 +83,42 @@ configuration en base, profils désactivables, lanceur HTTP/HTTPS intégré, cer
   AIA caIssuers), `publication.py` (`public_base_url`, noms d'AC, URL caIssuers), `inspection.py` (SAN et AIA relus
   depuis le DER), `hostnames.py` (FQDN, noms supplémentaires, CIDR), `settings_schema.py` (`RuntimeSettings`, niveaux
   d'application), `service_tls.py` (quand réémettre le certificat HTTPS), `federation.py` (jeton, contraintes d'une AC
-  fille), `chain.py` (épinglage, chaîne, certificat d'AC reçu), `validity.py`, `serial.py`, `errors.py`.
+  fille), `chain.py` (épinglage, chaîne, certificat d'AC reçu), `crl.py` (CRL, motifs de révocation), `ocsp.py`
+  (requêtes, réponses signées par l'AC, vérification d'une réponse côté fille), `validity.py`, `serial.py`,
+  `errors.py`. `issuance.py` pose aussi le CDP et l'AIA OCSP.
 - **`keystore/`** : `KeyStore` (protocole : `generate`, `load`, `export_encrypted` pour la clé TLS), `SoftwareKeyStore` (seul détenteur de la
   passphrase), `get_keystore(settings)`. Seul `keystore` appelle les fonctions de (dé)chiffrement de `core.keys`.
 - **`services/`** : `AuthorityService` (`init_root`, AC locale), `IssuanceService` (`submit` → `auto_approve` ou
   `approve` / `reject` → `_issue`, **seul chemin d'émission**, y compris `issue_service_certificate`), `ProfileService`
   (synchronisation des profils intégrés, lecture, activation), `SettingsService` / `SettingsWatcher` (réglages en
   base, relecture par révision), `FederationService` (mère), `SubordinateService` et `federation_client` (fille), `TlsServiceManager` (certificat `service_tls`), `PublicationService` (certificats publiés, chaîne), `KeyService`, `CertificateService`
-  (lecture, recherche paginée, chaîne, statut effectif). Transactions, audit, crypto via `asyncio.to_thread` ; le
+  (lecture, recherche paginée, chaîne, statut effectif), `RevocationService` (seul chemin de révocation), `CrlService`
+  (génération, fraîcheur, publication), `OcspService` / `OcspCache` (répondeur), `MaintenanceService` (statut
+  `expired`, purge), `ParentCheckService` (statut de l'AC fille auprès de sa mère). Transactions, audit, crypto via `asyncio.to_thread` ; le
   keystore est passé explicitement et n'est construit que pour les opérations sur une clé (passphrase facultative
   ailleurs, B32).
 - **Modèles** `models/` (un fichier par agrégat : `private_key` (`purpose` `ca|tls`), `authority`, `profile`,
-  `certificate`, `request` (canal `system`), `audit`, `setting` (`Setting`, `SettingsRevision`), `federation` (`FederationInvitation`), base
+  `certificate`, `request` (canal `system`), `audit`, `setting` (`Setting`, `SettingsRevision`), `federation` (`FederationInvitation`), `crl` (`Crl`), base
   `TimestampedModel`) : FK sans cycle (B27), stockage DER, `AuditLog.record()`. Un certificat est
   toujours enregistré signé.
 - **API** : `api/admin/` (`routes.py`, `schemas.py` écrits à la main, `extra="forbid"`, `deps.py` : keystore,
   services et `current_actor` = `"anonymous"`, ADR-0008), `api/problems.py` (toutes les erreurs en
   `application/problem+json`, schéma `Problem` déclaré dans l'OpenAPI), `api/public/` (`/ca/{name}.crt|.pem`,
-  `/ca/chain.pem` en HTTP, cache `ETag` / 304 partagé dans `cache.py`, aucune clé touchée ; `/favicon.ico`, fichier
-  de `static/` lu une fois par `assets.py`), `api/health.py` (`GET /`, `GET /health`),
+  `/ca/chain.pem` et `/crl/{name}.crl` en HTTP, cache `ETag` / 304 partagé dans `cache.py`, aucune clé touchée ;
+  `/favicon.ico`, fichier de `static/` lu une fois par `assets.py`), `api/ocsp/` (`POST /ocsp`, `GET /ocsp/{requête}`,
+  HTTP et HTTPS), `api/health.py` (`GET /`, `GET /health`, dont CRL, OCSP et contrôle auprès de la mère),
   `api/listener.py` (routes publiques seules en HTTP), `api/client_cert.py` (certificat client d'une requête),
   `api/federation/` (invitations, `enroll`, AC filles ; HTTPS seulement).
-- **CLI** `cli/` : `version`, `serve` (lanceur, `--reload`), `healthcheck`, `authority init|status|export|update|abandon`,
-  `request list|show|approve|reject`, `federation invite|invitations|revoke-invitation|children|revoke-child`,
-  `profile list|show|enable|disable`, `certificate list|export`, `config show|get|set|unset` ; `_runtime.py`
+- **CLI** `cli/` : `version`, `serve` (lanceur, `--reload`), `healthcheck`,
+  `authority init|status|export|update|abandon|check-parent`, `request list|show|approve|reject`,
+  `federation invite|invitations|revoke-invitation|children|revoke-child`, `profile list|show|enable|disable`,
+  `certificate list|export|revoke`, `crl show|generate`, `config show|get|set|unset` ; `_runtime.py`
   ouvre la même base que le serveur et transforme les erreurs en message
   lisible (code de sortie non nul).
 - **Règles métier** : le seul certificat auto-signé est celui de l'AC racine, créé par `h42pki authority init`
   (ADR-0010) ; tout le reste passe par un profil intégré (lecture seule, ADR-0009) via `IssuanceService`. AIA
-  caIssuers seulement si l'AC a une `public_base_url` ; pas de CDP ni d'OCSP dans les certificats avant la phase 3.
+  caIssuers, CDP (`--crl`) et AIA OCSP (`--ocsp`) seulement si l'AC a une `public_base_url`. Toute révocation passe
+  par `RevocationService` ; la publication (`/crl/*`) ne signe jamais ; seule une AC `active` émet.
 - mypy est `strict` sur tout `src/`, sans exemption.
 - Les expérimentations précédentes (`certold.py`, `certdb.py`, `certapp.py`, `main.py`, `cli.py` : stockage en
   fichiers JSON + config TOML, routes `/api/pki/ca/*`) et `src/test.py` ont été **supprimées** le 2026-11-21. Ne pas
@@ -123,23 +141,24 @@ src/h42pki/
   core/              # DOMAINE CRYPTO PUR : synchrone, sans I/O, sans ORM, sans FastAPI
     keys.py  names.py  extensions.py  profiles.py  csr.py  issuance.py  publication.py  inspection.py
     hostnames.py  settings_schema.py  service_tls.py  federation.py  chain.py  validity.py  serial.py
-    errors.py                                                                   — en place
-    crl.py  ocsp.py  cms.py                                           — à venir
+    crl.py  ocsp.py  errors.py                                                  — en place
+    cms.py                                                                      — à venir
   keystore/          # base.py (KeyStore), software.py — en place ; pkcs11.py en phase 7
-  models/            # private_key, authority, profile, certificate, request, audit, setting, federation — en place
+  models/            # private_key, authority, profile, certificate, request, audit, setting, federation, crl
   services/          # authority, issuance, profiles, publication, keys, certificates, settings, tls_service,
-                     # federation, federation_client, subordinate, x509_fields — en place ;
-                     # revocation, crl, ocsp à venir
+                     # federation, federation_client, subordinate, x509_fields, revocation, crl, ocsp,
+                     # maintenance, parent_check — en place
   api/
     problems.py      # handlers application/problem+json (RFC 9457)        — en place
     listener.py  client_cert.py  health.py                                  — en place
     admin/           # /api/v1/... (routes, schemas, deps ; sans auth jusqu'à la release, ADR-0008) — en place
-    public/          # /ca/* (HTTP public, AIA caIssuers, chaîne), /favicon.ico — en place ; /crl/* en phase 3
+    public/          # /ca/* (AIA caIssuers, chaîne), /crl/*, /favicon.ico — en place
     federation/      # /api/v1/federation — en place
-    ocsp/  est/  scep/  acme/
-  tasks/             # tâches périodiques : tls_service (certificat HTTPS) — en place ; CRL, purges, expirations à venir
-  cli/               # Typer : authority, profile, certificate, request, federation, config, healthcheck, serve
-deploy/              # compose.yaml (3 niveaux), bootstrap.sh, smoke-test.sh, engine.sh (choix du moteur)
+    ocsp/            # /ocsp — en place
+    est/  scep/  acme/
+  tasks/             # tls_service, periodic, maintenance (CRL, expired, purge, contrôle auprès de la mère)
+  cli/               # Typer : authority, profile, certificate, crl, request, federation, config, healthcheck, serve
+deploy/              # compose.yaml (3 niveaux), bootstrap.sh, revocation-test.sh, smoke-test.sh, engine.sh
 tests/
   unit/  integration/  interop/  conftest.py
 docs/
@@ -168,9 +187,12 @@ uv run h42pki healthcheck                 # base + battement du lanceur (code 0 
 uv run h42pki config show                 # réglages en base ; `config set KEY VALUE`, `config unset KEY`
 uv run h42pki --help                      # CLI
 uv run h42pki authority init --name root --common-name "Test Root CA"   # AC racine locale (base data/)
+#   --crl --ocsp --public-base-url http://… : révocation (ADR-0017), interdit en mode « à vide »
+uv run h42pki certificate revoke ID --reason key_compromise           # puis `crl show`, `authority check-parent`
 podman build --format docker -t h42-pki:dev .   # image (non-root, /data, `h42pki serve`, ports 8080 et 8443) ;
                                          # --format docker garde HEALTHCHECK (ADR-0016)
-deploy/bootstrap.sh                      # hiérarchie racine + intermédiaire + émettrice (Podman ; Docker en option)
+deploy/bootstrap.sh [--fresh]            # hiérarchie racine + intermédiaire + émettrice, --crl --ocsp (Podman)
+deploy/revocation-test.sh                # ensuite : CRL et OCSP vérifiés par openssl, émettrice révoquée
 ```
 
 Avant de déclarer une tâche terminée : `ruff check`, `ruff format --check`, `mypy src` et `pytest` passent.
@@ -243,7 +265,7 @@ Stratégie complète : `docs/testing.md`. L'essentiel :
 - Base Tortoise **en mémoire** (`sqlite://:memory:`) réinitialisée par test via fixture dans `tests/conftest.py`.
 - Clés de test : générées **une fois par session** (fixtures `scope="session"`), RSA 2048 / EC P-256.
   Ne jamais générer de RSA 4096 dans un test unitaire.
-- Temps : `time-machine` pour expiration, `nextUpdate` CRL, nonces ACME.
+- Temps : `time-machine` pour expiration, `nextUpdate` CRL, cache OCSP, nonces ACME.
 - Chaque bug corrigé ⇒ un test de non-régression. Chaque endpoint de protocole ⇒ au moins un test
   qui vérifie la sortie avec `cryptography` (parsing DER) **et** un test d'interop marqué `@pytest.mark.interop`.
 - Lanceur : les scénarios U1 à U14 de `docs/spikes/2026-11-tls-launcher.md` sont repris comme tests de

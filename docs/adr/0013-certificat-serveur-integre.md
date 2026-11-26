@@ -63,6 +63,6 @@ Décisions inchangées ; précisions apportées par l'implémentation :
   relais une fois le HTTPS ouvert. Un changement des réglages `tls_service.*` déclenche une vérification immédiate,
   ce qui permet de forcer un renouvellement sans commande dédiée.
 - **HTTPS désactivé** (`H42_PKI_HTTPS_ENABLED=false`) : aucun certificat n'est émis.
-- **Limites connues** : les anciennes clés et anciens certificats restent en base (B44, purge en phase 3) ; tant que
-  les certificats n'ont ni CDP ni OCSP (phase 3), les clients Windows qui exigent une information de révocation
-  refusent ce HTTPS (B41).
+- **Limites connues** (levées en phase 3, ADR-0017) : les anciennes clés et anciens certificats remplacés et expirés
+  sont purgés chaque jour (B44) ; le certificat porte CDP et AIA OCSP quand l'AC a été créée avec `--crl` / `--ocsp`
+  et une `public_base_url` (B41). Une AC révoquée par sa mère ne renouvelle plus ce certificat.

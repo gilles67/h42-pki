@@ -28,6 +28,22 @@ The script:
 3. issues a `tls_server` certificate with the issuing CA;
 4. runs `openssl verify -CAfile root.pem -untrusted chain.pem leaf.pem`.
 
+Every CA is created with `--crl --ocsp` and a public base URL `http://<service>.pki.test:8080`
+([ADR-0017](../docs/adr/0017-revocation.md)); `compose.yaml` gives each container that name as a network alias, so
+that a child reaches the OCSP of its parent.
+
+## Revocation
+
+```bash
+deploy/revocation-test.sh          # after bootstrap.sh, same output directory (deploy/out by default)
+```
+
+It issues two certificates from the issuing CA, revokes one, and checks with `openssl`: the CRL (`openssl crl
+-text`, `openssl verify -crl_check` and `-crl_check_all`), OCSP (`openssl ocsp`, good then revoked, with and without
+`-no_nonce`). Then the intermediate revokes the issuing CA: `h42pki authority check-parent` on the issuing CA sees
+it, issuance is refused (503), the chain fails with every CRL, and the issuing CA still answers OCSP. The hierarchy
+ends with a revoked issuing CA: run `deploy/bootstrap.sh --fresh` before using it again.
+
 Results are in `deploy/out/` (ignored by git). `podman-compose -f deploy/compose.yaml down
 --volumes` removes everything, CA keys included.
 
@@ -77,7 +93,8 @@ the parent.
   not read it.
 - Containers reach each other by service name (`https://root:8443`) through the network DNS (netavark and
   aardvark-dns, installed with Podman on Debian).
-- Validated on 2026-11-25 with Debian 13, Podman 5.4.2 (rootless) and podman-compose 1.3.0.
+- Validated on 2026-11-25 with Debian 13, Podman 5.4.2 (rootless) and podman-compose 1.3.0; revocation scenario
+  validated on 2026-11-26 with the same versions (network aliases included).
 
 ## Other files
 

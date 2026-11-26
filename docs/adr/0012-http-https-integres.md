@@ -100,4 +100,4 @@ Décisions inchangées ; précisions apportées par l'implémentation (`src/h42p
 - **Développement** : `h42pki serve --reload` relance tout le processus lanceur avec `watchfiles.run_process` (le
   rechargement d'Uvicorn ne sait relancer qu'une application, pas le lanceur).
 - **Environnement** : sous WSL1, SQLite en mode WAL ne se partage pas entre deux processus (B42) ; WSL2, Docker et
-  Windows ne sont pas concernés.
+  Windows ne sont pas concernés (B42, clos en phase 3 : développement sous Debian 13).

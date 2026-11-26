@@ -1,7 +1,7 @@
 # Fédération inter-AC (hiérarchie de conteneurs)
 
 Protocole propre à h42-pki : un conteneur « fille » obtient son certificat d'AC auprès d'un conteneur « mère ».
-**Implémenté en phase 2.** Décisions : ADR-0003 (protocole dédié) et ADR-0015 (invitations, épinglage, approbation).
+**Implémenté en phase 2** ; révocation et contrôle du statut par la fille en phase 3 (ADR-0017). Décisions : ADR-0003 (protocole dédié) et ADR-0015 (invitations, épinglage, approbation).
 
 ## 1. Principes
 
@@ -83,7 +83,7 @@ entrées de demande et de certificat. Jamais le jeton.
 ## 4. Côté fille
 
 `h42pki authority init --parent-url URL --parent-fingerprint SHA256 --token - --name … --common-name …
-[--organization …] [--key-algorithm …] [--public-base-url …] [--wait-minutes 10]`
+[--organization …] [--key-algorithm …] [--public-base-url …] [--crl] [--ocsp] [--wait-minutes 10]`
 
 - `--token -` lit le jeton sur l'entrée standard (conseillé : un argument se voit dans `ps` et l'historique).
 - `--validity-days` et `--path-length` sont refusés : la mère décide.
@@ -97,22 +97,34 @@ entrées de demande et de certificat. Jamais le jeton.
 Enregistré sur la mère directe (`kind=parent`) : `federation_url`, `pinned_fingerprint`. Sur l'AC locale en attente :
 `pending_enrollment_id`, `pending_csr_der`, vidés à l'activation. Jamais le jeton.
 
-## 5. Reporté en phase 3
+## 5. Révocation d'une AC fille (phase 3, ADR-0017)
 
-- Contrôle quotidien par la fille de son propre statut (OCSP de la mère, URL dans l'AIA) : si `revoked`, arrêt de
-  toute émission. D'ici là, une AC fille révoquée continue d'émettre sans le savoir.
-- Effet de la révocation pour les clients (CRL, OCSP).
-- Renouvellement d'une AC fille : nouvelle invitation, nouvelle clé (ARCHITECTURE §8.3).
+- **Côté mère** : `federation revoke-child` / `POST /children/{name}/revoke` passe par `RevocationService` (comme
+  `h42pki certificate revoke` sur le certificat de la fille) : certificat et `Authority` de la fille `revoked`, audit
+  `certificate.revoke` et `federation.child_revoke`, CRL de la mère régénérée, cache OCSP invalidé. La passphrase est
+  nécessaire si la mère publie une CRL.
+- **Effet pour les clients** : visible dans la CRL et l'OCSP de la mère, si elle a été créée avec `--crl` / `--ocsp`
+  (une chaîne vérifiée avec `-crl_check_all` est alors refusée).
+- **Côté fille** : contrôle quotidien de son propre statut auprès de l'OCSP de sa mère (URL de l'AIA de son
+  certificat, TLS épinglé si https), et immédiat par `h42pki authority check-parent` (`docs/protocols/ocsp.md` §5).
+  `revoked` : la fille passe `revoked` et refuse toute émission (503), en continuant de publier sa CRL et de répondre
+  en OCSP. Mère injoignable ou sans OCSP : avertissement dans le journal et dans `/health`, rien ne change.
+- `--crl` et `--ocsp` se passent à `h42pki authority init --parent-url …` comme pour une racine ; `--resume` les
+  garde. La première CRL de la fille est publiée dès son activation.
 
+Reporté : renouvellement d'une AC fille (nouvelle invitation, nouvelle clé, ARCHITECTURE §8.3).
 Hors périmètre : NameConstraints, mode `external`, mTLS entre conteneurs.
 
 ## 6. Racine hors ligne
 
 Une racine peut être arrêtée entre deux signatures ; elle doit être **joignable en HTTPS** pendant une inscription.
-Entre deux, elle peut tourner en mode « à vide » (ADR-0012). À traiter avec les CRL en **phase 3** :
-- CRL de la racine à longue validité (par exemple `crl.validity_hours = 4380`) ;
-- **décision ouverte** : qui sert la CRL et le certificat d'une racine arrêtée ? Option proposée :
-  `mirror_parent = true` sur la fille, qui les met en cache et les sert sur sa `public_base_url`.
+Entre deux, elle peut tourner en mode « à vide » (ADR-0012) **seulement si elle a été créée sans `--crl` ni
+`--ocsp`** : une AC avec révocation refuse le mode « à vide » (`h42pki serve`, code 2 ; `authority init` refusé de
+même). C'est la réponse à l'ancienne décision ouverte n° 1 (ADR-0017) : pas de miroir de la CRL de la racine par ses
+filles. Les certificats d'intermédiaires émis par une telle racine ne portent alors ni CDP ni OCSP.
+
+Une racine qui doit publier une CRL reste en ligne (HTTP au moins) ; sa CRL peut avoir une longue validité
+(`crl.validity_hours = 4380`, `crl.regenerate_before_hours = 720`).
 
 ## 7. Tests
 
@@ -123,4 +135,5 @@ Tortoise est global au processus : une mère et une fille ne peuvent pas avoir c
 - `tests/integration/test_subordinate.py` : la fille face à une mère simulée (réponses perdues, incohérentes, attente).
 - `tests/integration/server/test_federation.py` : **mère réelle en sous-processus, en HTTPS**, pilotée par son API ;
   trois niveaux, avec une intermédiaire comme ancre épinglée.
-- `tests/interop/test_compose.py` : `deploy/bootstrap.sh` (Podman par défaut, ADR-0016).
+- `tests/integration/server/test_parent_check.py` : contrôle du statut d'une fille face à une mère réelle.
+- `tests/interop/test_compose.py` : `deploy/bootstrap.sh` puis `deploy/revocation-test.sh` (Podman par défaut, ADR-0016).

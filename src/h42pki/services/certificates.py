@@ -19,7 +19,7 @@ MAX_CHAIN_LENGTH = 16
 def effective_status(certificate: Certificate, now: datetime) -> CertificateStatus:
     """Status as seen by clients: a valid certificate past its not_after is expired (B34).
 
-    Nothing is written: the stored status becomes persistent with the revocation tasks (phase 3).
+    Nothing is written here: the expiry task writes it every hour; this covers the time in between.
     """
     if certificate.status is CertificateStatus.VALID and certificate.not_after <= now:
         return CertificateStatus.EXPIRED

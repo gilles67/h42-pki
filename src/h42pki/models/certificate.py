@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 
 class CertificateStatus(StrEnum):
-    # A certificate is always stored already signed; `on_hold` comes with revocation (phase 3).
+    # A certificate is always stored already signed; no `on_hold`: revocation is final (ADR-0017).
     VALID = "valid"
     REVOKED = "revoked"
     EXPIRED = "expired"

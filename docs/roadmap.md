@@ -53,8 +53,7 @@ Réalisée en cinq lots (1 à 5b) :
 
 **Reporté** :
 - édition des profils et profils non intégrés (avec l'authentification) ;
-- statut `expired` **persistant** (aujourd'hui calculé à la lecture, B34) et CDP / OCSP dans les certificats →
-  phase 3 ;
+- ✅ statut `expired` **persistant** (B34) et CDP / OCSP dans les certificats → faits en phase 3 ;
 - authentification de l'API d'administration → jalon « Première release » (ADR-0008) ;
 - ascendants dans `/ca/chain.pem` → phase 2 (fédération).
 
@@ -100,8 +99,8 @@ désactivés.
 - passage à chaud du mTLS facultatif à obligatoire et ajout d'une ancre de confiance client **sans** redémarrer le
   listener (aujourd'hui `server.client_trust_anchors` est de niveau `listener`) ;
 - vérification de la chaîne d'un certificat client reçu par `Client-Cert` → phase 4 (EST, B45) ;
-- purge des anciennes clés et anciens certificats `service_tls` → tâches de purge, phase 3 (B44) ;
-- CDP / OCSP dans les certificats, attendus par les clients Windows (B41) → phase 3.
+- ✅ purge des anciennes clés et anciens certificats `service_tls` (B44) → faite en phase 3 ;
+- ✅ CDP / OCSP dans les certificats, attendus par les clients Windows (B41) → faits en phase 3.
 
 ## Phase 2 — Hiérarchie (fédération) — ✅ terminée (2026-11-25)
 
@@ -122,19 +121,44 @@ de l'émettrice se vérifie jusqu'à la racine.
 > Debian 13 / Podman 5.4.2 / podman-compose 1.3.0 : `deploy/bootstrap.sh --fresh` aboutit (`leaf.pem: OK`), une fois
 > `up --wait` remplacé par une attente explicite (correctif de script à faire, ADR-0016).
 
-**Reporté en phase 3** : contrôle par la fille de son propre statut (OCSP de la mère), effet visible de la révocation
-d'une AC fille, publication d'une racine arrêtée (décision ouverte n° 1). **Non planifié** : NameConstraints, mode
-`external`, renouvellement d'une AC fille.
+**Reporté en phase 3** (✅ fait) : contrôle par la fille de son propre statut (OCSP de la mère), effet visible de la
+révocation d'une AC fille, publication d'une racine arrêtée (décision ouverte n° 1, close par l'ADR-0017). **Non
+planifié** : NameConstraints, mode `external`, renouvellement d'une AC fille.
 
-## Phase 3 — Révocation : CRL + OCSP
+## Phase 3 — Révocation : CRL + OCSP — ✅ terminée (2026-11-26)
 
-- `RevocationService`, raisons RFC 5280, suspension/levée.
-- Contrôle quotidien par une AC fille de son propre statut auprès de sa mère (reporté de la phase 2).
-- CDP et AIA OCSP ajoutés aux certificats émis (absents jusque-là, lot 5a).
-- `core/crl.py`, `CrlService`, tâche périodique, endpoints `/crl/*` avec cache HTTP.
-- `core/ocsp.py`, répondeur délégué auto-renouvelé, endpoints POST/GET, nonce, cache.
+Décisions : ADR-0017. Réalisée en deux étapes.
+
+- ✅ **Options de l'AC** : `h42pki authority init --crl --ocsp` (racine et subordonnée), désactivées par défaut,
+  immuables (`Authority.crl_enabled`, `ocsp_enabled`) ; une AC avec révocation refuse le mode « à vide » (au démarrage
+  et à `authority init`), ce qui clôt la décision ouverte n° 1.
+- ✅ **Extensions** : CDP `{public_base_url}/crl/{name}.crl` et AIA OCSP `{public_base_url}/ocsp`, non critiques, dans
+  tous les certificats émis (AC filles et `service_tls` compris), jamais sur la racine (B41).
+- ✅ **`RevocationService`** : motifs RFC 5280 sans suspension, 409 (déjà révoqué, AC locale, `service_tls`, non émis
+  ici), audit, CRL régénérée, cache OCSP invalidé ; révocation d'une AC fille par le même chemin. API
+  `POST /api/v1/certificates/{id}/revoke`, CLI `h42pki certificate revoke`.
+- ✅ **CRL** : `core/crl.py`, `CrlService`, table `Crl`, une CRL complète par AC (pas de delta), `GET /crl/{name}.crl`
+  (HTTP et HTTPS, cache, jamais de signature à la demande), `GET /api/v1/crl`, `h42pki crl show|generate`, réglages
+  `crl.validity_hours` / `crl.regenerate_before_hours`, première CRL dès l'activation.
+- ✅ **Tâches** : CRL (15 min), statut `expired` en base (1 h, B34), purge `service_tls` (1 jour, B44), contrôle
+  auprès de la mère (1 jour) ; toutes au démarrage et en mode « à vide ».
+- ✅ **OCSP** : `core/ocsp.py`, `OcspService` / `OcspCache`, `POST /ocsp` et `GET /ocsp/{requête}`, signature par l'AC,
+  nonce, cache des réponses sans nonce, en-têtes RFC 5019, `ocsp.response_validity_hours`.
+- ✅ **Fille** : contrôle de son statut auprès de l'OCSP de sa mère (`h42pki authority check-parent`), `revoked` →
+  plus aucune émission (B50).
+- ✅ **`/health`** : CRL, OCSP, dernier contrôle auprès de la mère.
+- ✅ Tests de processus sous Linux réel (B42), `uv` fonctionnel (B43).
 
 **Fait quand** : scénarios interop CRL/OCSP de `docs/testing.md` §5 passent.
+
+> État au 2026-11-26 : vérifié par les tests (1026, plus 10 d'interop) et sur Debian 13 / Podman 5.4.2 rootless /
+> podman-compose 1.3.0 : `deploy/bootstrap.sh --fresh` puis `deploy/revocation-test.sh` (CRL et OCSP vérifiés par
+> `openssl`, émettrice révoquée par l'intermédiaire puis émission refusée) ; mode « à vide » accepté sans révocation et
+> refusé avec, en conteneur.
+
+**Non retenu** (ADR-0017) : CRL delta, répondeur OCSP délégué, suspension, miroir de la CRL d'une racine arrêtée.
+**Reporté** : OCSP stapling ; répondeur délégué si la clé passe sur PKCS#11 (phase 7) ; limitation des requêtes OCSP
+avec nonce (B54).
 
 ## Phase 4 — EST
 
@@ -178,7 +202,8 @@ Prérequis bloquants avant de taguer une version déployable avec des données �
 
 ## Décisions ouvertes (à trancher par le mainteneur)
 
-1. Publication CRL/certificat d'une racine arrêtée (miroir sur les filles ?) — federation.md §6.
+1. ~~Publication CRL/certificat d'une racine arrêtée~~ → une AC avec CRL ou OCSP ne tourne pas à vide ; une racine
+   hors ligne se crée sans révocation (ADR-0017, 2026-11-26).
 2. ~~Nom du paquet Python~~ → `h42pki` (adopté au lot 1).
 3. Base de production visée : SQLite suffit-elle, ou PostgreSQL dès la phase 1 ?
 4. ~~Approbation des AC filles~~ → choisie par invitation, manuelle par défaut (ADR-0015, 2026-11-25).

@@ -69,7 +69,7 @@ de conteneurs interne, aucune vraie AC. L'authentification reste un prérequis b
 
 ## Conséquences
 
-- La révocation d'une AC fille marque son certificat et son `Authority` ; les clients ne la verront qu'avec les CRL et
-  l'OCSP (phase 3), comme le contrôle par la fille de son propre statut.
+- La révocation d'une AC fille marque son certificat et son `Authority` ; depuis la phase 3 (ADR-0017), elle passe par
+  `RevocationService` : CRL et OCSP de la mère, et contrôle quotidien par la fille de son propre statut.
 - Le nom d'une AC fille révoquée reste pris.
 - Le certificat d'AC ne porte pas de nom h42-pki : la fille nomme ses ascendants `<slug du CN>-<empreinte>`.

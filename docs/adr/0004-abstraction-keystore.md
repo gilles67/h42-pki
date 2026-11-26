@@ -30,6 +30,7 @@ passer un objet qui délègue la signature à un jeton PKCS#11.
 - Les builders de `core` doivent accepter « un signataire » plutôt qu'une clé, ou disposer d'un double chemin
   (`cryptography` direct / assemblage `asn1crypto`).
 - Avec PKCS#11, préférer le répondeur OCSP délégué (clé logicielle) pour ne pas solliciter le jeton à chaque requête.
+  **Phase 3** : l'OCSP est signé directement par la clé de l'AC, avec un cache (ADR-0017) ; à revoir au spike PKCS#11.
 
 ## Mise en œuvre (lot 4, 2026-11-21)
 
