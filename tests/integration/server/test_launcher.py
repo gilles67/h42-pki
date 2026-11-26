@@ -395,8 +395,9 @@ async def test_scheduled_tasks_run_in_idle_mode(
     settings = server_settings(http_enabled=False, https_enabled=False)
     async with run_launcher(settings) as running:
         tasks = running.launcher.status.tasks
-        assert set(tasks) == {"crl", "expiry", "purge"}
-        await wait_for(lambda: all(state.last_run for state in tasks.values()), "the tasks")
+        assert set(tasks) == {"crl", "expiry", "purge", "parent_check"}
+        started = [tasks[name] for name in ("crl", "expiry", "purge")]  # parent_check waits
+        await wait_for(lambda: all(state.last_run for state in started), "the tasks")
         assert not any(state.failing for state in tasks.values())
     assert await Crl.all().count() == 0
 

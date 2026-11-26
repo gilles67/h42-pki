@@ -22,6 +22,7 @@ from h42pki.models import Authority, AuthorityStatus, Certificate
 from h42pki.services import AuthorityService
 from h42pki.services.authority import check_not_idle
 from h42pki.services.crl import CrlService
+from h42pki.services.parent_check import ParentCheck, ParentCheckService, ParentStatus
 from h42pki.services.subordinate import SubordinateService
 
 app = typer.Typer(help="Manage the local certificate authority.", no_args_is_help=True)
@@ -420,3 +421,22 @@ def export(
     else:
         output.write_bytes(data)
         typer.echo(f"Written to {output}", err=True)
+
+
+@app.command("check-parent")
+def check_parent() -> None:
+    """Ask the OCSP of the parent CA about the certificate of this CA, now (daily otherwise).
+
+    Exit code 0 when the parent says good; 1 otherwise. "revoked" stops any issuance here.
+    """
+
+    async def operation(settings: Settings) -> ParentCheck:
+        return await ParentCheckService().check(actor=CLI_ACTOR)
+
+    result = run(operation)
+    if result.result is ParentStatus.GOOD:
+        typer.secho(f"Status with the parent CA: good ({result.detail})", fg=typer.colors.GREEN)
+        return
+    if result.result is ParentStatus.REVOKED:
+        fail(f"the parent CA revoked this CA ({result.detail}): it no longer issues certificates")
+    fail(f"status with the parent CA: {result.result.value} ({result.detail})")

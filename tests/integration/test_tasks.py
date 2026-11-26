@@ -13,6 +13,7 @@ from h42pki.errors import Conflict
 from h42pki.keystore import KeyStore
 from h42pki.models import (
     AuditLog,
+    Authority,
     Certificate,
     CertificateRequest,
     CertificateStatus,
@@ -22,7 +23,7 @@ from h42pki.models import (
 from h42pki.services.crl import CrlService
 from h42pki.services.maintenance import MaintenanceService
 from h42pki.services.tls_service import TlsServiceManager
-from h42pki.tasks.maintenance import crl_task, expiry_task, purge_task
+from h42pki.tasks.maintenance import crl_task, expiry_task, parent_check_task, purge_task
 from h42pki.tasks.periodic import PeriodicTask
 from tests.conftest import IssueFactory, RootFactory
 from tests.x509_helpers import csr_pem, make_csr, name
@@ -197,3 +198,15 @@ async def test_stop_before_the_first_run() -> None:
     await PeriodicTask("test", action, interval=1, first_delay=10).run(stop)
 
     assert runs == []
+
+
+# --- check with the parent --------------------------------------------------------------------
+
+
+async def test_parent_check_task_does_nothing_on_a_root(make_root: RootFactory) -> None:
+    authority = await make_root()
+
+    assert await parent_check_task(first_delay=0).run_once()
+
+    stored = await Authority.get(id=authority.id)
+    assert stored.parent_check_result is None and stored.parent_check_at is None

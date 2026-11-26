@@ -6,7 +6,8 @@
 - A renewed certificate is reloaded into the same ``SSLContext`` (new connections get it).
 - A ``listener`` level setting restarts only the listeners it concerns; ``logging.level`` is
   applied hot; a ``tls_service`` change triggers a certificate check.
-- Scheduled tasks (CRL, expired status, purge) run from the start, idle mode included.
+- Scheduled tasks (CRL, expired status, purge, check with the parent) run from the start, idle
+  mode included.
 - Idle mode: no listener at all; the settings watcher, the scheduled tasks and the heartbeat
   keep running and the CLI stays usable (``podman exec``). Refused for a CA with CRL or OCSP
   (``h42pki serve`` checks it before the launcher starts, ADR-0017).
@@ -44,7 +45,7 @@ from h42pki.server.ssl_context import build_context, load_certificate
 from h42pki.services.authority import AuthorityService
 from h42pki.services.settings import SettingsWatcher
 from h42pki.services.tls_service import TlsMaterial, TlsServiceManager
-from h42pki.tasks.maintenance import crl_task, expiry_task, purge_task
+from h42pki.tasks.maintenance import crl_task, expiry_task, parent_check_task, purge_task
 from h42pki.tasks.periodic import PeriodicTask, TaskState
 from h42pki.tasks.tls_service import TlsRenewalTask
 
@@ -128,11 +129,11 @@ class Launcher:
                 self._manager, self._certificate_renewed, interval=renewal_interval
             )
         self.https_started = asyncio.Event()
-        # CRL, expired status and purge (ADR-0017): run in idle mode too.
+        # CRL, expired status, purge, status with the parent (ADR-0017): idle mode included.
         self._tasks = (
             scheduled_tasks
             if scheduled_tasks is not None
-            else [crl_task(keystore), expiry_task(), purge_task()]
+            else [crl_task(keystore), expiry_task(), purge_task(), parent_check_task()]
         )
         self.status.tasks = {task.name: task.state for task in self._tasks}
 
