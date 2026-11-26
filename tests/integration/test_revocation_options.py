@@ -3,18 +3,24 @@
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 
 import pytest
 from click.testing import Result
+from cryptography import x509
 from httpx import AsyncClient
 from typer.testing import CliRunner
 
 from h42pki.cli import app
 from h42pki.config import ENV_PREFIX, get_settings
+from h42pki.core.inspection import crl_distribution_url, ocsp_url
 from h42pki.core.keys import KeyAlgorithm
 from h42pki.errors import NoActiveAuthority, RevocationNeedsListener
-from h42pki.models import Authority, AuthorityStatus
+from h42pki.keystore import KeyStore
+from h42pki.models import Authority, AuthorityStatus, Certificate, CertificateRequest
+from h42pki.services import IssuanceService
 from h42pki.services.authority import AuthorityService
+from h42pki.services.tls_service import TlsServiceManager
 from tests.cli_helpers import plain
 from tests.conftest import TEST_PASSPHRASE, IssueFactory, RootFactory
 from tests.x509_helpers import csr_pem, make_csr, name
@@ -144,3 +150,76 @@ def test_cli_resume_refuses_options(cli_environment: Path) -> None:
 
     assert result.exit_code == 2
     assert "--resume only takes" in plain(result)
+
+
+# --- URLs written in issued certificates (B41) -------------------------------------------------
+
+BASE = "http://pki.example.test:8080"
+
+
+def revocation_urls(cert: x509.Certificate) -> tuple[str | None, str | None]:
+    return crl_distribution_url(cert), ocsp_url(cert)
+
+
+async def issued(request_id: UUID) -> x509.Certificate:
+    request = await CertificateRequest.get(id=request_id)
+    record = await Certificate.get(id=request.certificate_id)
+    return x509.load_der_x509_certificate(record.der)
+
+
+@pytest.mark.parametrize(
+    ("crl", "ocsp", "base", "expected"),
+    [
+        (True, True, BASE, (f"{BASE}/crl/test-root.crl", f"{BASE}/ocsp")),
+        (True, False, BASE, (f"{BASE}/crl/test-root.crl", None)),
+        (False, True, BASE, (None, f"{BASE}/ocsp")),
+        (False, False, BASE, (None, None)),
+        (True, True, None, (None, None)),  # nowhere to point to without a public base URL
+    ],
+)
+async def test_urls_follow_the_options(
+    make_root: RootFactory,
+    issue: IssueFactory,
+    key_for: KeyFor,
+    crl: bool,
+    ocsp: bool,
+    base: str | None,
+    expected: tuple[str | None, str | None],
+) -> None:
+    authority = await make_root(crl=crl, ocsp=ocsp, public_base_url=base)
+
+    leaf = await issued((await issue("tls_server", server_csr(key_for))).id)
+    root = x509.load_der_x509_certificate((await Certificate.get(authority=authority)).der)
+
+    assert revocation_urls(leaf) == expected
+    assert revocation_urls(root) == (None, None)  # never on the root certificate itself
+
+
+async def test_urls_in_sub_ca_and_service_tls_certificates(
+    make_root: RootFactory, keystore: KeyStore, key_for: KeyFor
+) -> None:
+    await make_root(crl=True, ocsp=True, public_base_url=BASE)
+    expected = (f"{BASE}/crl/test-root.crl", f"{BASE}/ocsp")
+    service = IssuanceService(keystore)
+    csr = csr_pem(make_csr(key_for(KeyAlgorithm.EC_P384), name(CN="Issuing CA")))
+    pending = await service.submit(
+        csr=csr, profile_name="sub_ca", validity_days=None, actor="anonymous"
+    )
+    sub_ca = await issued((await service.approve(pending.id, actor="anonymous")).id)
+    https = (await TlsServiceManager(keystore, ["pki.home42.test"]).ensure()).certificate
+
+    assert https is not None
+    assert revocation_urls(sub_ca) == expected
+    assert revocation_urls(x509.load_der_x509_certificate(https.der)) == expected
+
+
+async def test_regression_B41_cdp_and_ocsp_in_issued(
+    client: AsyncClient, make_root: RootFactory, issue: IssueFactory, key_for: KeyFor
+) -> None:
+    await make_root(crl=True, ocsp=True, public_base_url=BASE)
+    request = await issue("tls_server", server_csr(key_for))
+
+    body = (await client.get(f"/api/v1/certificates/{request.certificate_id}")).json()
+
+    assert body["crl_url"] == f"{BASE}/crl/test-root.crl"
+    assert body["ocsp_url"] == f"{BASE}/ocsp"

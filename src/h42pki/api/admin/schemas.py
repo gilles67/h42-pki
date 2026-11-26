@@ -11,7 +11,12 @@ from cryptography import x509
 from cryptography.hazmat.primitives import serialization
 from pydantic import BaseModel, ConfigDict, Field
 
-from h42pki.core.inspection import ca_issuers_url, subject_alternative_names
+from h42pki.core.inspection import (
+    ca_issuers_url,
+    crl_distribution_url,
+    ocsp_url,
+    subject_alternative_names,
+)
 from h42pki.core.keys import KeyAlgorithm
 from h42pki.core.profiles import ProfileSpec, SanType
 from h42pki.core.settings_schema import ApplyLevel, Listener
@@ -91,6 +96,13 @@ class CertificateOut(Schema):
     ca_issuers_url: str | None = Field(
         description="AIA caIssuers URL, read from the DER; None when absent."
     )
+    ocsp_url: str | None = Field(description="AIA OCSP URL, read from the DER; None when absent.")
+    crl_url: str | None = Field(
+        description="CRL distribution point, read from the DER; None when absent."
+    )
+    revoked_at: datetime | None
+    revocation_reason: str | None = Field(description="RFC 5280 reason, snake_case.")
+    invalidity_date: datetime | None
 
     @classmethod
     def from_model(cls, cert: Certificate, *, now: datetime | None = None) -> "CertificateOut":
@@ -112,6 +124,13 @@ class CertificateOut(Schema):
                 SanOut(type=san.type, value=san.value) for san in subject_alternative_names(parsed)
             ],
             ca_issuers_url=ca_issuers_url(parsed),
+            ocsp_url=ocsp_url(parsed),
+            crl_url=crl_distribution_url(parsed),
+            revoked_at=cert.revoked_at,
+            revocation_reason=(
+                cert.revocation_reason.name if cert.revocation_reason is not None else None
+            ),
+            invalidity_date=cert.invalidity_date,
         )
 
 

@@ -1,4 +1,4 @@
-"""Where a CA publishes its certificate: public base URL, AIA caIssuers URL, CA names."""
+"""Where a CA publishes: public base URL, AIA caIssuers, CRL and OCSP URLs, CA names."""
 
 import re
 from dataclasses import dataclass, field
@@ -57,3 +57,13 @@ def normalize_public_base_url(url: str) -> PublicBaseUrl:
 def ca_certificate_url(public_base_url: str, authority_name: str) -> str:
     """URL of the CA certificate (DER), as written in the AIA caIssuers of issued certificates."""
     return f"{public_base_url}/ca/{authority_name}.crt"
+
+
+def crl_url(public_base_url: str, authority_name: str) -> str:
+    """URL of the CRL of a CA, as written in the CRL distribution points (ADR-0017)."""
+    return f"{public_base_url}/crl/{authority_name}.crl"
+
+
+def ocsp_url(public_base_url: str) -> str:
+    """URL of the OCSP responder of the container, as written in the AIA (ADR-0017)."""
+    return f"{public_base_url}/ocsp"

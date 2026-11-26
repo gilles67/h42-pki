@@ -6,7 +6,11 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes
-from cryptography.x509.oid import ExtendedKeyUsageOID, ExtensionOID
+from cryptography.x509.oid import (
+    AuthorityInformationAccessOID,
+    ExtendedKeyUsageOID,
+    ExtensionOID,
+)
 
 from h42pki.core.csr import parse_csr
 from h42pki.core.errors import (
@@ -64,6 +68,8 @@ def _issue(
     extensions: Sequence[tuple[x509.ExtensionType, bool]] = (),
     validity_days: int | None = None,
     ca_issuers_url: str | None = None,
+    crl_url: str | None = None,
+    ocsp_url: str | None = None,
     spec: ProfileSpec | None = None,
 ) -> IssuedCertificate:
     csr = make_csr(leaf_key, subject, sans=sans, extensions=extensions)
@@ -76,6 +82,8 @@ def _issue(
         validity_days=validity_days,
         now=NOW,
         ca_issuers_url=ca_issuers_url,
+        crl_url=crl_url,
+        ocsp_url=ocsp_url,
     )
 
 
@@ -134,6 +142,57 @@ def test_no_cdp_nor_aia(root: Root, key_for: KeyFor) -> None:
     oids = {extension.oid for extension in cert.extensions}
     assert ExtensionOID.CRL_DISTRIBUTION_POINTS not in oids
     assert ExtensionOID.AUTHORITY_INFORMATION_ACCESS not in oids
+
+
+def test_cdp_and_ocsp(root: Root, key_for: KeyFor) -> None:  # B41
+    cert = _issue(
+        root,
+        "tls_server",
+        key_for(KeyAlgorithm.EC_P256),
+        sans=["dns:a.example.test"],
+        ca_issuers_url="http://pki.example.test/ca/root.crt",
+        crl_url="http://pki.example.test/crl/root.crl",
+        ocsp_url="http://pki.example.test/ocsp",
+    ).certificate
+
+    cdp = _ext(cert, x509.CRLDistributionPoints)
+    assert not cdp.critical
+    assert [point.full_name for point in cdp.value] == [
+        [x509.UniformResourceIdentifier("http://pki.example.test/crl/root.crl")]
+    ]
+    aia = _ext(cert, x509.AuthorityInformationAccess)
+    assert not aia.critical
+    assert [(d.access_method, d.access_location.value) for d in aia.value] == [
+        (AuthorityInformationAccessOID.OCSP, "http://pki.example.test/ocsp"),
+        (AuthorityInformationAccessOID.CA_ISSUERS, "http://pki.example.test/ca/root.crt"),
+    ]
+
+
+def test_ocsp_without_ca_issuers(root: Root, key_for: KeyFor) -> None:
+    cert = _issue(
+        root,
+        "tls_server",
+        key_for(KeyAlgorithm.EC_P256),
+        sans=["dns:a.example.test"],
+        ocsp_url="http://pki.example.test/ocsp",
+    ).certificate
+
+    aia = _ext(cert, x509.AuthorityInformationAccess).value
+    assert [d.access_method for d in aia] == [AuthorityInformationAccessOID.OCSP]
+    assert ExtensionOID.CRL_DISTRIBUTION_POINTS not in {e.oid for e in cert.extensions}
+
+
+def test_cdp_on_a_sub_ca_certificate(root: Root, key_for: KeyFor) -> None:
+    cert = _issue(
+        root,
+        "sub_ca",
+        key_for(KeyAlgorithm.EC_P256),
+        name(CN="Issuing CA"),
+        crl_url="http://pki.example.test/crl/root.crl",
+    ).certificate
+
+    assert _ext(cert, x509.BasicConstraints).value.ca
+    assert not _ext(cert, x509.CRLDistributionPoints).critical
 
 
 def test_csr_extensions_are_not_copied(root: Root, key_for: KeyFor) -> None:  # B2

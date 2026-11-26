@@ -263,12 +263,17 @@ def build_issued(
     validity_days: int | None,
     now: datetime,
     ca_issuers_url: str | None = None,
+    crl_url: str | None = None,
+    ocsp_url: str | None = None,
 ) -> IssuedCertificate:
     """Issue a certificate for ``csr`` according to ``profile_spec``.
 
-    Only the public key, the subject and the SANs come from the CSR. The AIA caIssuers points to
-    ``ca_issuers_url`` when given and the profile includes it; no CRL distribution point nor
-    OCSP URL is added before those services exist (phase 3).
+    Only the public key, the subject and the SANs come from the CSR. Publication URLs, all
+    non-critical and decided by the issuing CA (ADR-0017):
+
+    - AIA caIssuers ``ca_issuers_url``, when given and the profile includes it;
+    - AIA OCSP ``ocsp_url`` and CRL distribution point ``crl_url``, when given, whatever the
+      profile (CA certificates and the built-in HTTPS certificate included).
     """
     plan = plan_issuance(csr, profile_spec, issuer_cert, validity_days=validity_days, now=now)
     public_key = csr.public_key
@@ -292,13 +297,31 @@ def build_issued(
         )
     if profile_spec.ocsp_no_check:
         builder = builder.add_extension(x509.OCSPNoCheck(), critical=False)
+    access: list[x509.AccessDescription] = []
+    if ocsp_url is not None:
+        access.append(
+            x509.AccessDescription(
+                AuthorityInformationAccessOID.OCSP, x509.UniformResourceIdentifier(ocsp_url)
+            )
+        )
     if ca_issuers_url is not None and profile_spec.include_aia:
+        access.append(
+            x509.AccessDescription(
+                AuthorityInformationAccessOID.CA_ISSUERS,
+                x509.UniformResourceIdentifier(ca_issuers_url),
+            )
+        )
+    if access:
+        builder = builder.add_extension(x509.AuthorityInformationAccess(access), critical=False)
+    if crl_url is not None:
         builder = builder.add_extension(
-            x509.AuthorityInformationAccess(
+            x509.CRLDistributionPoints(
                 [
-                    x509.AccessDescription(
-                        AuthorityInformationAccessOID.CA_ISSUERS,
-                        x509.UniformResourceIdentifier(ca_issuers_url),
+                    x509.DistributionPoint(
+                        full_name=[x509.UniformResourceIdentifier(crl_url)],
+                        relative_name=None,
+                        reasons=None,
+                        crl_issuer=None,
                     )
                 ]
             ),
