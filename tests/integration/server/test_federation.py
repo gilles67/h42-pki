@@ -1,8 +1,7 @@
 """Enrolment of a child CA with a real parent: `h42pki serve` in another process, over HTTPS.
 
-Tortoise is global to a process: the parent has its own process and database. It is driven by its
-API (never by its CLI while it runs), so that these tests also work on WSL1 (B42). The child is
-the CLI in this process, or a launcher in this event loop.
+Tortoise is global to a process: the parent has its own process and database, driven by its API.
+The child is the CLI in this process, or a launcher in this event loop.
 """
 
 import shutil

@@ -1,7 +1,6 @@
 """One `h42pki serve` in a separate process, on its own database and temporary directory."""
 
 import os
-import platform
 import signal
 import socket
 import subprocess
@@ -9,8 +8,6 @@ import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
-
-import pytest
 
 from h42pki.config import ENV_PREFIX, Settings
 from h42pki.heartbeat import heartbeat_path
@@ -20,12 +17,6 @@ from tests.integration.server.conftest import free_port
 CLI = [sys.executable, "-c", "from h42pki.cli import app; app()"]
 START_TIMEOUT = 30.0
 POSIX = os.name != "nt"
-# WSL1 cannot share an SQLite database in WAL mode between processes ("locking protocol"); WSL2,
-# Docker and Windows can. These tests run the CLI against the database of a running server.
-WSL1 = "Microsoft" in platform.release()
-shared_database = pytest.mark.skipif(
-    WSL1, reason="WSL1: SQLite WAL cannot be shared between processes (use WSL2 or Docker)"
-)
 
 
 class Instance:

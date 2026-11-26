@@ -1,5 +1,8 @@
 """`h42pki serve` in a separate process: U13, U14 (SIGTERM), healthcheck, HTTPS after init.
 
+The CLI writes to the database of a running server: this needs a real Linux, WSL2, Windows or a
+container (B42, closed: WSL1 is no longer a development environment).
+
 Synchronous tests: each runs real processes of the CLI on its own database and temporary
 directory (where the heartbeat lives).
 """
@@ -17,7 +20,7 @@ import pytest
 from h42pki.cli.health import check
 from h42pki.config import ENV_PREFIX
 from tests.cli_helpers import plain
-from tests.integration.server.instance import POSIX, Instance, listening, shared_database
+from tests.integration.server.instance import POSIX, Instance, listening
 
 
 @pytest.fixture
@@ -34,7 +37,6 @@ def instance(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Callab
         item.kill()
 
 
-@shared_database
 def test_https_opens_after_authority_init_and_stops_cleanly(
     instance: Callable[..., Instance],
 ) -> None:
@@ -84,7 +86,6 @@ def test_u14_sigterm_in_idle_mode(instance: Callable[..., Instance]) -> None:
     assert "idle mode" in output and "launcher stopped" in output
 
 
-@shared_database
 def test_healthcheck_in_idle_mode(instance: Callable[..., Instance]) -> None:
     """Green while the launcher runs without any listener, red once it is stopped."""
     server = instance(HTTP_ENABLED="false", HTTPS_ENABLED="false")
@@ -133,3 +134,31 @@ def test_serve_has_no_host_and_port_options(instance: Callable[..., Instance]) -
 
     assert result.returncode == 2
     assert "No such option" in plain(result, "stderr")
+
+
+@pytest.mark.parametrize("option", ["--crl", "--ocsp"])
+def test_idle_mode_refused_with_revocation(instance: Callable[..., Instance], option: str) -> None:
+    """A CA with CRL or OCSP must serve them: idle mode is refused at start-up (ADR-0017)."""
+    server = instance(HTTP_ENABLED="false", HTTPS_ENABLED="false")
+    online = instance()  # same database, listeners on: authority init is allowed there
+    online.database_url = server.database_url
+    online.env[f"{ENV_PREFIX}DATABASE_URL"] = server.database_url
+    init = online.cli("authority", "init", "--name", "root", "--common-name", "Root CA", option)
+    assert init.returncode == 0, init.stderr
+
+    result = server.cli("serve")
+
+    assert result.returncode == 2
+    assert "cannot run in idle mode" in plain(result, "stderr")
+    assert "Traceback" not in result.stderr
+
+
+def test_idle_mode_accepted_without_revocation(instance: Callable[..., Instance]) -> None:
+    server = instance(HTTP_ENABLED="false", HTTPS_ENABLED="false")
+    init = server.cli("authority", "init", "--name", "root", "--common-name", "Root CA")
+    assert init.returncode == 0, init.stderr
+    server.serve()
+
+    server.wait(server.heartbeat.exists, "the heartbeat")
+
+    assert server.cli("healthcheck").returncode == 0
