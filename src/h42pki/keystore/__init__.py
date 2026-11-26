@@ -18,10 +18,16 @@ def get_keystore(settings: Settings) -> KeyStore:
     return SoftwareKeyStore(settings.ca_passphrase)
 
 
+def optional_keystore(settings: Settings) -> KeyStore | None:
+    """Key store when a passphrase is given; services that need one raise MissingPassphrase."""
+    return get_keystore(settings) if settings.ca_passphrase is not None else None
+
+
 __all__ = [
     "KEY_OPERATIONS_REQUIREMENT",
     "KeyStore",
     "SoftwareKeyStore",
     "StoredKey",
     "get_keystore",
+    "optional_keystore",
 ]

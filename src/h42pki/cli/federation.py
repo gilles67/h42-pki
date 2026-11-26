@@ -10,6 +10,7 @@ from h42pki.cli._runtime import CLI_ACTOR, print_table, run
 from h42pki.config import Settings
 from h42pki.core.federation import DEFAULT_EXPIRES_IN_HOURS, MAX_EXPIRES_IN_HOURS
 from h42pki.core.validity import MAX_VALIDITY_DAYS, MIN_VALIDITY_DAYS
+from h42pki.keystore import optional_keystore
 from h42pki.models import Authority, FederationInvitation
 from h42pki.services.federation import (
     CaRevocationReason,
@@ -154,8 +155,13 @@ def revoke_child(
     """Revoke a child CA."""
 
     async def operation(settings: Settings) -> Authority:
-        return await FederationService().revoke_child(name, reason=reason, actor=CLI_ACTOR)
+        # The passphrase is needed when this CA publishes a CRL (signed at once).
+        service = FederationService(optional_keystore(settings))
+        return await service.revoke_child(name, reason=reason, actor=CLI_ACTOR)
 
     run(operation)
     typer.secho(f"Child CA {name} revoked ({reason.value}).", fg=typer.colors.GREEN)
-    typer.echo("Clients will only see it once CRL and OCSP exist (phase 3).")
+    typer.echo(
+        "It shows in the CRL and OCSP of this CA (when enabled); the child learns it at its next "
+        "check (`h42pki authority check-parent` on the child)."
+    )

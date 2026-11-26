@@ -10,8 +10,8 @@ Each field declares how a change is applied:
 - ``listener``: the launcher restarts the listed listeners only (``http``, ``https``);
 - ``process``: at the next start of the container.
 
-Only the settings of phase 1.1 exist (ARCHITECTURE section 7.2); CRL, OCSP, EST, SCEP and ACME
-settings arrive with their phase.
+Settings of phases 1.1 and 3 (ARCHITECTURE section 7.2); EST, SCEP and ACME settings arrive with
+their phase.
 """
 
 import json
@@ -213,6 +213,38 @@ class ServerSettings(_Section):
         return anchors
 
 
+# A CRL of a root CA that is rarely online may last long (half a year, federation.md section 6).
+MAX_CRL_VALIDITY_HOURS = 8784  # one leap year
+
+
+class CrlSettings(_Section):
+    """CRL of a CA created with --crl (ADR-0017)."""
+
+    validity_hours: int = _setting(
+        168,
+        apply=ApplyLevel.HOT,
+        description="Validity of a new CRL (nextUpdate - thisUpdate), in hours.",
+        ge=1,
+        le=MAX_CRL_VALIDITY_HOURS,
+    )
+    regenerate_before_hours: int = _setting(
+        48,
+        apply=ApplyLevel.HOT,
+        description="Generate a new CRL when this many hours or fewer remain before nextUpdate.",
+        ge=0,
+        le=MAX_CRL_VALIDITY_HOURS,
+    )
+
+    @model_validator(mode="after")
+    def _check_window(self) -> Self:
+        if self.regenerate_before_hours >= self.validity_hours:
+            raise ValueError(
+                "crl.regenerate_before_hours must be lower than crl.validity_hours, otherwise "
+                "every check would generate a new CRL"
+            )
+        return self
+
+
 class LoggingSettings(_Section):
     level: Literal["debug", "info", "warning", "error"] = _setting(
         "info", apply=ApplyLevel.HOT, description="Log level of the server."
@@ -241,6 +273,7 @@ class RuntimeSettings(_Section):
     tls_service: TlsServiceSettings = Field(default_factory=TlsServiceSettings)
     issuance: IssuanceSettings = Field(default_factory=IssuanceSettings)
     server: ServerSettings = Field(default_factory=ServerSettings)
+    crl: CrlSettings = Field(default_factory=CrlSettings)
     logging: LoggingSettings = Field(default_factory=LoggingSettings)
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
 

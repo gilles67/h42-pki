@@ -37,7 +37,6 @@ from h42pki.models import (
     AuthorityStatus,
     Certificate,
     CertificateRequest,
-    CertificateStatus,
     FederationInvitation,
     InvitationStatus,
     Profile,
@@ -46,6 +45,7 @@ from h42pki.models import (
 from h42pki.services.authority import AuthorityService
 from h42pki.services.certificates import CertificateService
 from h42pki.services.issuance import ChildCa, IssuanceService, child_of
+from h42pki.services.revocation import RevocationListener, RevocationService
 
 # After the decision, the token still gives access to its own enrolment for this long.
 GRACE_PERIOD = timedelta(hours=24)
@@ -89,9 +89,12 @@ def _refused() -> Unauthorized:
 
 
 class FederationService:
-    def __init__(self, keystore: KeyStore | None = None) -> None:
-        """``keystore`` is only needed to enrol (an auto-approved invitation signs at once)."""
+    def __init__(
+        self, keystore: KeyStore | None = None, *, on_revoked: RevocationListener | None = None
+    ) -> None:
+        """``keystore`` signs: an auto-approved enrolment, the CRL after a child's revocation."""
         self._keystore = keystore
+        self._on_revoked = on_revoked
 
     # --- invitations ----------------------------------------------------------------------
 
@@ -281,9 +284,9 @@ class FederationService:
         )
 
     async def revoke_child(self, name: str, *, reason: CaRevocationReason, actor: str) -> Authority:
-        """Mark a child CA and its certificate revoked.
+        """Revoke a child CA: its certificate through RevocationService (CRL, OCSP, audit).
 
-        Clients only see it once CRL and OCSP exist (phase 3).
+        The child learns it from the OCSP of this CA (daily check, ADR-0017).
         """
         child = (
             await Authority.filter(kind=AuthorityKind.CHILD, name=name)
@@ -292,30 +295,24 @@ class FederationService:
         )
         if child is None:
             raise NotFound(f"no child CA named {name!r}")
+        if child.status is AuthorityStatus.REVOKED:
+            raise Conflict(f"the child CA {name!r} is already revoked")
         certificate = child.certificate
-        async with in_transaction():
-            updated = await Authority.filter(id=child.id, status=AuthorityStatus.ACTIVE).update(
-                status=AuthorityStatus.REVOKED
-            )
-            if not updated:
-                raise Conflict(f"the child CA {name!r} is already revoked")
-            await Certificate.filter(id=certificate.id).update(
-                status=CertificateStatus.REVOKED,
-                revoked_at=datetime.now(UTC),
-                revocation_reason=x509.ReasonFlags[reason.value],
-            )
-            await AuditLog.record(
-                actor=actor,
-                action="federation.child_revoke",
-                object_type="authority",
-                object_id=child.id,
-                details={
-                    "name": name,
-                    "reason": reason.value,
-                    "certificate_id": str(certificate.id),
-                    "serial_hex": certificate.serial_hex,
-                },
-            )
+        await RevocationService(self._keystore, on_revoked=self._on_revoked).revoke(
+            certificate.id, reason=x509.ReasonFlags[reason.value], actor=actor
+        )
+        await AuditLog.record(
+            actor=actor,
+            action="federation.child_revoke",
+            object_type="authority",
+            object_id=child.id,
+            details={
+                "name": name,
+                "reason": reason.value,
+                "certificate_id": str(certificate.id),
+                "serial_hex": certificate.serial_hex,
+            },
+        )
         return await Authority.get(id=child.id).prefetch_related("certificate")
 
     @staticmethod

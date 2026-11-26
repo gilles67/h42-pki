@@ -175,7 +175,7 @@ def test_revoke_child(root: None) -> None:
 
     assert bad.exit_code == 2
     assert result.exit_code == 0, plain(result)
-    assert "revoked (key_compromise)" in plain(result) and "phase 3" in plain(result)
+    assert "revoked (key_compromise)" in plain(result) and "check-parent" in plain(result)
     assert "revoked" in plain(invoke("federation", "children"))
     unknown = invoke("federation", "revoke-child", "nobody", "--reason", "superseded")
     assert unknown.exit_code == 1 and "no child CA named 'nobody'" in plain(unknown)

@@ -30,6 +30,8 @@ EXPECTED_LEVELS = {
     "server.limit_concurrency": ("listener", ("http", "https")),
     "server.backlog": ("listener", ("http", "https")),
     "server.max_header_size": ("listener", ("http", "https")),
+    "crl.validity_hours": ("hot", ()),
+    "crl.regenerate_before_hours": ("hot", ()),
     "logging.level": ("hot", ()),
     "logging.format": ("process", ()),
     "database.pool_size": ("process", ()),
@@ -73,6 +75,7 @@ def test_defaults() -> None:
     assert settings.logging.level == "info"
     assert settings.logging.format == "text"
     assert settings.database.pool_size is None
+    assert (settings.crl.validity_hours, settings.crl.regenerate_before_hours) == (168, 48)
     assert SETTINGS["tls_service.validity_days"].default == 47
 
 
@@ -163,3 +166,11 @@ def test_valid_cipher_list() -> None:
     assert build_settings({"server.tls_ciphers": "ECDHE+AESGCM"}).server.tls_ciphers == (
         "ECDHE+AESGCM"
     )
+
+
+def test_crl_window_must_leave_time_before_regeneration() -> None:
+    assert build_settings({"crl.validity_hours": 4380, "crl.regenerate_before_hours": 720})
+    with pytest.raises(InvalidSetting, match="lower than crl.validity_hours"):
+        build_settings({"crl.validity_hours": 24})  # 48 hours before: every check would regenerate
+    with pytest.raises(InvalidSetting):
+        build_settings({"crl.validity_hours": 0})
