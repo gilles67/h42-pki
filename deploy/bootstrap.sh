@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Build the example hierarchy of compose.yaml (root -> intermediate -> issuing), issue a TLS server
-# certificate with the issuing CA and verify it up to the root.
+# certificate with the issuing CA and verify it up to the root. Every CA publishes a CRL and answers
+# OCSP (--crl --ocsp, ADR-0017); deploy/revocation-test.sh exercises them afterwards.
 #
 # Usage: deploy/bootstrap.sh [--fresh] [OUTPUT_DIRECTORY]
 #   --fresh   remove the containers and VOLUMES of this compose project first (all its CAs!)
@@ -73,7 +74,7 @@ enrol() { # enrol PARENT CHILD COMMON_NAME PATH_LENGTH
     --auto-approve --expires-in-hours 1 |
     pki_stdin "$child" authority init --name "$child" --common-name "$common_name" \
       --parent-url "https://$parent:8443" --parent-fingerprint "$fingerprint" --token - \
-      --public-base-url "http://$child.pki.test:8080"
+      --public-base-url "http://$child.pki.test:8080" --crl --ocsp
 }
 
 # Readable by the container user, not writable by others (checked by h42-pki).
@@ -92,7 +93,7 @@ done
 
 step "root"
 pki root authority init --name root --common-name "Home42 Example Root CA" --path-length 2 \
-  --public-base-url http://root.pki.test:8080
+  --public-base-url http://root.pki.test:8080 --crl --ocsp
 wait_https root
 pki root authority export >"$OUT/root.pem"
 

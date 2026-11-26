@@ -1,4 +1,4 @@
-"""Three-level hierarchy with compose: Podman by default, Docker otherwise (ADR-0016).
+"""Three-level hierarchy with compose, then revocation: Podman by default, Docker otherwise.
 
 Needs bash, curl, openssl and a container engine. ``CONTAINER_ENGINE`` forces the engine, as for the
 scripts of ``deploy/``; without it, the first one that is installed is used, Podman first.
@@ -62,6 +62,18 @@ def test_bootstrap(tmp_path: Path) -> None:
         )
         assert result.returncode == 0, result.stdout + result.stderr
         assert "leaf.pem: OK" in result.stdout
+        # Revocation on the same hierarchy: CRL and OCSP with openssl, revoked issuing CA.
+        revocation = subprocess.run(  # noqa: S603
+            [bash, str(ROOT / "deploy" / "revocation-test.sh"), str(tmp_path)],
+            env=env,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=600,
+            check=False,
+        )
+        assert revocation.returncode == 0, revocation.stdout + revocation.stderr
+        assert "revocation-test: all checks passed" in revocation.stdout
     finally:
         subprocess.run(  # noqa: S603
             [*COMPOSE[ENGINE], "-f", str(ROOT / "deploy" / "compose.yaml"), "down", "--volumes"],

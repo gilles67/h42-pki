@@ -21,11 +21,15 @@ pytestmark = [
 ]
 
 
-def _openssl(*args: str, stdin: str | None = None) -> str:
+def _run_openssl(*args: str, stdin: str | None = None) -> subprocess.CompletedProcess[str]:
     assert OPENSSL is not None
-    result = subprocess.run(  # noqa: S603 - openssl from PATH with fixed arguments
+    return subprocess.run(  # noqa: S603 - openssl from PATH with fixed arguments
         [OPENSSL, *args], input=stdin, capture_output=True, text=True, check=False
     )
+
+
+def _openssl(*args: str, stdin: str | None = None) -> str:
+    result = _run_openssl(*args, stdin=stdin)
     assert result.returncode == 0, result.stderr
     return result.stdout
 
@@ -143,3 +147,97 @@ async def test_aia_and_published_chain(
     assert "Home42" in subject
     assert ": OK" in _openssl("verify", "-CAfile", str(root_pem), str(leaf_pem))
     assert ": OK" in _openssl("verify", "-CAfile", str(chain_pem), str(leaf_pem))
+
+
+# --- revocation (ADR-0017) --------------------------------------------------------------------
+
+
+async def _revocation_setup(
+    client: AsyncClient, make_root: RootFactory, tmp_path: Path
+) -> tuple[Path, Path, str]:
+    """Root with CRL and OCSP, a leaf from an openssl CSR: (root.pem, leaf.pem, leaf id)."""
+    authority = await make_root(crl=True, ocsp=True, public_base_url="http://pki.example.test")
+    root = tmp_path / "root.pem"
+    root.write_bytes(
+        (
+            await client.get(
+                f"/api/v1/certificates/{(await Certificate.get(authority=authority)).id}.pem"
+            )
+        ).content
+    )
+    _openssl(
+        "req", "-new", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1", "-nodes",
+        "-keyout", str(tmp_path / "leaf.key"), "-out", str(tmp_path / "leaf.csr"),
+        "-subj", "/CN=www.example.test", "-addext", "subjectAltName=DNS:www.example.test",
+    )  # fmt: skip
+    body = {"csr_pem": (tmp_path / "leaf.csr").read_text(), "profile": "tls_server"}
+    certificate_id = (await client.post("/api/v1/requests", json=body)).json()["certificate_id"]
+    leaf = tmp_path / "leaf.pem"
+    leaf.write_bytes((await client.get(f"/api/v1/certificates/{certificate_id}.pem")).content)
+    return root, leaf, certificate_id
+
+
+async def test_crl_with_openssl(
+    client: AsyncClient, make_root: RootFactory, tmp_path: Path
+) -> None:
+    root, leaf, certificate_id = await _revocation_setup(client, make_root, tmp_path)
+    text = _openssl("x509", "-in", str(leaf), "-noout", "-text")
+    assert "URI:http://pki.example.test/crl/test-root.crl" in text
+    assert "OCSP - URI:http://pki.example.test/ocsp" in text
+
+    response = await client.post(
+        f"/api/v1/certificates/{certificate_id}/revoke", json={"reason": "key_compromise"}
+    )
+    assert response.status_code == 200
+    der = tmp_path / "root.crl"
+    der.write_bytes((await client.get("/crl/test-root.crl")).content)
+    crl_pem = tmp_path / "root.crl.pem"
+    crl_pem.write_text(_openssl("crl", "-inform", "DER", "-in", str(der)))
+
+    text = _openssl("crl", "-inform", "DER", "-in", str(der), "-noout", "-text")
+    assert "X509v3 CRL Number" in text and "Key Compromise" in text
+    serial = _openssl("x509", "-in", str(leaf), "-noout", "-serial").strip().split("=")[1]
+    assert f"Serial Number: {serial}" in text
+    refused = _run_openssl(
+        "verify", "-crl_check", "-CAfile", str(root), "-CRLfile", str(crl_pem), str(leaf)
+    )
+    assert refused.returncode != 0 and "certificate revoked" in refused.stdout + refused.stderr
+
+
+@pytest.mark.parametrize("nonce", [True, False], ids=["nonce", "no_nonce"])
+async def test_ocsp_with_openssl(
+    client: AsyncClient, make_root: RootFactory, tmp_path: Path, nonce: bool
+) -> None:
+    root, leaf, certificate_id = await _revocation_setup(client, make_root, tmp_path)
+    request = tmp_path / "request.der"
+    options = [] if nonce else ["-no_nonce"]
+    _openssl("ocsp", "-issuer", str(root), "-cert", str(leaf), "-reqout", str(request), *options)
+
+    async def status() -> str:
+        answer = await client.post(
+            "/ocsp",
+            content=request.read_bytes(),
+            headers={"content-type": "application/ocsp-request"},
+        )
+        response = tmp_path / "response.der"
+        response.write_bytes(answer.content)
+        # -reqin without -cert: openssl checks the answer against this very request (nonce
+        # included); with -cert it would build another request with another nonce.
+        result = _run_openssl(
+            "ocsp", "-reqin", str(request), "-respin", str(response), "-CAfile", str(root),
+            "-resp_text",
+        )  # fmt: skip
+        assert result.returncode == 0, result.stderr
+        assert "Response verify OK" in result.stderr
+        assert "WARNING" not in result.stderr and "Nonce Verify error" not in result.stderr
+        return result.stdout
+
+    good = await status()
+    await client.post(
+        f"/api/v1/certificates/{certificate_id}/revoke", json={"reason": "superseded"}
+    )
+    revoked = await status()
+
+    assert "Cert Status: good" in good
+    assert "Cert Status: revoked" in revoked and "Revocation Reason: superseded" in revoked
+    assert ("OCSP Nonce" in good) is nonce

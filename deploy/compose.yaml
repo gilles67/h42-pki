@@ -20,6 +20,10 @@ services:
       - source: root_passphrase
         target: h42_pki_ca_passphrase
     volumes: ["root-data:/data"]
+    networks:
+      pki:
+        # Host name of its public base URL (CRL, OCSP, AIA), reached by the other CAs.
+        aliases: [root.pki.test]
     ports:
       - "127.0.0.1:${ROOT_HTTP_PORT:-18081}:8080"
       - "127.0.0.1:${ROOT_HTTPS_PORT:-18441}:8443"
@@ -33,6 +37,10 @@ services:
       - source: intermediate_passphrase
         target: h42_pki_ca_passphrase
     volumes: ["intermediate-data:/data"]
+    networks:
+      pki:
+        # Host name of its public base URL (CRL, OCSP, AIA), reached by the other CAs.
+        aliases: [intermediate.pki.test]
     ports:
       - "127.0.0.1:${INTERMEDIATE_HTTP_PORT:-18082}:8080"
       - "127.0.0.1:${INTERMEDIATE_HTTPS_PORT:-18442}:8443"
@@ -46,6 +54,10 @@ services:
       - source: issuing_passphrase
         target: h42_pki_ca_passphrase
     volumes: ["issuing-data:/data"]
+    networks:
+      pki:
+        # Host name of its public base URL (CRL, OCSP, AIA), reached by the other CAs.
+        aliases: [issuing.pki.test]
     ports:
       - "127.0.0.1:${ISSUING_HTTP_PORT:-18083}:8080"
       - "127.0.0.1:${ISSUING_HTTPS_PORT:-18443}:8443"
