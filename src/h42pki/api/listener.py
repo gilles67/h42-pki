@@ -2,7 +2,7 @@
 
 The launcher marks each request with ``scope["extensions"]["h42pki.listener"]`` (``"http"`` or
 ``"https"``). On the HTTP listener only the public routes answer; any other path gets a 404
-problem explaining that it is only served over HTTPS (no redirect: AIA and, later, CRL and OCSP
+problem explaining that it is only served over HTTPS (no redirect: AIA, CRL and, later, OCSP
 must stay plain HTTP, CLAUDE.md section 6.9).
 
 Without the extension (application called directly, e.g. by ``httpx.ASGITransport`` in tests)
@@ -15,9 +15,9 @@ from h42pki.api.problems import problem
 
 LISTENER_EXTENSION = "h42pki.listener"
 
-# Public routes, also served over HTTP. /crl/*, /ocsp and /scep join them with their phase.
+# Public routes, also served over HTTP. /ocsp and /scep join them with their phase.
 HTTP_EXACT_ROUTES = frozenset({"/", "/health", "/favicon.ico"})
-HTTP_ROUTE_PREFIXES = ("/ca/",)
+HTTP_ROUTE_PREFIXES = ("/ca/", "/crl/")
 
 
 def listener_of(scope: Scope) -> str | None:
@@ -50,7 +50,7 @@ class ListenerRoutesMiddleware:
                 404,
                 "Not Found",
                 "this route is only served over HTTPS (the HTTP listener serves /, /health, "
-                "/favicon.ico and /ca/* only)",
+                "/favicon.ico, /ca/* and /crl/* only)",
             )
             await response(scope, receive, send)
             return

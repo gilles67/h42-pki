@@ -9,8 +9,9 @@ from uuid import UUID
 
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
+from h42pki.core.crl import RevocationReason
 from h42pki.core.inspection import (
     ca_issuers_url,
     crl_distribution_url,
@@ -132,6 +133,25 @@ class CertificateOut(Schema):
             ),
             invalidity_date=cert.invalidity_date,
         )
+
+
+class CertificateRevoke(Schema):
+    reason: RevocationReason = Field(
+        description="RFC 5280 reason; suspension (certificate_hold) does not exist on this CA."
+    )
+    invalidity_date: AwareDatetime | None = Field(
+        default=None,
+        description="When the key is known or suspected to have been compromised (not future).",
+    )
+
+
+class CrlOut(Schema):
+    authority: str
+    crl_number: int
+    this_update: datetime
+    next_update: datetime
+    entries: int = Field(description="Revoked certificates listed (expired ones are left out).")
+    url: str | None = Field(description="Where it is published, from the public base URL.")
 
 
 class CertificateList(Schema):

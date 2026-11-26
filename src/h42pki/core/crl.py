@@ -7,6 +7,7 @@ Revocation is final: ``certificate_hold`` and ``remove_from_crl`` are never used
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from enum import StrEnum
 
 from cryptography import x509
 
@@ -20,6 +21,19 @@ SUSPENSION_REASONS = frozenset(
 REVOCATION_REASONS = tuple(
     reason for reason in x509.ReasonFlags if reason not in SUSPENSION_REASONS
 )
+
+
+class RevocationReason(StrEnum):
+    """Names accepted by the API and the CLI: ``x509.ReasonFlags`` names, suspension excluded."""
+
+    UNSPECIFIED = "unspecified"
+    KEY_COMPROMISE = "key_compromise"
+    CA_COMPROMISE = "ca_compromise"
+    AFFILIATION_CHANGED = "affiliation_changed"
+    SUPERSEDED = "superseded"
+    CESSATION_OF_OPERATION = "cessation_of_operation"
+    PRIVILEGE_WITHDRAWN = "privilege_withdrawn"
+    AA_COMPROMISE = "aa_compromise"
 
 
 def revocation_reason(name: str) -> x509.ReasonFlags:

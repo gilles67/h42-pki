@@ -1,4 +1,4 @@
-"""`h42pki certificate …`: issued certificates (read-only, no passphrase needed)."""
+"""`h42pki certificate …`: issued certificates; revocation (passphrase only with a CRL)."""
 
 import sys
 from datetime import UTC, datetime
@@ -11,16 +11,20 @@ import typer
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization
 
-from h42pki.cli._runtime import fail, run
+from h42pki.cli._runtime import CLI_ACTOR, fail, run
 from h42pki.config import Settings
+from h42pki.core.crl import RevocationReason
 from h42pki.errors import NotFound
+from h42pki.keystore import optional_keystore
 from h42pki.models import Certificate, CertificateStatus
 from h42pki.services import CertificateService
 from h42pki.services.certificates import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, effective_status
+from h42pki.services.revocation import RevocationService
 
-app = typer.Typer(help="List and export certificates.", no_args_is_help=True)
+app = typer.Typer(help="List, export and revoke certificates.", no_args_is_help=True)
 
-COLUMNS = ("SERIAL", "SUBJECT", "PROFILE", "STATUS", "NOT AFTER")
+COLUMNS = ("ID", "SERIAL", "SUBJECT", "PROFILE", "STATUS", "NOT AFTER")
+Row = tuple[str, str, str, str, str, str]
 
 
 class ExportFormat(StrEnum):
@@ -48,12 +52,13 @@ def list_certificates(
     """List certificates, newest first."""
     now = datetime.now(UTC)
 
-    async def operation(settings: Settings) -> tuple[list[tuple[str, str, str, str, str]], int]:
+    async def operation(settings: Settings) -> tuple[list[Row], int]:
         page = await CertificateService().search(
             status=status, profile=profile, limit=limit, now=now
         )
-        rows: list[tuple[str, str, str, str, str]] = [
+        rows: list[Row] = [
             (
+                str(cert.id),
                 cert.serial_hex,
                 cert.subject_dn or "-",
                 _profile(cert),
@@ -110,3 +115,34 @@ def export(
     else:
         output.write_bytes(data)
         typer.echo(f"Written to {output}", err=True)
+
+
+@app.command()
+def revoke(
+    certificate_id: Annotated[UUID, typer.Argument(metavar="ID", help="Certificate id.")],
+    reason: Annotated[RevocationReason, typer.Option(help="RFC 5280 reason (no suspension).")],
+    invalidity_date: Annotated[
+        datetime | None,
+        typer.Option(
+            formats=["%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%d"],
+            help="When the key is known or suspected to be compromised (ISO 8601, UTC if no "
+            "offset).",
+        ),
+    ] = None,
+) -> None:
+    """Revoke a certificate for good; the CRL is generated again at once when enabled."""
+    when = invalidity_date
+    if when is not None and when.tzinfo is None:
+        when = when.replace(tzinfo=UTC)
+
+    async def operation(settings: Settings) -> Certificate:
+        # A passphrase is only needed when the CA publishes a CRL (signed at once, B32).
+        service = RevocationService(optional_keystore(settings))
+        return await service.revoke(
+            certificate_id, reason=reason.value, invalidity_date=when, actor=CLI_ACTOR
+        )
+
+    certificate = run(operation)
+    typer.secho(
+        f"Certificate {certificate.serial_hex} revoked ({reason.value}).", fg=typer.colors.GREEN
+    )

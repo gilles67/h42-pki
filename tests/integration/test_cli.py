@@ -336,8 +336,8 @@ def test_certificate_list(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert everything.exit_code == 0, everything.output
     lines = plain(everything, "stdout").splitlines()
-    assert lines[0].split() == ["SERIAL", "SUBJECT", "PROFILE", "STATUS", "NOT", "AFTER"]
-    assert [line.split()[1] for line in lines[1:]] == [
+    assert lines[0].split() == ["ID", "SERIAL", "SUBJECT", "PROFILE", "STATUS", "NOT", "AFTER"]
+    assert [line.split()[2] for line in lines[1:]] == [
         "CN=b.example.test",
         "CN=a.example.test",
         "CN=Home42",  # root subject "CN=Home42 Root CA"

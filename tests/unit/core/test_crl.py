@@ -10,6 +10,7 @@ from cryptography.x509.oid import CRLEntryExtensionOID, ExtensionOID
 
 from h42pki.core.crl import (
     REVOCATION_REASONS,
+    RevocationReason,
     RevokedEntry,
     build_crl,
     check_invalidity_date,
@@ -168,6 +169,7 @@ def test_every_reason_but_suspension_is_accepted() -> None:
         "aa_compromise",
     }
     assert revocation_reason("key_compromise") is x509.ReasonFlags.key_compromise
+    assert {reason.value for reason in RevocationReason} == {r.name for r in REVOCATION_REASONS}
 
 
 @pytest.mark.parametrize("name", ["certificate_hold", "remove_from_crl"])

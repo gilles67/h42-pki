@@ -10,16 +10,20 @@ from h42pki.api.admin.deps import (
     Actor,
     AuthorityServiceDep,
     CertificateServiceDep,
+    CrlServiceDep,
     IssuanceServiceDep,
     KeyServiceDep,
     ProfileServiceDep,
+    RevocationServiceDep,
     SettingsServiceDep,
 )
 from h42pki.api.admin.schemas import (
     AuthorityOut,
     CertificateList,
     CertificateOut,
+    CertificateRevoke,
     ConfigOut,
+    CrlOut,
     PrivateKeyCreate,
     PrivateKeyOut,
     ProfileOut,
@@ -30,6 +34,7 @@ from h42pki.api.admin.schemas import (
     certificate_pem,
 )
 from h42pki.api.problems import PROBLEM_RESPONSES
+from h42pki.core.publication import crl_url
 from h42pki.errors import NotFound
 from h42pki.models import CertificateStatus, Channel, RequestStatus
 from h42pki.services.certificates import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
@@ -139,6 +144,37 @@ async def get_certificate(
     certificate_id: UUID, certificates: CertificateServiceDep
 ) -> CertificateOut:
     return CertificateOut.from_model(await certificates.get(certificate_id))
+
+
+@router.post("/certificates/{certificate_id}/revoke")
+async def revoke_certificate(
+    certificate_id: UUID, body: CertificateRevoke, actor: Actor, revocation: RevocationServiceDep
+) -> CertificateOut:
+    """Revoke for good (no suspension); the CRL is generated again at once when enabled."""
+    certificate = await revocation.revoke(
+        certificate_id, reason=body.reason.value, invalidity_date=body.invalidity_date, actor=actor
+    )
+    return CertificateOut.from_model(certificate)
+
+
+# --- CRL ------------------------------------------------------------------------------------
+
+
+@router.get("/crl")
+async def get_crl(authorities: AuthorityServiceDep, crls: CrlServiceDep) -> CrlOut:
+    """Current CRL of the local CA (metadata; the CRL itself is at /crl/{name}.crl)."""
+    authority = await authorities.get_local()
+    crl = await crls.local(authority)
+    return CrlOut(
+        authority=authority.name,
+        crl_number=crl.crl_number,
+        this_update=crl.this_update,
+        next_update=crl.next_update,
+        entries=crl.entries,
+        url=crl_url(authority.public_base_url, authority.name)
+        if authority.public_base_url is not None
+        else None,
+    )
 
 
 # --- authority ------------------------------------------------------------------------------

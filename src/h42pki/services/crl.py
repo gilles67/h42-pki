@@ -56,6 +56,21 @@ class CrlService:
         """The latest CRL of ``authority`` (highest number), if any."""
         return await Crl.filter(authority_id=authority.id).order_by("-crl_number").first()
 
+    @staticmethod
+    async def local_enabled(authority: Authority) -> None:
+        """404 when the CA was created without a CRL."""
+        if not authority.crl_enabled:
+            raise NotFound(f"the CA {authority.name!r} was created without a CRL (--crl)")
+
+    @classmethod
+    async def local(cls, authority: Authority) -> Crl:
+        """Current CRL of the local CA; 404 when it has none (or no CRL at all)."""
+        await cls.local_enabled(authority)
+        crl = await cls.current(authority)
+        if crl is None:
+            raise NotFound(f"no CRL generated yet for {authority.name!r}")
+        return crl
+
     @classmethod
     async def published(cls, name: str) -> Crl:
         """CRL served at ``/crl/{name}.crl``: a local CA with the CRL enabled; 404 otherwise."""

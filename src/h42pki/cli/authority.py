@@ -17,10 +17,11 @@ from h42pki.core.names import Subject
 from h42pki.core.publication import PublicBaseUrl, normalize_public_base_url
 from h42pki.core.validity import DEFAULT_CA_VALIDITY_DAYS, MAX_VALIDITY_DAYS, MIN_VALIDITY_DAYS
 from h42pki.errors import H42Error
-from h42pki.keystore import get_keystore
+from h42pki.keystore import get_keystore, optional_keystore
 from h42pki.models import Authority, AuthorityStatus, Certificate
 from h42pki.services import AuthorityService
 from h42pki.services.authority import check_not_idle
+from h42pki.services.crl import CrlService
 from h42pki.services.subordinate import SubordinateService
 
 app = typer.Typer(help="Manage the local certificate authority.", no_args_is_help=True)
@@ -108,8 +109,19 @@ def _read_token(token: str | None) -> str:
     return sys.stdin.readline().strip() if token == "-" else token  # noqa: S105 - stdin marker
 
 
+async def _first_crl(settings: Settings, authority: Authority) -> None:
+    """Publish a CRL as soon as the CA is active: issued certificates already point to it."""
+    keystore = optional_keystore(settings)
+    if authority.crl_enabled and keystore is not None:
+        await CrlService(keystore).ensure_fresh(authority, actor=CLI_ACTOR)
+
+
 async def _finish(
-    service: SubordinateService, authority: Authority, token: str, wait_minutes: int
+    settings: Settings,
+    service: SubordinateService,
+    authority: Authority,
+    token: str,
+    wait_minutes: int,
 ) -> list[tuple[str, str]] | None:
     """Wait for the decision if needed; the description of the active CA, None if pending."""
     if authority.status is AuthorityStatus.PENDING_SIGNATURE:
@@ -118,6 +130,7 @@ async def _finish(
     if authority.status is AuthorityStatus.PENDING_SIGNATURE:
         return None
     local = await AuthorityService().get_local()
+    await _first_crl(settings, local)
     return _describe(local, local.certificate)
 
 
@@ -161,7 +174,7 @@ def _enrol(
                 ocsp=ocsp,
                 actor=CLI_ACTOR,
             )
-            return await _finish(service, authority, token, wait_minutes)
+            return await _finish(settings, service, authority, token, wait_minutes)
         except H42Error:
             await _hint(service)
             raise
@@ -174,7 +187,7 @@ def _resume(token: str, wait_minutes: int) -> None:
         service = SubordinateService()
         try:
             authority = await service.resume(token, actor=CLI_ACTOR)
-            return await _finish(service, authority, token, wait_minutes)
+            return await _finish(settings, service, authority, token, wait_minutes)
         except H42Error:
             await _hint(service)
             raise
@@ -326,6 +339,7 @@ def init(
             ocsp=ocsp,
             actor=CLI_ACTOR,
         )
+        await _first_crl(settings, authority)
         return _describe(authority, await service.certificate_of(authority))
 
     rows = run(operation)

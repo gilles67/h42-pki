@@ -14,6 +14,8 @@ from h42pki.services import (
     ProfileService,
     SettingsService,
 )
+from h42pki.services.crl import CrlService
+from h42pki.services.revocation import RevocationListener, RevocationService
 
 
 def current_actor() -> str:
@@ -28,6 +30,23 @@ def app_settings(request: Request) -> Settings:
 
 def keystore(settings: Annotated[Settings, Depends(app_settings)]) -> KeyStore:
     return get_keystore(settings)
+
+
+def revocation_listener(request: Request) -> RevocationListener | None:
+    """Told about each revocation: the OCSP cache of the application, once it exists."""
+    listener: RevocationListener | None = getattr(request.app.state, "revocation_listener", None)
+    return listener
+
+
+def revocation_service(
+    store: Annotated[KeyStore, Depends(keystore)],
+    listener: Annotated[RevocationListener | None, Depends(revocation_listener)],
+) -> RevocationService:
+    return RevocationService(store, on_revoked=listener)
+
+
+def crl_service(store: Annotated[KeyStore, Depends(keystore)]) -> CrlService:
+    return CrlService(store)
 
 
 def key_service(store: Annotated[KeyStore, Depends(keystore)]) -> KeyService:
@@ -61,3 +80,5 @@ ProfileServiceDep = Annotated[ProfileService, Depends(profile_service)]
 KeyServiceDep = Annotated[KeyService, Depends(key_service)]
 CertificateServiceDep = Annotated[CertificateService, Depends(certificate_service)]
 SettingsServiceDep = Annotated[SettingsService, Depends(settings_service)]
+RevocationServiceDep = Annotated[RevocationService, Depends(revocation_service)]
+CrlServiceDep = Annotated[CrlService, Depends(crl_service)]
