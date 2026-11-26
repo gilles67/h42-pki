@@ -385,6 +385,33 @@ async def test_idle_mode(
     assert not path.exists()  # removed at stop: the healthcheck turns red at once
 
 
+async def test_scheduled_tasks_run_in_idle_mode(
+    run_launcher: Any, server_settings: SettingsFactory, make_root: Any
+) -> None:
+    """CRL, expired status and purge run at start-up, without any listener (ADR-0017)."""
+    from h42pki.models import Crl
+
+    await make_root()  # no CRL: idle mode is allowed
+    settings = server_settings(http_enabled=False, https_enabled=False)
+    async with run_launcher(settings) as running:
+        tasks = running.launcher.status.tasks
+        assert set(tasks) == {"crl", "expiry", "purge"}
+        await wait_for(lambda: all(state.last_run for state in tasks.values()), "the tasks")
+        assert not any(state.failing for state in tasks.values())
+    assert await Crl.all().count() == 0
+
+
+async def test_crl_generated_at_start_up(
+    run_launcher: Any, server_settings: SettingsFactory, make_root: Any
+) -> None:
+    from h42pki.models import Crl
+
+    await make_root(crl=True)
+    async with run_launcher(server_settings(https_enabled=False)) as running:
+        await wait_for(lambda: running.launcher.status.tasks["crl"].last_run is not None, "CRL")
+    assert await Crl.all().count() == 1
+
+
 async def test_https_disabled_never_issues_a_certificate(
     run_launcher: Any, server_settings: SettingsFactory, make_pki: PkiFactory
 ) -> None:

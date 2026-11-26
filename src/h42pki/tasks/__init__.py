@@ -1,1 +1,1 @@
-"""Scheduled tasks run by the launcher (renewal of the HTTPS certificate; CRL in phase 3)."""
+"""Scheduled tasks run by the launcher: HTTPS certificate, CRL, expired status, purge."""

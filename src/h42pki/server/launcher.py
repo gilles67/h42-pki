@@ -6,8 +6,10 @@
 - A renewed certificate is reloaded into the same ``SSLContext`` (new connections get it).
 - A ``listener`` level setting restarts only the listeners it concerns; ``logging.level`` is
   applied hot; a ``tls_service`` change triggers a certificate check.
+- Scheduled tasks (CRL, expired status, purge) run from the start, idle mode included.
 - Idle mode: no listener at all; the settings watcher, the scheduled tasks and the heartbeat
-  keep running and the CLI stays usable (``podman exec``).
+  keep running and the CLI stays usable (``podman exec``). Refused for a CA with CRL or OCSP
+  (``h42pki serve`` checks it before the launcher starts, ADR-0017).
 
 Signals are handled by the caller (``h42pki serve``), not by Uvicorn: the embedded servers do not
 install handlers, the launcher stops them all.
@@ -42,6 +44,8 @@ from h42pki.server.ssl_context import build_context, load_certificate
 from h42pki.services.authority import AuthorityService
 from h42pki.services.settings import SettingsWatcher
 from h42pki.services.tls_service import TlsMaterial, TlsServiceManager
+from h42pki.tasks.maintenance import crl_task, expiry_task, purge_task
+from h42pki.tasks.periodic import PeriodicTask, TaskState
 from h42pki.tasks.tls_service import TlsRenewalTask
 
 log = logging.getLogger(__name__)
@@ -77,6 +81,7 @@ class LauncherStatus:
     https_certificate_not_after: datetime | None = None
     renewal_failing: bool = False
     heartbeat_path: Path | None = None
+    tasks: dict[str, TaskState] = field(default_factory=dict)  # scheduled tasks by name
 
 
 def changed_listeners(previous: RuntimeSettings, current: RuntimeSettings) -> set[str]:
@@ -99,6 +104,7 @@ class Launcher:
         tls_wait_seconds: float | None = None,
         heartbeat_interval: float | None = None,
         renewal_interval: float | None = None,
+        scheduled_tasks: list[PeriodicTask] | None = None,
     ) -> None:
         self._settings = settings
         self._app = app
@@ -122,6 +128,13 @@ class Launcher:
                 self._manager, self._certificate_renewed, interval=renewal_interval
             )
         self.https_started = asyncio.Event()
+        # CRL, expired status and purge (ADR-0017): run in idle mode too.
+        self._tasks = (
+            scheduled_tasks
+            if scheduled_tasks is not None
+            else [crl_task(keystore), expiry_task(), purge_task()]
+        )
+        self.status.tasks = {task.name: task.state for task in self._tasks}
 
     # --- main loop ------------------------------------------------------------------------
 
@@ -133,6 +146,7 @@ class Launcher:
         tasks = [
             self._spawn(self._watcher.run(stop), "settings-watcher"),
             self._spawn(self._beat(stop), "heartbeat"),
+            *(self._spawn(task.run(stop), f"task-{task.name}") for task in self._tasks),
         ]
         try:
             if self._settings.http_enabled:

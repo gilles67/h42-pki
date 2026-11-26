@@ -68,6 +68,7 @@ class Certificate(TimestampedModel):
     issuer_id: UUID | None
     authority_id: UUID | None
     profile_id: UUID | None
+    private_key_id: UUID | None
 
     class Meta:
         table = "certificate"
