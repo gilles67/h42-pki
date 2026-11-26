@@ -31,7 +31,9 @@ def test_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_reads_secrets_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    (tmp_path / "h42_pki_ca_passphrase").write_text(PASSPHRASE + "\n", encoding="utf-8")
+    secret = tmp_path / "h42_pki_ca_passphrase"
+    secret.write_text(PASSPHRASE + "\n", encoding="utf-8")
+    os.chmod(secret, 0o600)  # independent of the umask (B52)
     monkeypatch.setenv(f"{ENV_PREFIX}SECRETS_DIR", str(tmp_path))
 
     assert get_settings().ca_passphrase.get_secret_value() == PASSPHRASE
@@ -49,7 +51,9 @@ def test_reads_file_variable(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
 def test_environment_variable_wins_over_secret_file(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    (tmp_path / "h42_pki_ca_passphrase").write_text("from-file", encoding="utf-8")
+    secret = tmp_path / "h42_pki_ca_passphrase"
+    secret.write_text("from-file", encoding="utf-8")
+    os.chmod(secret, 0o600)  # independent of the umask (B52)
     monkeypatch.setenv(f"{ENV_PREFIX}SECRETS_DIR", str(tmp_path))
     monkeypatch.setenv(f"{ENV_PREFIX}CA_PASSPHRASE", PASSPHRASE)
 
