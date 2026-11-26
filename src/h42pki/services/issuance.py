@@ -210,7 +210,7 @@ class IssuanceService:
                 spec = constrain_sub_ca(spec, constraints)
             if child is not None:
                 await self._check_child_name(child.name)
-            authority = await self._authorities.get_local()
+            authority = await self._authorities.get_issuing()
             parsed = parse_csr(csr)
             now = datetime.now(UTC)
             issuer_cert = await self._issuer_certificate(authority, now)
@@ -282,7 +282,7 @@ class IssuanceService:
         """
         profile = await Profile.get(name=SERVICE_TLS_PROFILE)
         spec = spec_of(profile)
-        authority = await self._authorities.get_local()
+        authority = await self._authorities.get_issuing()
         stored = await self._keystore.generate(SERVICE_TLS_KEY_ALGORITHM)
         key = await self._keystore.load(stored.encrypted_key)
         csr_der = await asyncio.to_thread(build_csr, key, names[0], names)
@@ -381,7 +381,7 @@ class IssuanceService:
             spec = constrain_sub_ca(spec, _constraints_of(request))
         now = datetime.now(UTC)
         try:
-            authority = await self._authorities.get_local()
+            authority = await self._authorities.get_issuing()
             issuer_cert, issuer_key = await self._authorities.signing_material(authority, now=now)
             issued = await asyncio.to_thread(
                 build_issued,

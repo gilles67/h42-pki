@@ -13,6 +13,7 @@ from h42pki.keystore import get_keystore
 from h42pki.logs import configure_logging
 from h42pki.main import create_app
 from h42pki.server.launcher import Launcher
+from h42pki.services.authority import AuthorityService
 from h42pki.services.profiles import ProfileService
 from h42pki.services.settings import SettingsService
 
@@ -49,6 +50,8 @@ async def run_server(settings: Settings, stop: asyncio.Event | None = None) -> N
     install_signal_handlers(stop)
     await open_database(settings)
     try:
+        # A CA with CRL or OCSP must serve them (ADR-0017): refused before anything starts.
+        await AuthorityService.check_serving(idle=settings.idle)
         runtime = await SettingsService().effective()
         configure_logging(runtime.logging.format, runtime.logging.level)
         app = create_app(settings, manage_database=False)

@@ -51,9 +51,13 @@ def server_settings() -> Settings:
 
 def _serve_process() -> None:
     """Target of the reloader: a fresh process runs the whole launcher."""
+    from h42pki.errors import RevocationNeedsListener
     from h42pki.server.run import run_server
 
-    asyncio.run(run_server(server_settings()))
+    try:
+        asyncio.run(run_server(server_settings()))
+    except RevocationNeedsListener as exc:
+        fail(f"cannot start the server: {exc.detail}", code=2)
 
 
 @app.command()

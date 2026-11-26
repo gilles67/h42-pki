@@ -208,6 +208,11 @@ class Settings(BaseSettings):
         return self
 
     @property
+    def idle(self) -> bool:
+        """Idle mode: neither HTTP nor HTTPS (ADR-0012)."""
+        return not (self.http_enabled or self.https_enabled)
+
+    @property
     def https_url(self) -> str | None:
         """Suggested URL of this server: the published port may differ from the listening one."""
         return f"https://{self.server_hostname}:{self.https_port}" if self.server_hostname else None

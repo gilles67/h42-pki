@@ -130,6 +130,8 @@ class SubordinateService:
         subject: Subject,
         key_algorithm: KeyAlgorithm,
         public_base_url: str | None,
+        crl: bool = False,
+        ocsp: bool = False,
         actor: str,
     ) -> Authority:
         """Pin the parent, create the pending CA, send the request; returns the local CA.
@@ -149,6 +151,8 @@ class SubordinateService:
             subject=subject,
             key_algorithm=key_algorithm,
             public_base_url=public_base_url,
+            crl=crl,
+            ocsp=ocsp,
             actor=actor,
         )
         try:
@@ -192,6 +196,8 @@ class SubordinateService:
         subject: Subject,
         key_algorithm: KeyAlgorithm,
         public_base_url: str | None,
+        crl: bool,
+        ocsp: bool,
         actor: str,
     ) -> Authority:
         if self._keystore is None:  # pragma: no cover - programming error
@@ -222,6 +228,8 @@ class SubordinateService:
                 parent=above,
                 public_base_url=public_base_url,
                 pending_csr_der=csr_der,
+                crl_enabled=crl,  # fixed for the life of the CA (ADR-0017)
+                ocsp_enabled=ocsp,
             )
             await AuditLog.record(
                 actor=actor,
@@ -232,6 +240,8 @@ class SubordinateService:
                     "name": name,
                     "mode": "subordinate",
                     "key_algorithm": key_algorithm.value,
+                    "crl_enabled": crl,
+                    "ocsp_enabled": ocsp,
                     "subject_dn": rfc4514(subject.x509_name()),
                     "parent_url": parent.url,
                     "parent_fingerprint": fingerprint_of(parent.chain[0]),

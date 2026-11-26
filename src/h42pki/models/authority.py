@@ -13,6 +13,7 @@ from h42pki.models.base import TimestampedModel
 
 if TYPE_CHECKING:
     from h42pki.models.certificate import Certificate
+    from h42pki.models.crl import Crl
     from h42pki.models.private_key import PrivateKey
 
 
@@ -62,6 +63,15 @@ class Authority(TimestampedModel):
     # key), and the CSR, kept so that a lost answer can be asked again with the same request.
     pending_enrollment_id = fields.UUIDField(null=True)
     pending_csr_der = fields.BinaryField(null=True)
+    # Revocation services of a local CA (ADR-0017): chosen by `h42pki authority init`, never
+    # changed afterwards. They decide the CDP and AIA OCSP URLs written in issued certificates.
+    crl_enabled = fields.BooleanField(default=False)
+    ocsp_enabled = fields.BooleanField(default=False)
+    # Local subordinate CA: last check of its own status with the OCSP of its parent.
+    parent_check_at = fields.DatetimeField(null=True)
+    parent_check_result = fields.CharField(max_length=32, null=True)
+
+    crls: fields.ReverseRelation[Crl]
 
     # The CA's own certificate: reverse side of Certificate.authority. A foreign key on this
     # table would form a cycle with Certificate.issuer, which Tortoise cannot create.

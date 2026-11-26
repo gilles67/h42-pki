@@ -106,7 +106,7 @@ class FederationService:
         actor: str,
     ) -> CreatedInvitation:
         authorities = AuthorityService()
-        record = await authorities.certificate_of(await authorities.get_local())
+        record = await authorities.certificate_of(await authorities.get_issuing())
         issuer = x509.load_der_x509_certificate(record.der)
         ceiling = issuer.extensions.get_extension_for_class(x509.BasicConstraints).value.path_length
         if ceiling == 0:

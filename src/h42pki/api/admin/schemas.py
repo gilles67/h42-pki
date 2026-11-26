@@ -150,6 +150,8 @@ class AuthorityOut(Schema):
     path_length: int | None
     key_algorithm: KeyAlgorithm
     public_base_url: str | None
+    crl_enabled: bool  # chosen at creation, never changed (ADR-0017)
+    ocsp_enabled: bool
 
     @classmethod
     def from_model(cls, authority: Authority, certificate: Certificate) -> "AuthorityOut":
@@ -176,6 +178,8 @@ class AuthorityOut(Schema):
             path_length=authority.path_length,
             key_algorithm=authority.private_key.algorithm,
             public_base_url=authority.public_base_url,
+            crl_enabled=authority.crl_enabled,
+            ocsp_enabled=authority.ocsp_enabled,
         )
 
 

@@ -65,3 +65,16 @@ class MissingPassphrase(ServiceUnavailable):
 
 class NoActiveAuthority(ServiceUnavailable):
     title = "No Active Certificate Authority"
+
+
+class RevocationNeedsListener(Conflict):
+    """A CA with CRL or OCSP cannot run without any listener (idle mode, ADR-0017)."""
+
+    title = "Revocation Services Need A Listener"
+
+    def __init__(self, name: str) -> None:
+        super().__init__(
+            f"the CA {name!r} publishes a CRL or answers OCSP, so it cannot run in idle mode: "
+            "enable H42_PKI_HTTP_ENABLED (or H42_PKI_HTTPS_ENABLED); a root meant to stay offline "
+            "is created without --crl and --ocsp"
+        )

@@ -16,7 +16,13 @@ from h42pki.core.publication import (
     validate_authority_name,
 )
 from h42pki.core.serial import new_serial_hex
-from h42pki.errors import Conflict, InvalidRequest, MissingPassphrase, NoActiveAuthority
+from h42pki.errors import (
+    Conflict,
+    InvalidRequest,
+    MissingPassphrase,
+    NoActiveAuthority,
+    RevocationNeedsListener,
+)
 from h42pki.keystore import KEY_OPERATIONS_REQUIREMENT, KeyStore
 from h42pki.models import (
     AuditLog,
@@ -32,6 +38,14 @@ from h42pki.models import (
 from h42pki.services.x509_fields import signed_fields
 
 ROOT_KEY_USAGE = KeyUsage(key_cert_sign=True, crl_sign=True, digital_signature=True)
+# The local CA in service: active, or revoked by its parent (still publishing, never issuing).
+CURRENT_STATUSES = (AuthorityStatus.ACTIVE, AuthorityStatus.REVOKED)
+
+
+def check_not_idle(*, idle: bool, name: str, crl: bool, ocsp: bool) -> None:
+    """Refuse a CA with revocation services when no listener can serve them (ADR-0017)."""
+    if idle and (crl or ocsp):
+        raise RevocationNeedsListener(name)
 
 
 class AuthorityService:
@@ -54,9 +68,14 @@ class AuthorityService:
         validity_days: int = DEFAULT_CA_VALIDITY_DAYS,
         path_length: int | None = None,
         public_base_url: str | None = None,
+        crl: bool = False,
+        ocsp: bool = False,
         actor: str,
     ) -> Authority:
-        """Create the local root CA: a new key, its root certificate, an active Authority."""
+        """Create the local root CA: a new key, its root certificate, an active Authority.
+
+        ``crl`` and ``ocsp`` are fixed for the life of the CA (ADR-0017).
+        """
         check_validity_days(validity_days)
         validate_authority_name(name)
         if public_base_url is not None:
@@ -107,6 +126,8 @@ class AuthorityService:
                 private_key=key,
                 path_length=path_length,
                 public_base_url=public_base_url,
+                crl_enabled=crl,
+                ocsp_enabled=ocsp,
             )
             await Certificate.create(
                 authority=authority,
@@ -126,6 +147,8 @@ class AuthorityService:
                     "key_algorithm": key_algorithm.value,
                     "validity_days": validity_days,
                     "path_length": path_length,
+                    "crl_enabled": crl,
+                    "ocsp_enabled": ocsp,
                     "subject_dn": fields["subject_dn"],
                     "sha256_fingerprint": fields["sha256_fingerprint"],
                 },
@@ -158,9 +181,14 @@ class AuthorityService:
         return authority, normalized
 
     async def find_local(self) -> Authority | None:
-        """The active local CA, if any (certificate and key prefetched)."""
+        """The current local CA, if any (certificate and key prefetched).
+
+        Active, or revoked by its parent: a revoked CA no longer issues but still publishes its
+        certificate and CRL and answers OCSP for what it issued (ADR-0017).
+        """
         return (
-            await Authority.filter(kind=AuthorityKind.LOCAL, status=AuthorityStatus.ACTIVE)
+            await Authority.filter(kind=AuthorityKind.LOCAL, status__in=CURRENT_STATUSES)
+            .order_by("status")  # active first
             .prefetch_related("certificate", "private_key", "parent__certificate")
             .first()
         )
@@ -171,7 +199,7 @@ class AuthorityService:
         authority = (
             await Authority.filter(
                 kind=AuthorityKind.LOCAL,
-                status__in=[AuthorityStatus.ACTIVE, AuthorityStatus.PENDING_SIGNATURE],
+                status__in=[*CURRENT_STATUSES, AuthorityStatus.PENDING_SIGNATURE],
             )
             .order_by("status")  # active first
             .first()
@@ -183,6 +211,34 @@ class AuthorityService:
         if authority is None:
             raise NoActiveAuthority(
                 "no active certificate authority: run `h42pki authority init` first"
+            )
+        return authority
+
+    @staticmethod
+    async def check_serving(*, idle: bool) -> None:
+        """At start-up: the local CA (pending or not) may not need a listener it lacks."""
+        authority = (
+            await Authority.filter(
+                kind=AuthorityKind.LOCAL,
+                status__in=[*CURRENT_STATUSES, AuthorityStatus.PENDING_SIGNATURE],
+            )
+            .order_by("status")
+            .first()
+        )
+        if authority is not None:
+            check_not_idle(
+                idle=idle,
+                name=authority.name,
+                crl=authority.crl_enabled,
+                ocsp=authority.ocsp_enabled,
+            )
+
+    async def get_issuing(self) -> Authority:
+        """The local CA, provided it may issue: 503 when there is none or it is revoked."""
+        authority = await self.get_local()
+        if authority.status is AuthorityStatus.REVOKED:
+            raise NoActiveAuthority(
+                "the local CA has been revoked by its parent: it no longer issues certificates"
             )
         return authority
 

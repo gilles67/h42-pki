@@ -20,6 +20,7 @@ from h42pki.errors import H42Error
 from h42pki.keystore import get_keystore
 from h42pki.models import Authority, AuthorityStatus, Certificate
 from h42pki.services import AuthorityService
+from h42pki.services.authority import check_not_idle
 from h42pki.services.subordinate import SubordinateService
 
 app = typer.Typer(help="Manage the local certificate authority.", no_args_is_help=True)
@@ -55,7 +56,20 @@ def _describe(authority: Authority, certificate: Certificate) -> list[tuple[str,
         ("Not after", certificate.not_after.isoformat()),
         ("Path length", path_length),
         ("Public base URL", authority.public_base_url or "-"),
+        *_revocation_rows(authority),
     ]
+
+
+def _enabled(value: bool) -> str:
+    return "enabled" if value else "disabled"
+
+
+def _revocation_rows(authority: Authority) -> list[tuple[str, str]]:
+    rows = [("CRL", _enabled(authority.crl_enabled)), ("OCSP", _enabled(authority.ocsp_enabled))]
+    if authority.parent_check_result is not None and authority.parent_check_at is not None:
+        checked = authority.parent_check_at.isoformat(timespec="seconds")
+        rows.append(("Parent check", f"{authority.parent_check_result} ({checked})"))
+    return rows
 
 
 def _describe_pending(authority: Authority) -> list[tuple[str, str]]:
@@ -66,6 +80,7 @@ def _describe_pending(authority: Authority) -> list[tuple[str, str]]:
         *_parent_rows(authority),
         ("Enrolment", str(enrolment) if enrolment is not None else "not acknowledged yet"),
         ("Public base URL", authority.public_base_url or "-"),
+        *_revocation_rows(authority),
     ]
 
 
@@ -126,9 +141,12 @@ def _enrol(
     subject: Subject,
     key_algorithm: KeyAlgorithm,
     public_base_url: str | None,
+    crl: bool,
+    ocsp: bool,
     wait_minutes: int,
 ) -> None:
     async def operation(settings: Settings) -> list[tuple[str, str]] | None:
+        check_not_idle(idle=settings.idle, name=name, crl=crl, ocsp=ocsp)
         service = SubordinateService(get_keystore(settings))
         try:
             authority = await service.start(
@@ -139,6 +157,8 @@ def _enrol(
                 subject=subject,
                 key_algorithm=key_algorithm,
                 public_base_url=public_base_url,
+                crl=crl,
+                ocsp=ocsp,
                 actor=CLI_ACTOR,
             )
             return await _finish(service, authority, token, wait_minutes)
@@ -230,6 +250,22 @@ def init(
     resume: Annotated[
         bool, typer.Option("--resume", help="Go on with the enrolment in progress.")
     ] = False,
+    crl: Annotated[
+        bool,
+        typer.Option(
+            "--crl",
+            help="Publish a CRL and write its URL (CDP) in issued certificates. Fixed for the "
+            "life of the CA; needs a listener (no idle mode).",
+        ),
+    ] = False,
+    ocsp: Annotated[
+        bool,
+        typer.Option(
+            "--ocsp",
+            help="Answer OCSP and write its URL (AIA) in issued certificates. Fixed for the "
+            "life of the CA; needs a listener (no idle mode).",
+        ),
+    ] = False,
 ) -> None:
     """Create the local CA: a root (default), or the child of another CA (--parent-url).
 
@@ -237,7 +273,7 @@ def init(
     `h42pki federation invite` on the parent, which decides its validity and path length.
     """
     if resume:
-        if any((name, common_name, parent_url, parent_fingerprint, public_base_url)):
+        if any((name, common_name, parent_url, parent_fingerprint, public_base_url, crl, ocsp)):
             fail("--resume only takes --token and --wait-minutes", code=2)
         _resume(_read_token(token), wait_minutes)
         return
@@ -268,6 +304,8 @@ def init(
             subject=subject,
             key_algorithm=key_algorithm,
             public_base_url=public_base_url,
+            crl=crl,
+            ocsp=ocsp,
             wait_minutes=wait_minutes,
         )
         return
@@ -275,6 +313,7 @@ def init(
         fail("--token and --parent-fingerprint go with --parent-url", code=2)
 
     async def operation(settings: Settings) -> list[tuple[str, str]]:
+        check_not_idle(idle=settings.idle, name=name, crl=crl, ocsp=ocsp)
         service = AuthorityService(get_keystore(settings))
         authority = await service.init_root(
             name=name,
@@ -283,6 +322,8 @@ def init(
             validity_days=validity_days or DEFAULT_CA_VALIDITY_DAYS,
             path_length=path_length,
             public_base_url=public_base_url,
+            crl=crl,
+            ocsp=ocsp,
             actor=CLI_ACTOR,
         )
         return _describe(authority, await service.certificate_of(authority))
