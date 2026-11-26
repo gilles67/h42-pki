@@ -5,7 +5,7 @@ Statuses only, never a secret nor an internal detail (ADR-0012). The Docker HEAL
 """
 
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Literal
 
 from fastapi import APIRouter, Request, Response
@@ -14,7 +14,9 @@ from tortoise import connections
 
 from h42pki import __version__
 from h42pki.heartbeat import HEARTBEAT_MAX_AGE_SECONDS, heartbeat_age
+from h42pki.models import AuthorityStatus
 from h42pki.services.authority import AuthorityService
+from h42pki.services.crl import CrlService
 
 log = logging.getLogger(__name__)
 
@@ -26,6 +28,20 @@ class HttpsCertificate(BaseModel):
     renewal: Literal["ok", "failing"]
 
 
+class CrlHealth(BaseModel):
+    enabled: bool
+    crl_number: int | None = None
+    this_update: datetime | None = None
+    next_update: datetime | None = None
+    age_seconds: float | None = None
+    refresh: Literal["ok", "failing", "unknown"] = "unknown"  # scheduled task of the launcher
+
+
+class ParentCheckHealth(BaseModel):
+    result: str  # good, revoked, unknown, unreachable, no_ocsp, invalid_response
+    checked_at: datetime
+
+
 class Health(BaseModel):
     status: Literal["ok", "degraded", "unavailable"]
     version: str
@@ -35,6 +51,9 @@ class Health(BaseModel):
     listeners: list[str]
     https: Literal["serving", "waiting", "disabled", "unknown"]
     https_certificate: HttpsCertificate | None
+    crl: CrlHealth | None  # None without a local CA
+    ocsp: Literal["enabled", "disabled"] | None
+    parent_check: ParentCheckHealth | None  # subordinate CA, once checked
     warnings: list[str]
 
 
@@ -50,6 +69,46 @@ async def _database_ok() -> bool:
         log.warning("health: the database does not answer", exc_info=True)
         return False
     return True
+
+
+async def _revocation(
+    launcher: object | None, warnings: list[str]
+) -> tuple[CrlHealth | None, Literal["enabled", "disabled"] | None, ParentCheckHealth | None]:
+    """CRL, OCSP and parent check of the local CA (ADR-0017): statuses only."""
+    authority = await AuthorityService().find_local()
+    if authority is None:
+        return None, None, None
+    now = datetime.now(UTC)
+    if authority.status is AuthorityStatus.REVOKED:
+        warnings.append("the local CA has been revoked by its parent: it no longer issues")
+    crl = CrlHealth(enabled=authority.crl_enabled)
+    if authority.crl_enabled:
+        tasks = getattr(launcher, "tasks", {}) or {}
+        state = tasks.get("crl")
+        if state is not None and state.last_run is not None:
+            crl.refresh = "failing" if state.failing else "ok"
+        current = await CrlService.current(authority)
+        if current is None:
+            warnings.append("no CRL published yet")
+        else:
+            crl.crl_number = current.crl_number
+            crl.this_update = current.this_update
+            crl.next_update = current.next_update
+            crl.age_seconds = round((now - current.this_update).total_seconds(), 1)
+            if current.next_update <= now:
+                warnings.append("the CRL is out of date")
+        if crl.refresh == "failing":
+            warnings.append("the generation of the CRL is failing")
+    parent_check: ParentCheckHealth | None = None
+    if authority.parent_check_result is not None and authority.parent_check_at is not None:
+        parent_check = ParentCheckHealth(
+            result=authority.parent_check_result, checked_at=authority.parent_check_at
+        )
+        if authority.parent_check_result not in ("good", "revoked"):
+            warnings.append(
+                f"the status check with the parent CA failed ({authority.parent_check_result})"
+            )
+    return crl, "enabled" if authority.ocsp_enabled else "disabled", parent_check
 
 
 @router.get("/health")
@@ -87,6 +146,12 @@ async def health(request: Request, response: Response) -> Health:
         if age is None or age > HEARTBEAT_MAX_AGE_SECONDS:
             warnings.append("no recent heartbeat of the launcher")
 
+    crl: CrlHealth | None = None
+    ocsp: Literal["enabled", "disabled"] | None = None
+    parent_check: ParentCheckHealth | None = None
+    if database:
+        crl, ocsp, parent_check = await _revocation(launcher, warnings)
+
     if not database:
         status: Literal["ok", "degraded", "unavailable"] = "unavailable"
         response.status_code = 503
@@ -101,5 +166,8 @@ async def health(request: Request, response: Response) -> Health:
         listeners=listeners,
         https=https,
         https_certificate=certificate,
+        crl=crl,
+        ocsp=ocsp,
+        parent_check=parent_check,
         warnings=warnings,
     )
