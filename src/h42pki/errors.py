@@ -74,7 +74,7 @@ class RevocationNeedsListener(Conflict):
 
     def __init__(self, name: str) -> None:
         super().__init__(
-            f"the CA {name!r} publishes a CRL or answers OCSP, so it cannot run in idle mode: "
+            f"the CA {name!r} has CRL or OCSP enabled, so it cannot run in idle mode: "
             "enable H42_PKI_HTTP_ENABLED (or H42_PKI_HTTPS_ENABLED); a root meant to stay offline "
             "is created without --crl and --ocsp"
         )
