@@ -245,6 +245,21 @@ class CrlSettings(_Section):
         return self
 
 
+class OcspSettings(_Section):
+    """OCSP of a CA created with --ocsp (ADR-0017)."""
+
+    response_validity_hours: int = _setting(
+        24,
+        apply=ApplyLevel.HOT,
+        description=(
+            "Validity of an OCSP answer (nextUpdate - thisUpdate), in hours; never beyond the "
+            "nextUpdate of the CRL when it is enabled."
+        ),
+        ge=1,
+        le=168,
+    )
+
+
 class LoggingSettings(_Section):
     level: Literal["debug", "info", "warning", "error"] = _setting(
         "info", apply=ApplyLevel.HOT, description="Log level of the server."
@@ -274,6 +289,7 @@ class RuntimeSettings(_Section):
     issuance: IssuanceSettings = Field(default_factory=IssuanceSettings)
     server: ServerSettings = Field(default_factory=ServerSettings)
     crl: CrlSettings = Field(default_factory=CrlSettings)
+    ocsp: OcspSettings = Field(default_factory=OcspSettings)
     logging: LoggingSettings = Field(default_factory=LoggingSettings)
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
 

@@ -32,6 +32,7 @@ EXPECTED_LEVELS = {
     "server.max_header_size": ("listener", ("http", "https")),
     "crl.validity_hours": ("hot", ()),
     "crl.regenerate_before_hours": ("hot", ()),
+    "ocsp.response_validity_hours": ("hot", ()),
     "logging.level": ("hot", ()),
     "logging.format": ("process", ()),
     "database.pool_size": ("process", ()),
@@ -76,6 +77,7 @@ def test_defaults() -> None:
     assert settings.logging.format == "text"
     assert settings.database.pool_size is None
     assert (settings.crl.validity_hours, settings.crl.regenerate_before_hours) == (168, 48)
+    assert settings.ocsp.response_validity_hours == 24
     assert SETTINGS["tls_service.validity_days"].default == 47
 
 

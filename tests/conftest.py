@@ -13,6 +13,7 @@ import pytest
 from asgi_lifespan import LifespanManager
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
+from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from h42pki.config import ENV_PREFIX, Settings, get_settings
@@ -55,8 +56,13 @@ def settings(monkeypatch: pytest.MonkeyPatch) -> Settings:
 
 
 @pytest.fixture
-async def client(settings: Settings) -> AsyncIterator[AsyncClient]:
-    app = create_app(settings)
+def app(settings: Settings) -> FastAPI:
+    """The application under test (its state holds the OCSP cache, for instance)."""
+    return create_app(settings)
+
+
+@pytest.fixture
+async def client(app: FastAPI) -> AsyncIterator[AsyncClient]:
     async with (
         LifespanManager(app) as manager,
         AsyncClient(transport=ASGITransport(app=manager.app), base_url="http://testserver") as ac,
