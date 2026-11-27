@@ -15,10 +15,18 @@ from enum import StrEnum
 
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization
+from cryptography.x509.oid import ExtensionOID
 
-from h42pki.core.csr import parse_csr
+from h42pki.core.csr import ParsedCsr, parse_csr
+from h42pki.core.names import SUBJECT_OIDS
 from h42pki.core.settings_schema import EstSettings
-from h42pki.errors import Forbidden, NotFound, ServiceUnavailable, Unauthorized
+from h42pki.errors import (
+    Forbidden,
+    InvalidRequest,
+    NotFound,
+    ServiceUnavailable,
+    Unauthorized,
+)
 from h42pki.keystore import KeyStore
 from h42pki.models import (
     AuditLog,
@@ -53,6 +61,15 @@ class EstOperation(StrEnum):
     SERVERKEYGEN = "serverkeygen"
 
 
+AUDIT_ACTIONS = {
+    EstOperation.SIMPLEENROLL: "est.enroll",
+    EstOperation.SIMPLEREENROLL: "est.reenroll",
+    EstOperation.SERVERKEYGEN: "est.serverkeygen",
+}
+# id-cmc-changeSubjectName (RFC 6402): asks for another subject at re-enrolment, not supported.
+CHANGE_SUBJECT_NAME = x509.ObjectIdentifier("1.3.6.1.5.5.7.7.36")
+
+
 class EstUnauthorized(Unauthorized):
     """401 with the Basic challenge of EST; the message never says what failed."""
 
@@ -83,6 +100,26 @@ EnrollResult = Issued | Pending
 
 def csr_sha256(der: bytes) -> str:
     return hashlib.sha256(der).hexdigest()
+
+
+def _sans(extensions: x509.Extensions) -> set[x509.GeneralName]:
+    try:
+        return set(extensions.get_extension_for_class(x509.SubjectAlternativeName).value)
+    except x509.ExtensionNotFound:
+        return set()
+
+
+def check_same_identity(csr: x509.CertificateSigningRequest, current: x509.Certificate) -> None:
+    """Re-enrolment keeps the subject and the SANs exactly (RFC 7030 section 4.2.2); 400 else."""
+    for attribute in csr.attributes:
+        if attribute.oid == CHANGE_SUBJECT_NAME:
+            raise InvalidRequest("ChangeSubjectName is not supported")
+    if csr.subject.public_bytes() != current.subject.public_bytes():
+        raise InvalidRequest("re-enrolment keeps the subject of the current certificate")
+    if _sans(csr.extensions) != _sans(current.extensions):
+        raise InvalidRequest(
+            "re-enrolment keeps the subject alternative names of the current certificate"
+        )
 
 
 class EstService:
@@ -163,10 +200,25 @@ class EstService:
         profile: str,
         csr_der: bytes,
         operation: EstOperation = EstOperation.SIMPLEENROLL,
+        audit: dict[str, object] | None = None,
     ) -> EnrollResult:
         """Issue, or find again the request this identity already sent with this CSR."""
         settings = await self.settings()
         parsed = parse_csr(csr_der)
+        return await self._enroll(
+            identity, profile, parsed, operation, settings=settings, audit=audit or {}
+        )
+
+    async def _enroll(
+        self,
+        identity: Identity,
+        profile: str,
+        parsed: ParsedCsr,
+        operation: EstOperation,
+        *,
+        settings: EstSettings,
+        audit: dict[str, object],
+    ) -> EnrollResult:
         canonical = parsed.csr.public_bytes(serialization.Encoding.DER)
         digest = csr_sha256(canonical)
         previous = await self._previous(identity.requester, digest, operation)
@@ -185,15 +237,61 @@ class EstService:
         )
         await AuditLog.record(
             actor=identity.requester,
-            action=f"est.{'enroll' if operation is EstOperation.SIMPLEENROLL else operation.value}",
+            action=AUDIT_ACTIONS[operation],
             object_type="certificate_request",
             object_id=request.id,
-            details={"profile": profile, "status": request.status.value, "csr_sha256": digest},
+            details={
+                "profile": profile,
+                "status": request.status.value,
+                "csr_sha256": digest,
+                **audit,
+            },
         )
         outcome = await self._outcome(request, settings)
         if outcome is None:  # pragma: no cover - a fresh request is pending or issued
             raise ServiceUnavailable("the request could not be issued")
         return outcome
+
+    async def reenroll(
+        self, identity: Identity, *, label: str | None, csr_der: bytes
+    ) -> EnrollResult:
+        """RFC 7030 section 4.2.2: same subject and SANs as the certificate presented.
+
+        ``identity`` comes from a client certificate issued by a local CA (``certificate_only``);
+        its profile is the profile of that certificate. The old certificate is not revoked.
+        """
+        settings = await self.settings()
+        client = identity.client
+        record = client.record if client is not None else None
+        if client is None or record is None:
+            raise EstUnauthorized("a valid client certificate issued by this CA is required")
+        await record.fetch_related("profile")
+        if record.profile is None:  # pragma: no cover - CA certificates cannot authenticate
+            raise InvalidRequest("this certificate has no profile to re-enrol with")
+        profile = record.profile.name
+        if label is not None and label != profile:
+            raise InvalidRequest(
+                f"the certificate presented has profile {profile!r}, not {label!r}"
+            )
+        parsed = parse_csr(csr_der)
+        check_same_identity(parsed.csr, client.certificate)
+        return await self._enroll(
+            identity,
+            profile,
+            parsed,
+            EstOperation.SIMPLEREENROLL,
+            settings=settings,
+            audit={"previous_serial_hex": record.serial_hex},
+        )
+
+    @staticmethod
+    async def csr_attributes(profile: str) -> list[x509.ObjectIdentifier]:
+        """What the profile requires of a CSR: subject attributes, and SANs if required."""
+        spec = spec_of(await Profile.get(name=profile))
+        oids = [SUBJECT_OIDS[field] for field in spec.subject_policy.required]
+        if spec.san_policy.required:
+            oids.append(ExtensionOID.SUBJECT_ALTERNATIVE_NAME)
+        return oids
 
     @staticmethod
     async def _previous(

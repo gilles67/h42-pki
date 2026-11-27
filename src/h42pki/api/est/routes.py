@@ -17,7 +17,15 @@ from fastapi.responses import PlainTextResponse
 from h42pki.api.admin.deps import app_settings
 from h42pki.api.client_cert import client_certificate
 from h42pki.config import Settings
-from h42pki.core.est import CERTS_ONLY, InvalidBase64, certs_only, decode_base64, encode_base64
+from h42pki.core.est import (
+    CERTS_ONLY,
+    CSRATTRS,
+    InvalidBase64,
+    certs_only,
+    csr_attrs,
+    decode_base64,
+    encode_base64,
+)
 from h42pki.errors import H42Error
 from h42pki.keystore import optional_keystore
 from h42pki.services.est import EnrollResult, EstOperation, EstService, Issued
@@ -150,6 +158,35 @@ async def simpleenroll(request: Request, service: Est, label: str | None = None)
     return _enrolled(await est_call(run))
 
 
+async def simplereenroll(request: Request, service: Est, label: str | None = None) -> Response:
+    async def run() -> EnrollResult:
+        await service.settings()
+        if label is not None:
+            await service.profile(label, await service.settings())  # unknown label: 404
+        identity = await service.authenticate(
+            None,  # Basic is not enough: the certificate to renew authenticates (RFC 7030 4.2.2)
+            client_certificate(request, request.app.state.settings.trusted_proxies),
+            certificate_only=True,
+        )
+        csr = await _body(request)
+        return await service.reenroll(identity, label=label, csr_der=csr)
+
+    return _enrolled(await est_call(run))
+
+
+async def csrattrs(service: Est, label: str | None = None) -> Response:
+    async def run() -> list[x509.ObjectIdentifier]:
+        settings = await service.settings()
+        return await service.csr_attributes(await service.profile(label, settings))
+
+    oids = await est_call(run)
+    if not oids:
+        return Response(status_code=204)
+    return Response(
+        content=encode_base64(csr_attrs(oids)), media_type=CSRATTRS, headers=BASE64_HEADERS
+    )
+
+
 async def fullcmc(service: Est, label: str | None = None) -> Response:
     async def run() -> None:
         settings = await service.settings()
@@ -172,6 +209,8 @@ Operation = tuple[str, str, Callable[..., Awaitable[Response]]]
 OPERATIONS: list[Operation] = [
     ("cacerts", "GET", cacerts),
     ("simpleenroll", "POST", simpleenroll),
+    ("simplereenroll", "POST", simplereenroll),
+    ("csrattrs", "GET", csrattrs),
     ("fullcmc", "POST", fullcmc),
 ]
 

@@ -9,7 +9,9 @@ forwarded by a trusted proxy (``Client-Cert``) was not verified at all. Both are
 - or, unless ``local_only``, issued directly by an anchor of ``server.client_trust_anchors``: in its
   validity period (the revocation of an external CA is not checked).
 
-An intermediate between an external anchor and the certificate is not followed.
+An intermediate between an external anchor and the certificate is not followed. As OpenSSL does in
+the TLS handshake (checked by a spike in phase 4), a certificate whose extended key usage leaves out
+``clientAuth`` is refused: a ``tls_server`` certificate cannot authenticate a client.
 """
 
 from dataclasses import dataclass
@@ -18,6 +20,7 @@ from datetime import datetime
 from cryptography import x509
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes
+from cryptography.x509.oid import ExtendedKeyUsageOID
 
 from h42pki.errors import Unauthorized
 from h42pki.models import (
@@ -49,6 +52,16 @@ class VerifiedClient:
     issuer: Authority | None  # that local CA
 
 
+def _client_usage(certificate: x509.Certificate) -> bool:
+    try:
+        usages = certificate.extensions.get_extension_for_class(x509.ExtendedKeyUsage).value
+    except x509.ExtensionNotFound:
+        return True  # no restriction
+    return ExtendedKeyUsageOID.CLIENT_AUTH in usages or (
+        ExtendedKeyUsageOID.ANY_EXTENDED_KEY_USAGE in usages
+    )
+
+
 def _issued_by(certificate: x509.Certificate, issuer: x509.Certificate) -> bool:
     try:
         certificate.verify_directly_issued_by(issuer)
@@ -64,6 +77,8 @@ async def verify_client_certificate(
     fingerprint = certificate.fingerprint(hashes.SHA256()).hex()
     if not certificate.not_valid_before_utc <= now < certificate.not_valid_after_utc:
         raise ClientCertificateRefused("the client certificate is outside its validity period")
+    if not _client_usage(certificate):
+        raise ClientCertificateRefused("the certificate is not meant for client authentication")
     local = await Authority.filter(
         kind=AuthorityKind.LOCAL, status__in=LOCAL_ISSUERS
     ).prefetch_related("certificate")
