@@ -7,7 +7,8 @@ from fastapi import FastAPI
 from tortoise.contrib.fastapi import RegisterTortoise
 
 from h42pki import __version__
-from h42pki.api import admin, federation, health, ocsp, public
+from h42pki.api import admin, est, federation, health, ocsp, public
+from h42pki.api.est import EstError, est_error_handler
 from h42pki.api.listener import ListenerRoutesMiddleware
 from h42pki.api.problems import exception_handlers, install_problem_schemas
 from h42pki.config import Settings, get_settings
@@ -48,7 +49,7 @@ def create_app(settings: Settings | None = None, *, manage_database: bool = True
         title="h42-pki",
         version=__version__,
         lifespan=lifespan,
-        exception_handlers=exception_handlers(),
+        exception_handlers={**exception_handlers(), EstError: est_error_handler},
     )
     app.state.settings = app_settings
     app.state.launcher = None  # LauncherStatus, set by the launcher
@@ -62,5 +63,6 @@ def create_app(settings: Settings | None = None, *, manage_database: bool = True
     app.include_router(federation.router)
     app.include_router(public.router)
     app.include_router(ocsp.router)
+    app.include_router(est.router)
     install_problem_schemas(app)
     return app

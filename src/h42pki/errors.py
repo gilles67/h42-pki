@@ -78,3 +78,10 @@ class RevocationNeedsListener(Conflict):
             "enable H42_PKI_HTTP_ENABLED (or H42_PKI_HTTPS_ENABLED); a root meant to stay offline "
             "is created without --crl and --ocsp"
         )
+
+
+class Forbidden(H42Error):
+    """Understood and authenticated, but refused (disabled profile, rejected request)."""
+
+    status_code = 403
+    title = "Forbidden"

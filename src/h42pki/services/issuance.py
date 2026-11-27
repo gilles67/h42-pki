@@ -138,8 +138,11 @@ class IssuanceService:
         validity_days: int | None,
         actor: str,
         channel: Channel = Channel.API,
+        metadata: dict[str, Any] | None = None,
     ) -> CertificateRequest:
         """Record a request; issue it at once when the profile auto-approves.
+
+        ``metadata``: stored with the request (e.g. what an EST client asked, to find it again).
 
         The request is checked against the profile and the active CA before being stored: a
         request that could never be issued is refused (422) instead of waiting for a decision.
@@ -153,7 +156,11 @@ class IssuanceService:
         )
         async with in_transaction():
             request = await self._record(
-                prepared, validity_days=validity_days, actor=actor, channel=channel
+                prepared,
+                validity_days=validity_days,
+                actor=actor,
+                channel=channel,
+                extra=metadata,
             )
         if prepared.spec.auto_approve:
             return await self._issue(
@@ -248,10 +255,11 @@ class IssuanceService:
         actor: str,
         channel: Channel,
         federation: dict[str, Any] | None = None,
+        extra: dict[str, Any] | None = None,
     ) -> CertificateRequest:
         """Store a checked request (inside the transaction of the caller)."""
         ignored = [*prepared.parsed.ignored_extensions]
-        metadata: dict[str, Any] = {"ignored_extensions": ignored}
+        metadata: dict[str, Any] = {**(extra or {}), "ignored_extensions": ignored}
         if federation is not None:
             metadata["federation"] = federation
         request = await CertificateRequest.create(
