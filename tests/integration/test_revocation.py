@@ -430,3 +430,15 @@ async def test_serving_the_crl_never_signs(client: AsyncClient, make_root: RootF
 def test_crl_is_public_over_http() -> None:
     assert served_over_http("/crl/test-root.crl")
     assert not served_over_http("/api/v1/crl")
+
+
+async def test_regression_B55_revoked_ca_still_publishes_its_certificate(
+    client: AsyncClient, make_root: RootFactory
+) -> None:
+    authority = await make_root()
+    await Authority.filter(id=authority.id).update(status=AuthorityStatus.REVOKED)
+
+    der = await client.get("/ca/test-root.crt")
+    chain = await client.get("/ca/chain.pem")
+
+    assert der.status_code == 200 and chain.status_code == 200

@@ -5,8 +5,14 @@ from h42pki.errors import NotFound
 from h42pki.models import Authority, AuthorityKind, AuthorityStatus, Certificate
 from h42pki.services.authority import AuthorityService
 
-# A CA certificate stays published after a rollover so that what it issued can still be verified.
-PUBLISHED_STATUSES = (AuthorityStatus.ACTIVE, AuthorityStatus.ROLLING_OVER, AuthorityStatus.RETIRED)
+# A CA certificate stays published after a rollover, and after its revocation by its parent (it
+# still publishes its CRL, ADR-0017), so that what it issued can still be checked (B55).
+PUBLISHED_STATUSES = (
+    AuthorityStatus.ACTIVE,
+    AuthorityStatus.REVOKED,
+    AuthorityStatus.ROLLING_OVER,
+    AuthorityStatus.RETIRED,
+)
 
 
 class PublicationService:
