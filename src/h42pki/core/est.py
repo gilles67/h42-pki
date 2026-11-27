@@ -38,10 +38,14 @@ def decode_base64(body: bytes) -> bytes:
 
 
 def encode_base64(data: bytes) -> bytes:
-    """Base64 in lines of 76 characters, CRLF-separated, as EST clients expect."""
+    """Base64 in lines of 76 characters ending with LF.
+
+    LF rather than the CRLF of RFC 2045: EST clients accept both, and ``base64 -d`` of GNU
+    coreutils, used in many EST examples, refuses CR.
+    """
     text = base64.b64encode(data)
     lines = [text[i : i + LINE_LENGTH] for i in range(0, len(text), LINE_LENGTH)]
-    return b"\r\n".join(lines) + b"\r\n"
+    return b"\n".join(lines) + b"\n"
 
 
 def certs_only(certificates: Sequence[x509.Certificate]) -> bytes:
@@ -97,6 +101,6 @@ def multipart_mixed(parts: Sequence[Part], boundary: str | None = None) -> tuple
         body += f"--{boundary}\r\n".encode("ascii")
         body += f"Content-Type: {part.content_type}\r\n".encode("ascii")
         body += b"Content-Transfer-Encoding: base64\r\n\r\n"
-        body += encode_base64(part.body)
+        body += encode_base64(part.body).replace(b"\n", b"\r\n")  # MIME parts: CRLF
     body += f"--{boundary}--\r\n".encode("ascii")
     return f"multipart/mixed; boundary={boundary}", bytes(body)

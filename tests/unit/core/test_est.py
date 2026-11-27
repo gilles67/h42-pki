@@ -48,7 +48,8 @@ def test_invalid_base64(body: bytes) -> None:
 def test_encoded_lines() -> None:
     encoded = encode_base64(DATA)
 
-    lines = encoded.split(b"\r\n")
+    lines = encoded.split(b"\n")
+    assert b"\r" not in encoded  # GNU base64 -d refuses CR
     assert all(len(line) <= 76 for line in lines) and lines[-1] == b""
     assert decode_base64(encoded) == DATA
 
