@@ -8,7 +8,7 @@ import typer
 
 import h42pki
 from h42pki import __version__
-from h42pki.cli import authority, certificate, crl, federation, health, profile, request
+from h42pki.cli import authority, certificate, crl, est, federation, health, profile, request
 from h42pki.cli import config as config_cli
 from h42pki.cli._runtime import fail, load_settings
 from h42pki.config import Settings
@@ -24,6 +24,7 @@ app.add_typer(authority.app, name="authority")
 app.add_typer(profile.app, name="profile")
 app.add_typer(certificate.app, name="certificate")
 app.add_typer(crl.app, name="crl")
+app.add_typer(est.app, name="est")
 app.add_typer(request.app, name="request")
 app.add_typer(federation.app, name="federation")
 app.add_typer(config_cli.app, name="config")
