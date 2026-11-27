@@ -16,6 +16,7 @@ class KeyBackend(StrEnum):
 class KeyPurpose(StrEnum):
     CA = "ca"
     TLS = "tls"  # key of the built-in HTTPS server; the CA key never serves TLS (ADR-0013)
+    SERVERKEYGEN = "serverkeygen"  # generated for an EST client, copy kept encrypted (ADR-0018)
 
 
 class PrivateKey(TimestampedModel):

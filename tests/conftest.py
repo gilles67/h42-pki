@@ -17,6 +17,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from h42pki.config import ENV_PREFIX, Settings, get_settings
+from h42pki.core import passwords
 from h42pki.core.keys import (
     KeyAlgorithm,
     SupportedPrivateKey,
@@ -44,6 +45,14 @@ def isolated_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Ite
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def fast_password_hashing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Cheap scrypt in tests (the real parameters: tests/unit/core/test_passwords.py)."""
+    monkeypatch.setattr(
+        passwords, "DEFAULT_PARAMETERS", passwords.ScryptParameters(n=2**10, r=8, p=1)
+    )
 
 
 @pytest.fixture

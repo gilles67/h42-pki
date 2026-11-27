@@ -87,7 +87,7 @@ async def test_pagination(client: AsyncClient, populated: list[str]) -> None:
 
 @pytest.mark.parametrize(
     "params",
-    [{"limit": 501}, {"limit": 0}, {"offset": -1}, {"status": "pending"}, {"channel": "est"}],
+    [{"limit": 501}, {"limit": 0}, {"offset": -1}, {"status": "pending"}, {"channel": "scep"}],
 )
 async def test_invalid_list_parameters(client: AsyncClient, params: dict[str, Any]) -> None:
     response = await client.get("/api/v1/certificates", params=params)
