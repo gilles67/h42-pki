@@ -7,8 +7,17 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from tortoise.expressions import Q
+from tortoise.transactions import in_transaction
 
-from h42pki.models import Certificate, CertificateStatus, Channel
+from h42pki.errors import Conflict, NotFound
+from h42pki.models import (
+    AuditLog,
+    Certificate,
+    CertificateStatus,
+    Channel,
+    KeyPurpose,
+    PrivateKey,
+)
 
 DEFAULT_PAGE_SIZE = 50
 MAX_PAGE_SIZE = 500
@@ -35,6 +44,38 @@ class CertificatePage:
 class CertificateService:
     async def get(self, cert_id: UUID) -> Certificate:
         return await Certificate.get(id=cert_id).prefetch_related("profile", "issuer")
+
+    @staticmethod
+    async def delete_stored_key(cert_id: UUID, *, actor: str) -> None:
+        """Delete the copy of a key generated for an EST client (serverkeygen, ADR-0018).
+
+        404 without stored key; 409 for any other key (the CA key, the HTTPS server key). The
+        key is never returned: deleting it is the only operation on it.
+        """
+        certificate = await Certificate.get(id=cert_id)
+        if certificate.private_key_id is None:
+            raise NotFound("no private key is stored for this certificate")
+        key = await PrivateKey.get(id=certificate.private_key_id)
+        if key.purpose is not KeyPurpose.SERVERKEYGEN:
+            raise Conflict(
+                f"this is a {key.purpose.value} key, managed by the CA: only a key generated for "
+                "an EST client (serverkeygen) can be deleted"
+            )
+        async with in_transaction():
+            await Certificate.filter(id=certificate.id).update(private_key_id=None)
+            await PrivateKey.filter(id=key.id).delete()
+            await AuditLog.record(
+                actor=actor,
+                action="private_key.delete",
+                object_type="private_key",
+                object_id=key.id,
+                details={
+                    "purpose": key.purpose.value,
+                    "algorithm": key.algorithm.value,
+                    "certificate_id": str(certificate.id),
+                    "serial_hex": certificate.serial_hex,
+                },
+            )
 
     async def search(
         self,

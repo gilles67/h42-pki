@@ -61,6 +61,7 @@ async def test_root_ca_certificate(
         "revoked_at",
         "revocation_reason",
         "invalidity_date",
+        "has_stored_private_key",
     }
     assert body["status"] == "valid"
     assert body["profile"] is None and body["issuer_id"] is None and body["channel"] == "cli"

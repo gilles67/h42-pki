@@ -104,6 +104,10 @@ class CertificateOut(Schema):
     revoked_at: datetime | None
     revocation_reason: str | None = Field(description="RFC 5280 reason, snake_case.")
     invalidity_date: datetime | None
+    has_stored_private_key: bool = Field(
+        description="A private key of this certificate is held here (CA, HTTPS server, or a "
+        "copy of an EST serverkeygen key, which can be deleted); it is never returned."
+    )
 
     @classmethod
     def from_model(cls, cert: Certificate, *, now: datetime | None = None) -> "CertificateOut":
@@ -132,6 +136,7 @@ class CertificateOut(Schema):
                 cert.revocation_reason.name if cert.revocation_reason is not None else None
             ),
             invalidity_date=cert.invalidity_date,
+            has_stored_private_key=cert.private_key_id is not None,
         )
 
 
