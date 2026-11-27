@@ -260,6 +260,41 @@ class OcspSettings(_Section):
     )
 
 
+class EstSettings(_Section):
+    """EST enrollment (RFC 7030, ADR-0018): disabled by default, like every enrollment protocol."""
+
+    enabled: bool = _setting(
+        False,
+        apply=ApplyLevel.HOT,
+        description="Serve EST (/.well-known/est, HTTPS only); false: every EST route answers 404.",
+    )
+    default_profile: str = _setting(
+        "",
+        apply=ApplyLevel.HOT,
+        description=(
+            "Profile of the EST routes without label (/.well-known/est/simpleenroll); empty: "
+            "those routes answer 404 and a label is required (/.well-known/est/{profile}/...)."
+        ),
+    )
+    retry_after_seconds: int = _setting(
+        60,
+        apply=ApplyLevel.HOT,
+        description="Retry-After of a 202 answer, while a request waits for its approval.",
+        ge=1,
+        le=3600,
+    )
+
+    @field_validator("default_profile")
+    @classmethod
+    def _check_profile(cls, value: str) -> str:
+        if value and value not in _disableable_profiles():
+            raise ValueError(
+                f"unknown profile {value!r} "
+                f"(built-in profiles: {', '.join(sorted(_disableable_profiles()))})"
+            )
+        return value
+
+
 class LoggingSettings(_Section):
     level: Literal["debug", "info", "warning", "error"] = _setting(
         "info", apply=ApplyLevel.HOT, description="Log level of the server."
@@ -290,6 +325,7 @@ class RuntimeSettings(_Section):
     server: ServerSettings = Field(default_factory=ServerSettings)
     crl: CrlSettings = Field(default_factory=CrlSettings)
     ocsp: OcspSettings = Field(default_factory=OcspSettings)
+    est: EstSettings = Field(default_factory=EstSettings)
     logging: LoggingSettings = Field(default_factory=LoggingSettings)
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
 

@@ -13,7 +13,7 @@ async def test_config_lists_the_effective_settings(client: AsyncClient) -> None:
 
     assert response.status_code == 200
     items = {item["key"]: item for item in response.json()["items"]}
-    assert len(items) == 16
+    assert len(items) == 19
     assert items["tls_service.validity_days"] == {
         "key": "tls_service.validity_days",
         "value": 30,

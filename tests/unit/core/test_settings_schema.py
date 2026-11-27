@@ -33,6 +33,9 @@ EXPECTED_LEVELS = {
     "crl.validity_hours": ("hot", ()),
     "crl.regenerate_before_hours": ("hot", ()),
     "ocsp.response_validity_hours": ("hot", ()),
+    "est.enabled": ("hot", ()),
+    "est.default_profile": ("hot", ()),
+    "est.retry_after_seconds": ("hot", ()),
     "logging.level": ("hot", ()),
     "logging.format": ("process", ()),
     "database.pool_size": ("process", ()),
@@ -78,6 +81,8 @@ def test_defaults() -> None:
     assert settings.database.pool_size is None
     assert (settings.crl.validity_hours, settings.crl.regenerate_before_hours) == (168, 48)
     assert settings.ocsp.response_validity_hours == 24
+    assert (settings.est.enabled, settings.est.default_profile) == (False, "")
+    assert settings.est.retry_after_seconds == 60
     assert SETTINGS["tls_service.validity_days"].default == 47
 
 
@@ -176,3 +181,11 @@ def test_crl_window_must_leave_time_before_regeneration() -> None:
         build_settings({"crl.validity_hours": 24})  # 48 hours before: every check would regenerate
     with pytest.raises(InvalidSetting):
         build_settings({"crl.validity_hours": 0})
+
+
+def test_est_default_profile_must_be_a_profile() -> None:
+    assert build_settings({"est.default_profile": "tls_client"}).est.default_profile == "tls_client"
+    with pytest.raises(InvalidSetting, match="unknown profile"):
+        build_settings({"est.default_profile": "service_tls"})  # internal
+    with pytest.raises(InvalidSetting, match="unknown profile"):
+        build_settings({"est.default_profile": "nope"})
