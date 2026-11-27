@@ -6,6 +6,7 @@ request again and gets the certificate once approved, without a new request; the
 after issuance gives the same certificate.
 """
 
+import asyncio
 import hashlib
 import logging
 import re
@@ -21,13 +22,15 @@ from h42pki.core.csr import ParsedCsr, parse_csr
 from h42pki.core.names import SUBJECT_OIDS
 from h42pki.core.settings_schema import EstSettings
 from h42pki.errors import (
+    Conflict,
     Forbidden,
     InvalidRequest,
+    MissingPassphrase,
     NotFound,
     ServiceUnavailable,
     Unauthorized,
 )
-from h42pki.keystore import KeyStore
+from h42pki.keystore import KEY_OPERATIONS_REQUIREMENT, KeyStore
 from h42pki.models import (
     AuditLog,
     Certificate,
@@ -35,6 +38,7 @@ from h42pki.models import (
     CertificateStatus,
     Channel,
     EnrollmentCredential,
+    PrivateKey,
     Profile,
     RequestStatus,
 )
@@ -52,6 +56,8 @@ from h42pki.services.settings import SettingsService
 log = logging.getLogger(__name__)
 
 REALM = "h42pki-est"
+# One process per container (ADR-0001): enough to deliver a generated key only once.
+_DELIVERY = asyncio.Lock()
 PROFILE_NAME = re.compile(r"^[a-z0-9_]{1,64}$")
 
 
@@ -96,6 +102,26 @@ class Pending:
 
 
 EnrollResult = Issued | Pending
+
+
+@dataclass(frozen=True, repr=False)
+class ServerKey:
+    """Unencrypted PKCS#8 DER of a key generated for the client: never logged nor kept."""
+
+    pkcs8_der: bytes
+
+    def __repr__(self) -> str:
+        return "ServerKey(<redacted>)"
+
+
+@dataclass(frozen=True)
+class KeyedIssued:
+    request: CertificateRequest
+    certificate: Certificate
+    key: ServerKey
+
+
+KeyedResult = KeyedIssued | Pending
 
 
 def csr_sha256(der: bytes) -> str:
@@ -234,6 +260,7 @@ class EstService:
             actor=identity.requester,
             channel=Channel.EST,
             metadata={"est": {"operation": operation.value, "csr_sha256": digest}},
+            server_keygen=operation is EstOperation.SERVERKEYGEN,
         )
         await AuditLog.record(
             actor=identity.requester,
@@ -251,6 +278,43 @@ class EstService:
         if outcome is None:  # pragma: no cover - a fresh request is pending or issued
             raise ServiceUnavailable("the request could not be issued")
         return outcome
+
+    async def serverkeygen(
+        self, identity: Identity, *, profile: str, csr_der: bytes
+    ) -> "KeyedResult":
+        """RFC 7030 section 4.4: the key is generated here, at issuance, and kept encrypted.
+
+        The client gets it once, with the certificate (in TLS, unencrypted PKCS#8); a request
+        that already delivered its key, or whose stored copy was deleted, answers 409.
+        """
+        result = await self.enroll(
+            identity, profile=profile, csr_der=csr_der, operation=EstOperation.SERVERKEYGEN
+        )
+        if isinstance(result, Pending):
+            return result
+        async with _DELIVERY:  # two retries at once never both get the key
+            request = await CertificateRequest.get(id=result.request.id)
+            certificate = await Certificate.get(id=result.certificate.id)
+            if request.metadata.get("key_delivered_at") is not None:
+                raise Conflict("the key of this request was already delivered: send a new request")
+            if certificate.private_key_id is None:
+                raise Conflict("the stored key of this certificate was deleted: send a new request")
+            if self._keystore is None:
+                raise MissingPassphrase(KEY_OPERATIONS_REQUIREMENT)
+            stored = await PrivateKey.get(id=certificate.private_key_id)
+            # Marked first: a failure after this point never delivers the key twice.
+            await CertificateRequest.filter(id=request.id).update(
+                metadata={**request.metadata, "key_delivered_at": datetime.now(UTC).isoformat()}
+            )
+        key = await self._keystore.export_for_enrollment(stored.encrypted_key)
+        await AuditLog.record(
+            actor=identity.requester,
+            action="est.serverkeygen.deliver",
+            object_type="certificate",
+            object_id=certificate.id,
+            details={"serial_hex": certificate.serial_hex, "algorithm": stored.algorithm.value},
+        )
+        return KeyedIssued(request, certificate, ServerKey(key))
 
     async def reenroll(
         self, identity: Identity, *, label: str | None, csr_der: bytes

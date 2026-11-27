@@ -3,7 +3,7 @@
 import asyncio
 import hashlib
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -12,7 +12,7 @@ from cryptography import x509
 from cryptography.hazmat.primitives import serialization
 from tortoise.transactions import in_transaction
 
-from h42pki.core.csr import ParsedCsr, build_csr, parse_csr
+from h42pki.core.csr import ParsedCsr, build_csr, parse_csr, rebuild_csr
 from h42pki.core.federation import SubCaConstraints, constrain_sub_ca
 from h42pki.core.issuance import build_issued, plan_issuance
 from h42pki.core.keys import KeyAlgorithm
@@ -68,6 +68,22 @@ def publication_urls(authority: Authority) -> PublicationUrls:
         crl_url=crl_url(base, authority.name) if authority.crl_enabled else None,
         ocsp_url=ocsp_url(base) if authority.ocsp_enabled else None,
     )
+
+
+@dataclass(frozen=True)
+class HeldKey:
+    """A key generated here for the certificate being issued, stored with it."""
+
+    stored: StoredKey
+    algorithm: KeyAlgorithm
+    purpose: KeyPurpose
+
+
+def server_key_algorithm(parsed: ParsedCsr, spec: ProfileSpec) -> KeyAlgorithm:
+    """Algorithm of a key generated for the client: the CSR's if allowed, else the first allowed."""
+    if parsed.key_algorithm in spec.allowed_key_algorithms:
+        return parsed.key_algorithm
+    return spec.allowed_key_algorithms[0]
 
 
 @dataclass(frozen=True)
@@ -139,10 +155,14 @@ class IssuanceService:
         actor: str,
         channel: Channel = Channel.API,
         metadata: dict[str, Any] | None = None,
+        server_keygen: bool = False,
     ) -> CertificateRequest:
         """Record a request; issue it at once when the profile auto-approves.
 
         ``metadata``: stored with the request (e.g. what an EST client asked, to find it again).
+        ``server_keygen``: the key is generated here at issuance (EST serverkeygen): the CSR only
+        gives the subject and the SANs; its algorithm is kept if the profile allows it, otherwise
+        the first one the profile allows. The key is stored encrypted with the certificate.
 
         The request is checked against the profile and the active CA before being stored: a
         request that could never be issued is refused (422) instead of waiting for a decision.
@@ -153,14 +173,18 @@ class IssuanceService:
             validity_days=validity_days,
             actor=actor,
             channel=channel,
+            server_keygen=server_keygen,
         )
+        extra = dict(metadata or {})
+        if server_keygen:
+            extra["server_keygen"] = {"algorithm": prepared.parsed.key_algorithm.value}
         async with in_transaction():
             request = await self._record(
                 prepared,
                 validity_days=validity_days,
                 actor=actor,
                 channel=channel,
-                extra=metadata,
+                extra=extra,
             )
         if prepared.spec.auto_approve:
             return await self._issue(
@@ -216,6 +240,7 @@ class IssuanceService:
         channel: Channel,
         constraints: SubCaConstraints | None = None,
         child: ChildCa | None = None,
+        server_keygen: bool = False,
     ) -> PreparedRequest:
         """Check a request without a key and without storing it; a refusal is audited (B35)."""
         parsed: ParsedCsr | None = None
@@ -237,6 +262,8 @@ class IssuanceService:
                 await self._check_child_name(child.name)
             authority = await self._authorities.get_issuing()
             parsed = parse_csr(csr)
+            if server_keygen:  # the key will be generated with this algorithm
+                parsed = replace(parsed, key_algorithm=server_key_algorithm(parsed, spec))
             now = datetime.now(UTC)
             issuer_cert = await self._issuer_certificate(authority, now)
             plan = plan_issuance(parsed, spec, issuer_cert, validity_days=validity_days, now=now)
@@ -338,7 +365,11 @@ class IssuanceService:
                 },
             )
         return await self._issue(
-            request, parsed=parsed, actor=SYSTEM_ACTOR, decided_by=AUTO_APPROVE, tls_key=stored
+            request,
+            parsed=parsed,
+            actor=SYSTEM_ACTOR,
+            decided_by=AUTO_APPROVE,
+            held_key=HeldKey(stored, SERVICE_TLS_KEY_ALGORITHM, KeyPurpose.TLS),
         )
 
     async def approve(self, request_id: UUID, *, actor: str) -> CertificateRequest:
@@ -393,12 +424,13 @@ class IssuanceService:
         parsed: ParsedCsr,
         actor: str,
         decided_by: str,
-        tls_key: StoredKey | None = None,
+        held_key: HeldKey | None = None,
     ) -> CertificateRequest:
         """The single issuance path for certificates signed by the CA.
 
-        ``tls_key``: key generated here for the certificate (built-in HTTPS server), stored in the
-        same transaction as the certificate.
+        ``held_key``: key generated here for the certificate (built-in HTTPS server), stored in
+        the same transaction as the certificate. A ``server_keygen`` request (EST) gets its key
+        generated now, at issuance, and stored the same way.
         """
         profile = await Profile.get(id=request.profile_id)
         spec = spec_of(profile)
@@ -407,6 +439,9 @@ class IssuanceService:
             spec = constrain_sub_ca(spec, _constraints_of(request))
         now = datetime.now(UTC)
         try:
+            keygen = request.metadata.get("server_keygen")
+            if keygen is not None and held_key is None:
+                held_key, parsed = await self._server_key(parsed, KeyAlgorithm(keygen["algorithm"]))
             authority = await self._authorities.get_issuing()
             issuer_cert, issuer_key = await self._authorities.signing_material(authority, now=now)
             urls = publication_urls(authority)
@@ -433,12 +468,12 @@ class IssuanceService:
         }
         async with in_transaction():
             private_key: PrivateKey | None = None
-            if tls_key is not None:
+            if held_key is not None:
                 private_key = await PrivateKey.create(
-                    algorithm=SERVICE_TLS_KEY_ALGORITHM,
-                    purpose=KeyPurpose.TLS,
-                    encrypted_key=tls_key.encrypted_key,
-                    public_key_der=tls_key.public_key_der,
+                    algorithm=held_key.algorithm,
+                    purpose=held_key.purpose,
+                    encrypted_key=held_key.stored.encrypted_key,
+                    public_key_der=held_key.stored.public_key_der,
                 )
                 await AuditLog.record(
                     actor=actor,
@@ -499,6 +534,15 @@ class IssuanceService:
                 },
             )
         return await self.get(request.id)
+
+    async def _server_key(
+        self, parsed: ParsedCsr, algorithm: KeyAlgorithm
+    ) -> tuple["HeldKey", ParsedCsr]:
+        """A new key for a server_keygen request, and the CSR rebuilt with it."""
+        stored = await self._keystore.generate(algorithm)
+        key = await self._keystore.load(stored.encrypted_key)
+        rebuilt = await asyncio.to_thread(rebuild_csr, parsed.csr, key)
+        return HeldKey(stored, algorithm, KeyPurpose.SERVERKEYGEN), parse_csr(rebuilt)
 
     @staticmethod
     async def _audit_refusal(

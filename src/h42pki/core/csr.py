@@ -149,3 +149,19 @@ def build_ca_csr(key: SupportedPrivateKey, subject: Subject) -> bytes:
         .sign(key, signature_hash(key))
     )
     return csr.public_bytes(serialization.Encoding.DER)
+
+
+def rebuild_csr(csr: x509.CertificateSigningRequest, key: SupportedPrivateKey) -> bytes:
+    """DER CSR signed by ``key`` with the subject and the SANs of ``csr`` (EST serverkeygen).
+
+    The client's CSR only names the certificate it wants; the key is generated here. Nothing but
+    the subject and the subject alternative names is taken over (B2).
+    """
+    builder = x509.CertificateSigningRequestBuilder().subject_name(csr.subject)
+    try:
+        sans = csr.extensions.get_extension_for_class(x509.SubjectAlternativeName)
+    except x509.ExtensionNotFound:
+        sans = None
+    if sans is not None:
+        builder = builder.add_extension(sans.value, critical=sans.critical)
+    return builder.sign(key, signature_hash(key)).public_bytes(serialization.Encoding.DER)

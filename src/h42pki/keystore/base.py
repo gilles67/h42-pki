@@ -43,3 +43,11 @@ class KeyStore(Protocol):
         leaves the key store encrypted, with a one-time password kept in memory.
         """
         ...
+
+    async def export_for_enrollment(self, stored: bytes) -> bytes:
+        """The key as **unencrypted** PKCS#8 DER, for EST ``serverkeygen`` only (ADR-0018).
+
+        The single plaintext export of the key store: the EST service hands it to the client
+        that asked for it, inside the TLS session (RFC 7030 section 4.4.2), once. Never logged.
+        """
+        ...

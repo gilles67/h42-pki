@@ -2,6 +2,7 @@
 
 import asyncio
 
+from cryptography.hazmat.primitives import serialization
 from pydantic import SecretStr
 
 from h42pki.core.keys import (
@@ -42,3 +43,12 @@ class SoftwareKeyStore:
     async def export_encrypted(self, stored: bytes, password: bytes) -> bytes:
         key = await self.load(stored)
         return await asyncio.to_thread(serialize_encrypted_pem, key, password)
+
+    async def export_for_enrollment(self, stored: bytes) -> bytes:
+        key = await self.load(stored)
+        return await asyncio.to_thread(
+            key.private_bytes,
+            serialization.Encoding.DER,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),  # EST serverkeygen, inside TLS (ADR-0018)
+        )

@@ -20,15 +20,25 @@ from h42pki.config import Settings
 from h42pki.core.est import (
     CERTS_ONLY,
     CSRATTRS,
+    PKCS8,
     InvalidBase64,
+    Part,
     certs_only,
     csr_attrs,
     decode_base64,
     encode_base64,
+    multipart_mixed,
 )
 from h42pki.errors import H42Error
 from h42pki.keystore import optional_keystore
-from h42pki.services.est import EnrollResult, EstOperation, EstService, Issued
+from h42pki.services.est import (
+    EnrollResult,
+    EstOperation,
+    EstService,
+    Issued,
+    KeyedResult,
+    Pending,
+)
 
 log = logging.getLogger(__name__)
 
@@ -174,6 +184,28 @@ async def simplereenroll(request: Request, service: Est, label: str | None = Non
     return _enrolled(await est_call(run))
 
 
+async def serverkeygen(request: Request, service: Est, label: str | None = None) -> Response:
+    async def run() -> KeyedResult:
+        settings = await service.settings()
+        profile = await service.profile(label, settings)
+        await service.check_enabled_profile(profile)
+        identity = await service.authenticate(
+            _basic(request),
+            client_certificate(request, request.app.state.settings.trusted_proxies),
+        )
+        csr = await _body(request)
+        return await service.serverkeygen(identity, profile=profile, csr_der=csr)
+
+    result = await est_call(run)
+    if isinstance(result, Pending):
+        return _enrolled(result)
+    certificate = x509.load_der_x509_certificate(result.certificate.der)
+    content_type, body = multipart_mixed(
+        [Part(PKCS8, result.key.pkcs8_der), Part(CERTS_ONLY, certs_only([certificate]))]
+    )
+    return Response(content=body, media_type=content_type, headers={"Cache-Control": "no-store"})
+
+
 async def csrattrs(service: Est, label: str | None = None) -> Response:
     async def run() -> list[x509.ObjectIdentifier]:
         settings = await service.settings()
@@ -211,6 +243,7 @@ OPERATIONS: list[Operation] = [
     ("simpleenroll", "POST", simpleenroll),
     ("simplereenroll", "POST", simplereenroll),
     ("csrattrs", "GET", csrattrs),
+    ("serverkeygen", "POST", serverkeygen),
     ("fullcmc", "POST", fullcmc),
 ]
 
