@@ -1,66 +1,105 @@
 # EST — Enrollment over Secure Transport
 
 Références : RFC 7030, RFC 8951 (clarifications : encodage base64, en-tête `Content-Transfer-Encoding`).
+Décision : ADR-0018. **Implémenté en phase 4.**
 
-## 1. Endpoints
+## 1. Activation et endpoints
 
-Préfixe `/.well-known/est/` ; un **label** optionnel sélectionne le profil : `/.well-known/est/{label}/simpleenroll`.
-Sans label → `est.default_profile`.
+EST est **désactivé par défaut** : tant que `est.enabled` est faux (`h42pki config set est.enabled true`, niveau
+`hot`), **toutes** les routes `/.well-known/est/…` répondent `404`. HTTPS seulement (ADR-0012) : rien en HTTP.
 
-| Méthode | Opération | Entrée | Sortie (succès) | Obligatoire |
+Préfixe `/.well-known/est/` ; le **label** est un nom de profil : `/.well-known/est/{profil}/simpleenroll`. Sans
+label → `est.default_profile` (vide par défaut : `404` « no default EST profile »). Le profil interne `service_tls`
+n'est pas un label.
+
+| Méthode | Opération | Entrée | Sortie (succès) | Authentification |
 |---|---|---|---|---|
-| GET | `cacerts` | — | `application/pkcs7-mime` : PKCS#7 *certs-only* base64 (AC locale + chaîne) | oui |
-| POST | `simpleenroll` | `application/pkcs10` : CSR DER base64 | 200 `application/pkcs7-mime; smime-type=certs-only` base64 | oui |
-| POST | `simplereenroll` | idem | idem | oui |
-| GET | `csrattrs` | — | `application/csrattrs` base64 (attributs attendus par le profil), ou 204 | v1.1 |
-| POST | `serverkeygen` | `application/pkcs10` | `multipart/mixed` : clé `application/pkcs8` + certificat | optionnel (désactivé par défaut) |
-| POST | `fullcmc` | — | 501 | non supporté |
+| GET | `cacerts` | — | `application/pkcs7-mime; smime-type=certs-only` base64 : AC locale + ascendants | aucune |
+| POST | `simpleenroll` | CSR PKCS#10 DER base64 | 200 certs-only base64, ou 202 + `Retry-After` | Basic ou certificat client |
+| POST | `simplereenroll` | idem | idem | certificat client seulement |
+| GET | `csrattrs` | — | `application/csrattrs` base64, ou 204 | aucune |
+| POST | `serverkeygen` | CSR PKCS#10 DER base64 | 200 `multipart/mixed` (clé `application/pkcs8` + certificat), ou 202 | Basic ou certificat client |
+| POST | `fullcmc` | — | 501 | — |
 
-Notes d'encodage (RFC 8951) : corps **toujours** en base64 ; accepter les sauts de ligne et l'absence de
-`Content-Transfer-Encoding` ; émettre `Content-Transfer-Encoding: base64` pour la compatibilité.
-Demande en attente (approbation manuelle du profil) → `202 Accepted` + `Retry-After`.
+Encodage : corps base64, sauts de ligne, CRLF et espaces tolérés, `Content-Transfer-Encoding` facultatif (RFC 8951) ;
+les réponses portent `Content-Transfer-Encoding: base64`, en lignes de 76 caractères terminées par LF (le
+`base64 -d` de GNU coreutils refuse CR ; les parties MIME gardent CRLF). Corps limité à 64 Kio.
 
-## 2. Authentification
+## 2. Comptes et authentification
 
-EST exige TLS : ses routes n'existent que sur le listener **HTTPS** intégré (ADR-0012).
-- **Certificat client lu directement** dans la connexion TLS : mTLS **facultatif** (`CERT_OPTIONAL`), le certificat
-  et sa chaîne vérifiée arrivent dans `scope["extensions"]["tls"]`. Un client sans certificat peut donc utiliser
-  HTTP Basic sur le même port ; un certificat qui ne remonte pas à une ancre de confiance fait échouer la poignée de
-  main.
-- **Derrière un reverse-proxy** (facultatif) : le certificat client transmis dans l'en-tête `Client-Cert`
-  (RFC 9440) n'est pris en compte que si la requête vient d'un réseau listé dans `H42_PKI_TRUSTED_PROXIES` ;
-  sinon l'en-tête est ignoré.
-- Ancres de confiance pour les certificats clients : la chaîne de l'AC locale, plus `est.client_trust_anchors`.
+- **Comptes EST** (`EnrollmentCredential`, `kind = est_basic`) : API `/api/v1/est/accounts` (`POST`, `GET`,
+  `GET /{username}`, `POST /{username}/disable|enable`, `POST /{username}/password`, `DELETE /{username}`) et CLI
+  `h42pki est account create|list|show|disable|enable|reset-password|delete`. Mot de passe choisi (8 à 1024
+  caractères, par l'entrée standard en CLI : `--password -`) ou généré (24 caractères, montré une seule fois). Hachage
+  scrypt (N 2^15, r 8, p 3), compte désactivé ou expiré refusé. Un compte peut demander **tout profil non désactivé**.
+  Audit `est.account.*`, jamais de mot de passe.
+- **Certificat client** : lu dans la connexion TLS (mTLS facultatif, `scope["extensions"]["tls"]`) ou dans l'en-tête
+  `Client-Cert` (RFC 9440) **seulement** depuis `H42_PKI_TRUSTED_PROXIES`. Dans les deux cas, l'application le
+  **revérifie** (B45, `services/client_auth.py`) : émis **directement** par une AC locale (courante, révoquée par sa
+  mère ou génération précédente), dans sa période de validité, connu en base et non révoqué ; ou émis directement par
+  une ancre de `server.client_trust_anchors` (validité seulement). Un EKU sans `clientAuth` est refusé, comme le fait
+  OpenSSL à la poignée de main (spike de la phase 4 : un `tls_server` y échoue, « unsuitable certificate purpose »).
+- Les ancres TLS du listener (toute la chaîne de l'AC locale + `server.client_trust_anchors`) sont plus larges : un
+  certificat émis par l'AC mère passe la poignée de main mais est refusé ici (`401`).
+- Identité enregistrée (`requester`, acteur d'audit) : `est:<compte>` ou `est-cert:<SHA-256 du certificat>`.
+- Échec → `401` + `WWW-Authenticate: Basic realm="h42pki-est"`, message générique. Pas de *channel binding*
+  `tls-unique`.
 
-| Opération | Méthodes acceptées |
-|---|---|
-| `cacerts`, `csrattrs` | aucune |
-| `simpleenroll` | certificat client émis par une AC listée dans `est.client_trust_anchors` **ou** HTTP Basic (`EnrollmentCredential.kind = est_basic`) |
-| `simplereenroll` | certificat client **obligatoire**, valide, non révoqué, émis par cette AC ; le CSR doit reprendre le même sujet et les mêmes SAN (RFC 7030 §4.2.2) |
+## 3. Émission, approbation, relance
 
-Échec d'authentification → `401` avec `WWW-Authenticate: Basic realm="h42pki-est"`.
-Le *channel binding* `tls-unique` (RFC 7030 §3.5) n'est pas supporté en v1 (ni en TLS direct, ni derrière un proxy).
+- `IssuanceService.submit(channel = est)` : même chemin que l'API (ADR-0010), mêmes règles de profil, troncature de
+  validité, profils désactivés (`403`).
+- Profil en approbation manuelle → `202` + `Retry-After: est.retry_after_seconds` (60). Le client **renvoie la même
+  requête** : la demande est retrouvée par (identité, SHA-256 du CSR, opération), sans en créer d'autre :
+  `pending` → `202` ; `issued` → `200` avec le même certificat (une nouvelle demande s'il a été révoqué ou a expiré) ;
+  `rejected` → `403` « the request was rejected: <motif> » ; `failed` → `503`.
+- Audit `est.enroll`, `est.reenroll`, `est.serverkeygen` (identité, profil, demande, SHA-256 du CSR), en plus de
+  `request.*` et `certificate.issue`.
 
-## 3. Implémentation
+## 4. Réenrôlement (RFC 7030 §4.2.2)
 
-- `api/est/routes.py` : décodage base64 → `x509.load_der_x509_csr` → `IssuanceService.submit(channel="est")`
-  (même chemin d'émission que l'API, profils désactivés compris, ADR-0009).
-- Sortie : `pkcs7.serialize_certificates([cert], serialization.Encoding.DER)` puis base64.
-  Pour `cacerts` : certificats de l'AC et de ses ascendants.
-- `serverkeygen` : clé générée par le keystore (purpose `serverkeygen`), renvoyée en PKCS#8 **non chiffré** uniquement
-  dans la session TLS (option RFC 7030 §4.4.2) ; **non conservée** après la réponse, sauf `est.archive_server_keys`.
-- Erreurs : 400 (CSR illisible ou refusé par le profil, message texte court), 401, 403 (profil interdit pour cette
-  identité), 503 (AC non active).
+`simplereenroll` exige un certificat client émis par une AC locale, valide et non révoqué (Basic seul → `401`). Le
+profil est celui de ce certificat (label différent → `400`). Le CSR reprend **exactement** le sujet (DER) et
+l'ensemble des SAN ; `ChangeSubjectName` (`id-cmc-changeSubjectName`) est refusé (`400`). Nouvelle clé ou même clé.
+L'ancien certificat n'est pas révoqué. Audit `est.reenroll` avec le numéro de série de l'ancien. En pratique :
+certificats `tls_client` et `device` (EKU `clientAuth`).
 
-## 4. Tests
+## 5. `csrattrs` (RFC 7030 §4.5)
 
-- Unitaires : décodage base64 tolérant (sauts de ligne, CRLF) ; sérialisation certs-only relisible avec
-  `pkcs7.load_der_pkcs7_certificates`.
-- Intégration : enrôlement Basic sans certificat client ; réenrôlement avec certificat client présenté en TLS (via
-  le lanceur, comme dans l'expérience `docs/spikes/2026-11-tls-launcher.md`) ; réenrôlement avec en-tête
-  `Client-Cert` depuis un proxy de confiance ; **même en-tête sans `H42_PKI_TRUSTED_PROXIES`, ou depuis une IP non
-  listée → ignoré, donc 401** ; réenrôlement avec sujet différent → 400 ; label inconnu → 404 ; routes EST
-  inexistantes sur le listener HTTP.
-- Interop : `curl` + `openssl` (`curl --data-binary @csr.b64 -H 'Content-Type: application/pkcs10' -u user:pass
-  https://…/.well-known/est/simpleenroll | base64 -d | openssl pkcs7 -inform DER -print_certs`) ;
-  optionnellement `estclient` (libest) dans le compose d'interop.
+`CsrAttrs ::= SEQUENCE OF AttrOrOID`, ici seulement des OID (DER écrit à la main, `core/est.py`) : les attributs de
+sujet requis par le profil (`commonName`…), et `subjectAltName` si le profil exige des SAN. `204` si le profil
+n'impose rien (aucun profil intégré aujourd'hui).
+
+## 6. `serverkeygen` (RFC 7030 §4.4)
+
+- Authentification comme `simpleenroll`. Le CSR ne donne que le sujet et les SAN ; l'algorithme est celui de sa clé si
+  le profil l'admet, sinon le premier admis par le profil.
+- La clé est générée par le keystore **à l'émission** (immédiate, ou à `request approve` ; `202` d'ici là), le CSR est
+  reconstruit avec elle (`core/csr.rebuild_csr`, sujet et SAN seulement), puis émis par `IssuanceService`. La clé est
+  **conservée chiffrée** (`PrivateKey.purpose = serverkeygen`, liée au certificat).
+- Réponse `multipart/mixed` (frontière aléatoire, `Cache-Control: no-store`) : partie `application/pkcs8` (PKCS#8 DER
+  non chiffré, base64, `KeyStore.export_for_enrollment`), puis partie certs-only.
+- **Remise unique** : une relance après remise, ou après suppression de la copie, répond `409`. Audit
+  `est.serverkeygen.deliver`, sans la clé.
+- Suppression de la copie : `DELETE /api/v1/certificates/{id}/private-key` (`204` ; `404` sans clé ; `409` pour une
+  clé d'AC ou `service_tls`) et `h42pki certificate delete-key ID`. `GET /api/v1/certificates/{id}` indique
+  `has_stored_private_key`. **Aucune route ne relit la clé.**
+- Risque : la base et la passphrase donnent aussi les clés non supprimées (ADR-0018).
+
+## 7. Erreurs
+
+Texte brut (`text/plain`), jamais `problem+json` : `400` (base64 ou CSR illisible, refus du profil avec le motif,
+réenrôlement qui change l'identité), `401`, `403` (profil désactivé, demande rejetée), `404` (EST désactivé, label ou
+opération inconnus, pas de profil par défaut), `405` (mauvaise méthode, `Allow`), `409` (clé déjà remise ou
+supprimée), `501` (`fullcmc`), `503` (pas d'AC active, AC révoquée, passphrase absente).
+
+## 8. Tests
+
+- Unitaires : `tests/unit/core/test_passwords.py` (scrypt, temps d'un compte inconnu), `tests/unit/core/test_est.py`
+  (base64 tolérant, certs-only, `CsrAttrs` relu par un petit décodeur, `multipart/mixed` relu par `email`).
+- Intégration : `test_est_accounts.py` (API et CLI), `test_est.py` (désactivé par défaut, labels, Basic, 401, 403,
+  relances, rejet, idempotence, `Client-Cert` d'un proxy de confiance, B45), `test_est_reenroll.py`,
+  `test_est_serverkeygen.py`, `server/test_est_tls.py` (vrai certificat client en TLS, rien en HTTP).
+- Interop : `deploy/est-test.sh` après `deploy/bootstrap.sh` (curl + openssl), et avec `ESTCLIENT=…` le client
+  `estclient` de `github.com/globalsign/est` (v1.0.6, construit dans une image `golang` avec `CGO_ENABLED=1`) :
+  `cacerts`, `enroll`, `csrattrs`, `reenroll` (mTLS), `serverkeygen`.

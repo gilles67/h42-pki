@@ -19,5 +19,6 @@
 | [0015](0015-federation-invitations.md) | Fédération : invitations, épinglage et approbation | accepté |
 | [0016](0016-podman-moteur-de-reference.md) | Podman, moteur de conteneurs de référence | accepté |
 | [0017](0017-revocation.md) | Révocation : CRL et OCSP choisis à la création de l'AC | accepté |
+| [0018](0018-est.md) | EST : protocoles d'enrôlement désactivés par défaut, comptes, relance, serverkeygen | accepté |
 
 Nouvelle décision : copier `0000-template.md`, numéro suivant, mettre à jour ce tableau.

@@ -1,8 +1,8 @@
 # Architecture — h42-pki
 
-> Statut : **v1.3** (2026-11-26). Les phases 0 à 3 sont réalisées ; le document décrit l'existant et les décisions
+> Statut : **v1.4** (2026-11-27). Les phases 0 à 4 sont réalisées ; le document décrit l'existant et les décisions
 > prises pour la suite (configuration en base, HTTP et HTTPS intégrés : ADR-0011 à 0014 ; fédération : ADR-0015 ;
-> révocation : ADR-0017). Les décisions
+> révocation : ADR-0017 ; EST : ADR-0018). Les décisions
 > structurantes sont tracées dans `docs/adr/`. Les points marqués **« À vérifier »** doivent être confirmés par un
 > spike avant implémentation.
 
@@ -176,7 +176,6 @@ erDiagram
     FederationInvitation |o--o| CertificateRequest : "donne droit à"
     Authority ||--o{ Crl : publie
     Certificate ||--o| PrivateKey : "clé détenue (OCSP, RA, serverkeygen)"
-    EnrollmentCredential }o--|| Profile : "autorise"
     ScepTransaction ||--|| CertificateRequest : ""
     AcmeAccount ||--o{ AcmeOrder : ""
     AcmeOrder ||--o{ AcmeAuthorization : ""
@@ -194,10 +193,10 @@ erDiagram
 
 Toutes les tables ont `id` (UUID), `created_at`, `updated_at` (UTC aware).
 
-> **État d'implémentation (phase 3).** Les tables `PrivateKey`, `Authority`, `Profile`, `Certificate`,
-> `CertificateRequest`, `FederationInvitation`, `Crl`, `AuditLog`, `Setting` et `SettingsRevision` existent
-> (`src/h42pki/models/`). Les champs marqués *(plus tard)* ne sont pas encore implémentés ; les autres tables
-> (`EnrollmentCredential`, …) arrivent avec leur phase.
+> **État d'implémentation (phase 4).** Les tables `PrivateKey`, `Authority`, `Profile`, `Certificate`,
+> `CertificateRequest`, `FederationInvitation`, `Crl`, `EnrollmentCredential`, `AuditLog`, `Setting` et
+> `SettingsRevision` existent (`src/h42pki/models/`). Les champs marqués *(plus tard)* ne sont pas encore
+> implémentés ; les autres tables (SCEP, ACME) arrivent avec leur phase.
 > Les clés étrangères pointent toujours « vers le bas » (Certificate → Authority / PrivateKey / Profile,
 > CertificateRequest → Profile / Certificate) : pas de cycle (B27).
 
@@ -209,7 +208,9 @@ keystore : pour le backend logiciel, **PKCS#8 DER chiffré** par la passphrase d
 propre au backend, pas un format.
 Implémenté en phase 1.1 : `purpose` (`ca|tls` ; `tls` = clé du serveur HTTPS intégré, EC P-256, ADR-0013 ; `ca`
 par défaut, y compris pour les clés créées par `POST /api/v1/private-keys`).
-*(plus tard)* : `purpose` `ocsp|scep_ra|serverkeygen`, `pkcs11_uri` (backend pkcs11), `status`.
+Phase 4 : `purpose = serverkeygen` (clé générée pour un client EST, copie chiffrée liée à son certificat,
+supprimable, jamais relue, ADR-0018).
+*(plus tard)* : `purpose` `scep_ra`, `pkcs11_uri` (backend pkcs11), `status`.
 
 **`Authority`** — une AC connue de ce conteneur. L'AC locale est créée par `h42pki authority init` et lue par
 `GET /api/v1/authority`.
@@ -273,7 +274,8 @@ calcul à la lecture (lot 5b) reste comme filet. `revoked_at`, `revocation_reaso
 Canal `federation` : certificat d'une AC fille, certificat reçu de la mère et certificats des ascendants (ADR-0015).
 Canal `system` depuis la phase 1.1 : certificat du serveur HTTPS intégré, avec sa demande (`requester = system`) et
 sa clé (`private_key`, `purpose = tls`).
-*(plus tard)* : `sans` (colonne de recherche), `ski`, `aki`, canaux `est|scep|acme`. Pas de statut `on_hold` : pas de
+Canal `est` depuis la phase 4 (requester `est:<compte>` ou `est-cert:<empreinte>`).
+*(plus tard)* : `sans` (colonne de recherche), `ski`, `aki`, canaux `scep|acme`. Pas de statut `on_hold` : pas de
 suspension (ADR-0017).
 
 **`CertificateRequest`**
@@ -296,19 +298,22 @@ delta.
 (`active|used|revoked` ; `expired` calculé à la lecture), `created_by`, `used_at`, `request` → `CertificateRequest`
 (OneToOne, `RESTRICT`). Les contraintes et le nom de la fille sont recopiés dans `CertificateRequest.metadata`.
 
-**`EnrollmentCredential`** — secrets d'enrôlement partagés par EST, SCEP et ACME.
-`kind` (`est_basic|scep_challenge|acme_eab`), `identifier`, `secret_hash` (argon2/scrypt ;
-pour `acme_eab`, clé HMAC chiffrée car elle doit être relue), `profile`, `expires_at`, `max_uses`, `use_count`,
-`allowed_subjects` (motif).
+**`EnrollmentCredential`** — secrets d'enrôlement des protocoles (ADR-0018). Implémenté (phase 4) : `kind`
+(`est_basic` ; `scep_challenge`, `acme_eab` à venir), `identifier` (nom d'utilisateur, unique par `kind`,
+`[A-Za-z0-9._-]{1,64}`), `secret_hash` (scrypt N 2^15 r 8 p 3, sel par compte, format
+`scrypt$N$r$p$sel$hachage`), `status` (`active|disabled`), `expires_at`, `description`, `created_by`,
+`last_used_at`. **Pas de restriction de profil** : tout profil non désactivé. *(plus tard)* : pour `acme_eab`, clé
+HMAC chiffrée car elle doit être relue ; `max_uses`, `use_count` si SCEP en a besoin.
 
 **`AuditLog`** — `timestamp`, `actor`, `action`, `object_type`, `object_id`, `details` (JSON, sans secret) ;
 `source_ip` *(plus tard)*. Actions enregistrées : `private_key.generate`, `private_key.delete`, `authority.init`,
 `authority.update`, `request.submit`, `request.refuse`, `request.approve`, `request.reject`, `request.fail`,
 `authority.activate`, `authority.abandon`, `certificate.issue` (avec le canal), `federation.invite`,
 `federation.invitation_revoke`, `federation.enroll`, `federation.child_revoke`, `profile.create`, `profile.realign`,
-`config.set` et `config.unset`, et depuis la phase 3 `certificate.revoke`, `crl.generate`, `certificate.expire`
-(une entrée par passage de la tâche), `certificate.purge`, `private_key.delete` (purge) et
-`authority.revoked_by_parent`, dans la même transaction que l'opération. Acteur : `anonymous` pour l'API jusqu'à
+`config.set` et `config.unset`, depuis la phase 3 `certificate.revoke`, `crl.generate`, `certificate.expire`
+(une entrée par passage de la tâche), `certificate.purge`, `private_key.delete` (purge, ou copie `serverkeygen`) et
+`authority.revoked_by_parent`, depuis la phase 4 `est.account.create|disable|enable|password|delete`, `est.enroll`,
+`est.reenroll`, `est.serverkeygen`, `est.serverkeygen.deliver`, dans la même transaction que l'opération. Acteur : `anonymous` pour l'API jusqu'à
 l'authentification (ADR-0008), `cli` pour la ligne de commande, `system` pour la synchronisation des profils et les
 tâches planifiées.
 
@@ -346,7 +351,7 @@ privée pour qu'aucun appelant ne contourne l'approbation).
 
 ```mermaid
 sequenceDiagram
-    participant C as Canal (API, fédération ; EST/SCEP/ACME plus tard)
+    participant C as Canal (API, fédération, EST ; SCEP/ACME plus tard)
     participant IS as IssuanceService
     participant CSR as core.csr
     participant B as core.issuance
@@ -378,6 +383,9 @@ l'émetteur** (`validity_truncated`) ; une AC fille reçoit un `pathLen` stricte
 quand l'AC a une `public_base_url` (validée et normalisée : http ou https avec avertissement, hôte requis, ni requête
 ni fragment, pas de barre finale) et que le profil a `include_aia` ; jamais sur le certificat de la racine. Changer
 l'URL (`h42pki authority update`) ne touche pas les certificats déjà émis.
+**EST (phase 4, ADR-0018)** : canal `est`, même `submit` ; une demande `server_keygen` reçoit sa clé dans `_issue`
+(générée par le keystore, CSR reconstruit avec le seul sujet et les SAN, clé `purpose = serverkeygen` enregistrée dans
+la transaction du certificat), donc à l'émission immédiate comme à l'approbation.
 **CDP et AIA OCSP (phase 3, ADR-0017)** : `CRLDistributionPoints` `{public_base_url}/crl/{authority}.crl` si l'AC a
 été créée avec `--crl`, AIA OCSP `{public_base_url}/ocsp` si elle a été créée avec `--ocsp`, non critiques, dans tous
 les certificats qu'elle émet (AC filles et `service_tls` compris, indépendamment de `include_aia`), seulement avec
@@ -481,7 +489,7 @@ chaque requête ; un middleware ASGI (`api/listener.py`) laisse passer en HTTP `
 | `/crl/{name}.crl` | oui | oui | aucune | CRL DER (`application/pkix-crl`), dernière CRL stockée, cache `ETag` / 304 — **implémenté (phase 3)**, `docs/protocols/crl.md` |
 | `/ocsp` (POST), `/ocsp/{b64}` (GET) | oui | oui | aucune | `application/ocsp-request` / `-response`, signé par l'AC, cache — **implémenté (phase 3)**, `docs/protocols/ocsp.md` |
 | `/scep[/{profile}]` (`pkiclient.exe` accepté) | oui | oui | challenge password | CMS (`application/x-pki-message`) — phase 5 |
-| `/.well-known/est/[{label}/]...` | **non** | oui | certificat client (mTLS facultatif) ou Basic | PKCS#10 / PKCS#7 base64 — phase 4 |
+| `/.well-known/est/[{profil}/]...` | **non** | oui | certificat client (mTLS facultatif, revérifié) ou Basic ; aucune pour `cacerts`, `csrattrs` | PKCS#10 / PKCS#7 base64, erreurs en texte brut ; **désactivé par défaut** (`est.enabled`, 404) — **implémenté (phase 4)**, `docs/protocols/est.md` |
 | `/acme/...` | **non** | oui | JWS (RFC 8555) | `application/jose+json` — phase 6 |
 | `/api/v1/federation/...` | **non** | oui | `enroll` : jeton d'invitation ; le reste : aucune avant la release | JSON — **implémenté (phase 2)**, `docs/protocols/federation.md` §3 |
 | `/api/v1/...`, `/docs`, `/openapi.json` | **non** | oui | aucune avant la release (ADR-0008), puis jeton d'API (Bearer) | JSON |
@@ -509,6 +517,11 @@ routage (404 route inconnue, 405 méthode non permise, avec l'en-tête `Allow`) 
 | GET | `/api/v1/certificates` (`status`, `profile`, `channel`, `q`, `limit` ≤ 500, `offset`) | `{items, total, limit, offset}`, plus récents d'abord ; `status` effectif (un `valid` échu est `expired`, B34) |
 | GET | `/api/v1/certificates/{id}` | 200 `{id, serial_hex, subject_dn, status, not_before, not_after, sha256_fingerprint, profile, channel, issuer, issuer_id, sans, ca_issuers_url, ocsp_url, crl_url, revoked_at, revocation_reason, invalidity_date}` |
 | POST | `/api/v1/certificates/{id}/revoke` `{reason, invalidity_date?}` | 200 certificat révoqué ; 404 ; 409 (déjà révoqué, AC locale, `service_tls`, non émis ici) ; 422 (motif inconnu ou de suspension, date future ou sans fuseau) ; 503 sans passphrase si la CRL doit être signée |
+| DELETE | `/api/v1/certificates/{id}/private-key` | 204 copie d'une clé `serverkeygen` supprimée ; 404 sans clé ; 409 pour une clé d'AC ou `service_tls` (aucune route ne renvoie une clé) |
+| POST | `/api/v1/est/accounts` `{username, password?, expires_at?, description?}` | 201 `{account, password}` (`password` seulement s'il a été généré, montré une fois) ; 409 nom pris ; 422 |
+| GET | `/api/v1/est/accounts` · `/api/v1/est/accounts/{username}` | comptes EST, jamais de secret |
+| POST | `/api/v1/est/accounts/{username}/disable` · `/enable` · `/password` `{password?}` | compte ; nouveau mot de passe renvoyé seulement s'il est généré |
+| DELETE | `/api/v1/est/accounts/{username}` | 204 |
 | GET | `/api/v1/crl` | métadonnées de la CRL de l'AC locale `{authority, crl_number, this_update, next_update, entries, url}` ; 404 sans CRL |
 | GET | `/api/v1/certificates/{id}/chain.pem` | certificat puis émetteurs jusqu'à la racine incluse (`application/x-pem-file`) |
 | GET | `/api/v1/certificates/{id}.pem` | `application/x-pem-file` |
@@ -517,7 +530,8 @@ routage (404 route inconnue, 405 méthode non permise, avec l'en-tête `Allow`) 
 **Supprimés au lot 5a** (ADR-0010) : `POST /api/v1/certificates` et `POST /api/v1/certificates/{id}/self-sign`
 (404/405). Une AC racine se crée par `h42pki authority init`.
 
-**À venir** : jetons d'API (avant la release, ADR-0008), protocoles d'enrôlement (phases 4 à 6).
+**À venir** : jetons d'API (avant la release, ADR-0008), SCEP et ACME (phases 5 et 6, désactivés par défaut comme
+EST, ADR-0018).
 
 **TLS et mTLS (ADR-0012, validé par l'expérience `docs/spikes/2026-11-tls-launcher.md`).**
 - Le listener HTTPS termine TLS lui-même (TLS 1.2 minimum) avec le certificat `service_tls` de l'AC (ADR-0013).
@@ -525,13 +539,15 @@ routage (404 route inconnue, 405 méthode non permise, avec l'en-tête `Allow`) 
   remonte pas à une ancre de confiance (par défaut la chaîne de l'AC locale) fait échouer la poignée de main.
 - Le certificat client et sa chaîne vérifiée arrivent dans `scope["extensions"]["tls"]` (extension ASGI standard),
   grâce à un protocole Uvicorn personnalisé. Le code métier les lit par une seule fonction,
-  `api/client_cert.client_certificate()` (utilisée par EST en phase 4).
+  `api/client_cert.client_certificate()` (utilisée par EST), puis les **revérifie**
+  (`services/client_auth.py`, B45) : émis directement par une AC locale et non révoqué, ou par une ancre de
+  `server.client_trust_anchors`, EKU compatible avec `clientAuth`.
 - Uvicorn tourne **sans** en-têtes de proxy (`proxy_headers=False`) : l'adresse du client est celle du pair TCP, ce
   qui empêche un client de se faire passer pour un proxy de confiance avec `X-Forwarded-For`.
 - **Reverse-proxy facultatif** : si `H42_PKI_TRUSTED_PROXIES` est renseigné, un certificat client transmis par un
   proxy dans l'en-tête `Client-Cert` (RFC 9440) est accepté depuis ces réseaux seulement ; le proxy doit supprimer
-  tout en-tête entrant du même nom. Vide (par défaut) : l'en-tête est ignoré. La chaîne d'un certificat reçu ainsi
-  n'est pas encore vérifiée par le serveur (B45, phase 4).
+  tout en-tête entrant du même nom. Vide (par défaut) : l'en-tête est ignoré. Un certificat reçu ainsi est vérifié
+  par l'application comme celui de TLS (B45, phase 4).
 - Ports : 8080 et 8443 dans le conteneur (l'image tourne en non-root), publiés par le moteur de conteneurs (Podman, moteur de référence, ADR-0016), par exemple sur 8080 et 8443 côté hôte en rootless.
 
 ## 7. Configuration
@@ -593,9 +609,12 @@ ce qui le concerne. Chaque réglage déclare son niveau d'application :
 | `keystore.backend` | `software` | process | phase 7 |
 | `crl.validity_hours` / `crl.regenerate_before_hours` | 168 (≤ 8784) / 48 (< validité) | hot | 3 |
 | `ocsp.response_validity_hours` | 24 (≤ 168), jamais au-delà du `next_update` de la CRL | hot | 3 |
-| `est.enabled`, `est.default_profile`, `est.client_trust_anchors` | `false`, … | hot | phase 4 |
-| `scep.enabled`, `scep.allow_legacy_crypto` | `false`, `false` | hot | phase 5 |
-| `acme.enabled`, `acme.default_profile`, `acme.require_eab`, `acme.allowed_domains`, `acme.dns_resolvers` | `false`, `tls_server`, `false`, … | hot | phase 6 |
+| `est.enabled` / `est.default_profile` / `est.retry_after_seconds` | `false` (404 partout) / `""` (label requis) / 60 | hot | 4 |
+| `scep.enabled`, `scep.allow_legacy_crypto` | `false` (désactivé par défaut, ADR-0018), `false` | hot | phase 5 |
+| `acme.enabled`, `acme.default_profile`, `acme.require_eab`, `acme.allowed_domains`, `acme.dns_resolvers` | `false` (désactivé par défaut, ADR-0018), `tls_server`, `false`, … | hot | phase 6 |
+
+Les ancres des certificats clients EST sont celles de `server.client_trust_anchors` (plus les AC locales) : il n'y a
+pas de réglage `est.client_trust_anchors`.
 
 Les réglages `listener` HTTPS (`tls_*`, `client_trust_anchors`) ne redémarrent que le listener HTTPS ; les limites
 Uvicorn (`keep_alive_timeout`, `limit_concurrency`, `backlog`, `max_header_size`) redémarrent les deux. Le nouveau
@@ -631,6 +650,10 @@ Pour limiter l'usage de la clé de l'AC :
 - **OCSP** : **pas de répondeur délégué** (ADR-0017). Les réponses sont signées par la clé de l'AC ; pour limiter
   son usage, les réponses sans nonce sont mises en cache (mi-validité, statut inchangé). Une requête avec nonce
   provoque une signature (B54). Avec PKCS#11 (phase 7), un répondeur délégué pourra revenir (ADR-0004).
+- **Clés `serverkeygen`** (EST, ADR-0018) : générées par le keystore à l'émission, remises une fois au client,
+  copie chiffrée conservée et supprimable (`DELETE /api/v1/certificates/{id}/private-key`), jamais relue.
+  `KeyStore.export_for_enrollment` est le seul export en clair du keystore. Risque : la base et la passphrase donnent
+  aussi ces clés tant qu'elles ne sont pas supprimées.
 - **Certificat RA SCEP** : clé RSA dédiée (le chiffrement CMS exige RSA + `keyEncipherment`), signée par l'AC.
 - **Certificat du serveur HTTPS** : clé dédiée (`purpose = tls`), certificat `service_tls` de 47 jours
   renouvelé automatiquement (ADR-0013) ; les clés et certificats remplacés et expirés sont purgés chaque jour (B44).
@@ -656,7 +679,7 @@ Règle : une AC n'émet pas de certificat dont `not_after` dépasse le sien (la 
 |---|---|
 | API admin | **aucune jusqu'à la première release (ADR-0008)** ; ensuite jetons Bearer (hachés en base, portée `admin` / `operator` / `read`), créés par CLI. HTTPS seulement (depuis la phase 1.1). Configuration en écriture par la CLI seulement d'ici là (ADR-0011) |
 | Fédération | invitation à usage unique créée sur la mère, sans secret long terme ; la fille vérifie la mère par la chaîne de la hiérarchie et par l'empreinte épinglée ; pas de mTLS entre conteneurs en v1 (ADR-0003) |
-| EST | certificat client lu dans la connexion TLS (mTLS facultatif, ADR-0012) ou via un proxy de confiance (`Client-Cert`) ; sinon HTTP Basic |
+| EST | **désactivé par défaut** (`est.enabled`) ; certificat client lu dans la connexion TLS (mTLS facultatif, ADR-0012) ou via un proxy de confiance (`Client-Cert`), revérifié par l'application (B45) ; sinon HTTP Basic sur un compte `EnrollmentCredential` (scrypt, sans restriction de profil) ; réenrôlement par certificat seulement (ADR-0018) |
 | SCEP | challenge password (à usage unique, expirant, lié à un profil) ; renouvellement signé par l'ancien certificat |
 | ACME | JWS de compte ; EAB (RFC 8555 §7.3.4) optionnel pour restreindre l'ouverture de compte |
 

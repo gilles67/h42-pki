@@ -18,7 +18,7 @@ Chaque niveau fournit :
 | AIA | publication du certificat de l'AC et de la chaîne | RFC 5280 §4.2.2.1 | `docs/protocols/crl.md` |
 | CRL | liste de révocation complète, optionnelle par AC (ADR-0017) | RFC 5280 | `docs/protocols/crl.md` |
 | OCSP | statut en ligne, signé par l'AC, optionnel par AC (ADR-0017) | RFC 6960, RFC 5019, RFC 8954 | `docs/protocols/ocsp.md` |
-| EST | enrôlement sur TLS | RFC 7030 | `docs/protocols/est.md` |
+| EST | enrôlement sur TLS, désactivé par défaut (ADR-0018) | RFC 7030 | `docs/protocols/est.md` |
 | SCEP | enrôlement équipements réseau / MDM | RFC 8894 | `docs/protocols/scep.md` |
 | ACME | enrôlement automatisé (type Let's Encrypt) | RFC 8555 (+ RFC 8737, RFC 9773) | `docs/protocols/acme.md` |
 
@@ -28,13 +28,14 @@ Granian.
 
 ## 2. État actuel du code (important)
 
-**Phases 1, 1.1, 2 et 3 terminées** : outillage, sécurité, modèle de données, API `/api/v1`, AC racine par CLI,
+**Phases 1, 1.1, 2, 3 et 4 terminées** : outillage, sécurité, modèle de données, API `/api/v1`, AC racine par CLI,
 profils, demandes, émission depuis un CSR, publication `/ca/*` et AIA caIssuers, liste des certificats (phase 1) ;
 Python 3.13, configuration en base, profils désactivables, lanceur HTTP/HTTPS intégré, certificat HTTPS émis par l'AC
 locale, santé (phase 1.1) ; fédération : invitations, inscription d'une AC fille, chaîne complète (phase 2) ;
-révocation : CRL, OCSP, statut `expired` en base, purge, contrôle par une AC fille de son statut (phase 3). Le code
-suit la structure en couches cible ; ce qui n'existe pas encore est marqué « à venir » au §3.
-**Prochaine étape : phase 4 (EST).**
+révocation : CRL, OCSP, statut `expired` en base, purge, contrôle par une AC fille de son statut (phase 3) ; EST :
+comptes, `cacerts`, `simpleenroll`, `simplereenroll`, `csrattrs`, `serverkeygen` (phase 4). Le code suit la structure
+en couches cible ; ce qui n'existe pas encore est marqué « à venir » au §3.
+**Prochaine étape : phase 5 (SCEP).**
 
 **Décisions du 2026-11-22, en place depuis la phase 1.1** — à respecter :
 - **Configuration en base** (ADR-0011) : hors de la base, seulement une **liste fermée** de variables d'environnement
@@ -63,6 +64,12 @@ suit la structure en couches cible ; ce qui n'existe pas encore est marqué « �
   (pas de répondeur délégué) avec cache des réponses sans nonce ; **pas de suspension** (`certificate_hold`,
   `remove_from_crl` refusés). Une AC fille contrôle chaque jour son statut auprès de l'OCSP de sa mère ; `revoked` →
   plus aucune émission (503), publication maintenue.
+- **EST** (ADR-0018, 2026-11-27) : **désactivé par défaut** (`est.enabled`, 404 partout) ; comptes HTTP Basic
+  `EnrollmentCredential` (scrypt, sans restriction de profil, API `/api/v1/est/accounts` et `h42pki est account …`) ;
+  label = profil, `est.default_profile` sans label ; approbation du profil → `202` + `Retry-After`, relance de la même
+  requête retrouvée par (identité, SHA-256 du CSR, opération) ; réenrôlement par certificat client seul, même sujet et
+  mêmes SAN ; `serverkeygen` : clé générée à l'émission, **remise une fois**, copie chiffrée conservée et supprimable,
+  jamais relue ; certificat client revérifié par l'application (B45) ; erreurs en texte brut.
 
 - **Socle** : `config.py` (`Settings`, variables `H42_PKI_*`, `H42_PKI_*_FILE`, secrets de conteneur (Podman ou Docker) dans `/run/secrets`
   ou `H42_PKI_SECRETS_DIR`, contrôle des permissions des fichiers de secrets), `db.py` (config Tortoise), `main.py`
@@ -78,6 +85,7 @@ suit la structure en couches cible ; ce qui n'existe pas encore est marqué « �
   15 min, statut `expired` toutes les heures, purge `service_tls` et contrôle auprès de la mère chaque jour).
 - **`core/`** (pur, synchrone, testé par `tests/unit/core/test_purity.py`) : `keys.py` (`KeyAlgorithm` RSA/EC/Ed25519,
   génération, PKCS#8 DER chiffré, hachage de signature), `names.py` (`NameAttributes`, `Subject`, `rfc4514`),
+  `passwords.py` (scrypt des comptes EST), `est.py` (base64 tolérant, certs-only, `CsrAttrs`, `multipart/mixed`),
   `extensions.py` (`Extensions`, `validate_for_key`), `profiles.py` (`ProfileSpec`, `BUILTIN_PROFILES`, dont le profil
   interne `service_tls`), `csr.py` (`parse_csr`, `build_csr`), `issuance.py` (`build_self_signed` pour la racine, `plan_issuance` / `build_issued` pour le reste,
   AIA caIssuers), `publication.py` (`public_base_url`, noms d'AC, URL caIssuers), `inspection.py` (SAN et AIA relus
@@ -86,19 +94,21 @@ suit la structure en couches cible ; ce qui n'existe pas encore est marqué « �
   fille), `chain.py` (épinglage, chaîne, certificat d'AC reçu), `crl.py` (CRL, motifs de révocation), `ocsp.py`
   (requêtes, réponses signées par l'AC, vérification d'une réponse côté fille), `validity.py`, `serial.py`,
   `errors.py`. `issuance.py` pose aussi le CDP et l'AIA OCSP.
-- **`keystore/`** : `KeyStore` (protocole : `generate`, `load`, `export_encrypted` pour la clé TLS), `SoftwareKeyStore` (seul détenteur de la
-  passphrase), `get_keystore(settings)`. Seul `keystore` appelle les fonctions de (dé)chiffrement de `core.keys`.
+- **`keystore/`** : `KeyStore` (protocole : `generate`, `load`, `export_encrypted` pour la clé TLS,
+  `export_for_enrollment` — **seul export en clair**, EST `serverkeygen`), `SoftwareKeyStore` (seul détenteur de la
+  passphrase), `get_keystore(settings)`, `optional_keystore(settings)`. Seul `keystore` appelle les fonctions de (dé)chiffrement de `core.keys`.
 - **`services/`** : `AuthorityService` (`init_root`, AC locale), `IssuanceService` (`submit` → `auto_approve` ou
   `approve` / `reject` → `_issue`, **seul chemin d'émission**, y compris `issue_service_certificate`), `ProfileService`
   (synchronisation des profils intégrés, lecture, activation), `SettingsService` / `SettingsWatcher` (réglages en
   base, relecture par révision), `FederationService` (mère), `SubordinateService` et `federation_client` (fille), `TlsServiceManager` (certificat `service_tls`), `PublicationService` (certificats publiés, chaîne), `KeyService`, `CertificateService`
   (lecture, recherche paginée, chaîne, statut effectif), `RevocationService` (seul chemin de révocation), `CrlService`
   (génération, fraîcheur, publication), `OcspService` / `OcspCache` (répondeur), `MaintenanceService` (statut
-  `expired`, purge), `ParentCheckService` (statut de l'AC fille auprès de sa mère). Transactions, audit, crypto via `asyncio.to_thread` ; le
+  `expired`, purge), `ParentCheckService` (statut de l'AC fille auprès de sa mère), `EstAccountService` (comptes EST),
+  `EstService` (EST), `client_auth` (vérification des certificats clients, B45). Transactions, audit, crypto via `asyncio.to_thread` ; le
   keystore est passé explicitement et n'est construit que pour les opérations sur une clé (passphrase facultative
   ailleurs, B32).
 - **Modèles** `models/` (un fichier par agrégat : `private_key` (`purpose` `ca|tls`), `authority`, `profile`,
-  `certificate`, `request` (canal `system`), `audit`, `setting` (`Setting`, `SettingsRevision`), `federation` (`FederationInvitation`), `crl` (`Crl`), base
+  `certificate`, `request` (canal `system`), `audit`, `setting` (`Setting`, `SettingsRevision`), `federation` (`FederationInvitation`), `crl` (`Crl`), `enrollment` (`EnrollmentCredential`), base
   `TimestampedModel`) : FK sans cycle (B27), stockage DER, `AuditLog.record()`. Un certificat est
   toujours enregistré signé.
 - **API** : `api/admin/` (`routes.py`, `schemas.py` écrits à la main, `extra="forbid"`, `deps.py` : keystore,
@@ -108,11 +118,13 @@ suit la structure en couches cible ; ce qui n'existe pas encore est marqué « �
   `/favicon.ico`, fichier de `static/` lu une fois par `assets.py`), `api/ocsp/` (`POST /ocsp`, `GET /ocsp/{requête}`,
   HTTP et HTTPS), `api/health.py` (`GET /`, `GET /health`, dont CRL, OCSP et contrôle auprès de la mère),
   `api/listener.py` (routes publiques seules en HTTP), `api/client_cert.py` (certificat client d'une requête),
-  `api/federation/` (invitations, `enroll`, AC filles ; HTTPS seulement).
+  `api/federation/` (invitations, `enroll`, AC filles ; HTTPS seulement), `api/admin/est.py` (comptes EST),
+  `api/est/` (`/.well-known/est`, HTTPS seulement, erreurs en texte brut, désactivé par défaut).
 - **CLI** `cli/` : `version`, `serve` (lanceur, `--reload`), `healthcheck`,
   `authority init|status|export|update|abandon|check-parent`, `request list|show|approve|reject`,
   `federation invite|invitations|revoke-invitation|children|revoke-child`, `profile list|show|enable|disable`,
-  `certificate list|export|revoke`, `crl show|generate`, `config show|get|set|unset` ; `_runtime.py`
+  `certificate list|export|revoke|delete-key`, `crl show|generate`,
+  `est account create|list|show|disable|enable|reset-password|delete`, `config show|get|set|unset` ; `_runtime.py`
   ouvre la même base que le serveur et transforme les erreurs en message
   lisible (code de sortie non nul).
 - **Règles métier** : le seul certificat auto-signé est celui de l'AC racine, créé par `h42pki authority init`
@@ -141,13 +153,14 @@ src/h42pki/
   core/              # DOMAINE CRYPTO PUR : synchrone, sans I/O, sans ORM, sans FastAPI
     keys.py  names.py  extensions.py  profiles.py  csr.py  issuance.py  publication.py  inspection.py
     hostnames.py  settings_schema.py  service_tls.py  federation.py  chain.py  validity.py  serial.py
-    crl.py  ocsp.py  errors.py                                                  — en place
+    crl.py  ocsp.py  passwords.py  est.py  errors.py                            — en place
     cms.py                                                                      — à venir
   keystore/          # base.py (KeyStore), software.py — en place ; pkcs11.py en phase 7
-  models/            # private_key, authority, profile, certificate, request, audit, setting, federation, crl
+  models/            # private_key, authority, profile, certificate, request, audit, setting, federation, crl,
+                     # enrollment
   services/          # authority, issuance, profiles, publication, keys, certificates, settings, tls_service,
                      # federation, federation_client, subordinate, x509_fields, revocation, crl, ocsp,
-                     # maintenance, parent_check — en place
+                     # maintenance, parent_check, est_accounts, est, client_auth — en place
   api/
     problems.py      # handlers application/problem+json (RFC 9457)        — en place
     listener.py  client_cert.py  health.py                                  — en place
@@ -155,10 +168,13 @@ src/h42pki/
     public/          # /ca/* (AIA caIssuers, chaîne), /crl/*, /favicon.ico — en place
     federation/      # /api/v1/federation — en place
     ocsp/            # /ocsp — en place
-    est/  scep/  acme/
+    est/             # /.well-known/est — en place
+    scep/  acme/
   tasks/             # tls_service, periodic, maintenance (CRL, expired, purge, contrôle auprès de la mère)
-  cli/               # Typer : authority, profile, certificate, crl, request, federation, config, healthcheck, serve
-deploy/              # compose.yaml (3 niveaux), bootstrap.sh, revocation-test.sh, smoke-test.sh, engine.sh
+  cli/               # Typer : authority, profile, certificate, crl, est, request, federation, config, healthcheck,
+                     # serve
+deploy/              # compose.yaml (3 niveaux), bootstrap.sh, est-test.sh, revocation-test.sh, smoke-test.sh,
+                     # engine.sh
 tests/
   unit/  integration/  interop/  conftest.py
 docs/
@@ -189,10 +205,12 @@ uv run h42pki --help                      # CLI
 uv run h42pki authority init --name root --common-name "Test Root CA"   # AC racine locale (base data/)
 #   --crl --ocsp --public-base-url http://… : révocation (ADR-0017), interdit en mode « à vide »
 uv run h42pki certificate revoke ID --reason key_compromise           # puis `crl show`, `authority check-parent`
+uv run h42pki config set est.enabled true   # EST désactivé par défaut ; `est account create NAME --password -`
 podman build --format docker -t h42-pki:dev .   # image (non-root, /data, `h42pki serve`, ports 8080 et 8443) ;
                                          # --format docker garde HEALTHCHECK (ADR-0016)
 deploy/bootstrap.sh [--fresh]            # hiérarchie racine + intermédiaire + émettrice, --crl --ocsp (Podman)
-deploy/revocation-test.sh                # ensuite : CRL et OCSP vérifiés par openssl, émettrice révoquée
+deploy/est-test.sh                       # ensuite : EST (curl, openssl ; ESTCLIENT=… pour estclient)
+deploy/revocation-test.sh                # puis : CRL et OCSP vérifiés par openssl, émettrice révoquée
 ```
 
 Avant de déclarer une tâche terminée : `ruff check`, `ruff format --check`, `mypy src` et `pytest` passent.
@@ -215,6 +233,9 @@ Avant de déclarer une tâche terminée : `ruff check`, `ruff format --check`, `
 - **Configuration** (ADR-0011) : ne pas ajouter de variable `H42_PKI_*` sans nouvel ADR ; tout nouveau réglage va
   dans `RuntimeSettings` (défaut dans le code, valeur modifiée en base) et déclare son niveau d'application
   (`hot`, `listener`, `process`).
+- **Protocoles d'enrôlement désactivés par défaut** (ADR-0018) : EST, puis SCEP et ACME, s'activent explicitement sur
+  chaque AC par un réglage `hot` faux par défaut (`est.enabled`, `scep.enabled`, `acme.enabled`) ; désactivé → `404`
+  sur **toutes** les routes du protocole. Les scripts de `deploy/` et les tests l'activent eux-mêmes.
 - **Schéma de base** : aucune migration avant la première release (ADR-0007). Les modèles peuvent changer
   librement, sans code de compatibilité ; après un changement, supprimer `data/h42pki.sqlite3*`.
 - **Dates** : toujours `datetime.now(timezone.utc)` (aware). `datetime.utcnow()` est interdit.
@@ -237,8 +258,10 @@ Avant de déclarer une tâche terminée : `ruff check`, `ruff format --check`, `
 
 1. **Jamais** de clé privée, passphrase, mot de passe de challenge, secret EAB ou jeton dans les logs,
    les exceptions, les réponses d'API ou les tests imprimés.
-2. Les clés privées ne sortent du `keystore` que chiffrées (PKCS#8 + `BestAvailableEncryption`),
-   et uniquement pour EST `serverkeygen` si activé. Le format `TraditionalOpenSSL` n'est plus utilisé.
+2. Les clés privées ne sortent du `keystore` que chiffrées (PKCS#8 + `BestAvailableEncryption`). Seule exception :
+   `KeyStore.export_for_enrollment`, PKCS#8 **non chiffré**, appelé par le seul service EST pour remettre **une fois**
+   au client, dans sa session TLS, la clé générée par `serverkeygen` (RFC 7030 §4.4.2, ADR-0018) ; aucune route ne
+   relit une clé conservée. Le format `TraditionalOpenSSL` n'est plus utilisé.
 3. **Ne jamais recopier aveuglément les extensions d'un CSR.** Le profil décide de BasicConstraints,
    KeyUsage, EKU, NameConstraints, validité. Le CSR ne fournit que la clé publique, le sujet et les SAN,
    eux-mêmes filtrés par le profil (règle B2, appliquée par `core/csr.py` et `core/issuance.py`).
@@ -249,7 +272,8 @@ Avant de déclarer une tâche terminée : `ruff check`, `ruff format --check`, `
 6. Toute émission, révocation, changement de profil, inscription d'AC fille → entrée `AuditLog`.
 7. Secrets fournis par fichier (`*_FILE`, compatible secrets Podman / Docker) ou variable d'environnement,
    jamais en dur ni dans le dépôt. `config/pki.json`, `*.sqlite3`, `*.pem`, `*.key` sont ignorés par git.
-8. Comparaisons de secrets en temps constant (`hmac.compare_digest`), mots de passe hachés (argon2 / scrypt).
+8. Comparaisons de secrets en temps constant (`hmac.compare_digest`), mots de passe hachés (scrypt,
+   `core/passwords.py`), même coût pour un compte inconnu.
 9. CRL et AIA servis en **HTTP simple** (pas de redirection HTTPS) pour éviter les boucles de validation ;
    EST, ACME, la fédération et l'API d'admin uniquement en **HTTPS** (depuis la phase 1.1 : le listener HTTP ne sert
    que les routes publiques, ADR-0012).

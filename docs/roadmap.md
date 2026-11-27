@@ -160,14 +160,35 @@ Décisions : ADR-0017. Réalisée en deux étapes.
 **Reporté** : OCSP stapling ; répondeur délégué si la clé passe sur PKCS#11 (phase 7) ; limitation des requêtes OCSP
 avec nonce (B54).
 
-## Phase 4 — EST
+## Phase 4 — EST — ✅ terminée (2026-11-27)
 
-- Endpoints `cacerts`, `simpleenroll`, `simplereenroll`, `csrattrs` ; `serverkeygen` en option.
-- Authentification Basic ou certificat client lu dans la connexion TLS du lanceur (mTLS facultatif, ADR-0012) ;
-  certificat via proxy de confiance (`Client-Cert`) en option.
+Décisions : ADR-0018. Réalisée en deux étapes.
+
+- ✅ **Désactivé par défaut** : `est.enabled` (404 sur toutes les routes), `est.default_profile`,
+  `est.retry_after_seconds` (niveau `hot`). Même principe à venir pour SCEP et ACME.
+- ✅ **Comptes** `EnrollmentCredential` (HTTP Basic, scrypt, sans restriction de profil) : API
+  `/api/v1/est/accounts` et `h42pki est account …`.
+- ✅ **`cacerts`, `simpleenroll`** : label = profil ; approbation du profil, `202` + `Retry-After`, relance retrouvée
+  par (identité, CSR, opération), idempotence ; erreurs en texte brut.
+- ✅ **Certificat client** lu dans TLS ou via un proxy de confiance, revérifié par l'application (B45).
+- ✅ **`simplereenroll`** (certificat seul, même sujet et SAN), **`csrattrs`**, **`serverkeygen`** (clé générée à
+  l'émission, remise une fois, copie chiffrée supprimable : `DELETE /api/v1/certificates/{id}/private-key`,
+  `h42pki certificate delete-key`).
+- ✅ `deploy/est-test.sh` (curl, openssl, et `estclient` de `github.com/globalsign/est`).
+
+**Fait quand** : `deploy/bootstrap.sh --fresh` puis `deploy/est-test.sh` réussissent.
+
+> État au 2026-11-27 : vérifié par les tests (1142, plus 10 d'interop) et sur Debian 13 / Podman 5.4.2 rootless /
+> podman-compose 1.3.0, `estclient` v1.0.6 compris (`cacerts`, `enroll`, `csrattrs`, `reenroll` en mTLS,
+> `serverkeygen`) ; aucun mot de passe ni clé privée dans les journaux du conteneur.
+
+**Hors périmètre** : `fullcmc` (501), *channel binding* `tls-unique`, `ChangeSubjectName`, restriction des profils par
+compte, relecture des clés conservées, révocation automatique au réenrôlement. **Reporté** : limitation des essais
+de mot de passe (B56).
 
 ## Phase 5 — SCEP
 
+- **Désactivé par défaut** (`scep.enabled`, 404 sur toutes les routes), comme EST (ADR-0018).
 - Spike `core/cms.py` (asn1crypto + cryptography) avec aller-retour testé **avant** les endpoints.
 - Certificat RA, `GetCACaps`, `GetCACert`, `PKIOperation` (PKCSReq, RenewalReq, CertPoll, GetCert, GetCRL), challenges.
 
@@ -175,6 +196,7 @@ avec nonce (B54).
 
 ## Phase 6 — ACME
 
+- **Désactivé par défaut** (`acme.enabled`, 404 sur toutes les routes), comme EST (ADR-0018).
 - 6a : choix lib JWS, nonces, comptes, commandes, autorisations, http-01, dns-01, finalize, certificat, revokeCert.
 - 6b : tls-alpn-01, keyChange, EAB, ARI (RFC 9773).
 - Validité de `tls_server` alignée sur la suite de SC-081v3 : **47 jours par défaut et 100 au maximum**, puis **47 au

@@ -32,6 +32,28 @@ Every CA is created with `--crl --ocsp` and a public base URL `http://<service>.
 ([ADR-0017](../docs/adr/0017-revocation.md)); `compose.yaml` gives each container that name as a network alias, so
 that a child reaches the OCSP of its parent.
 
+## EST
+
+```bash
+deploy/est-test.sh                 # after bootstrap.sh, on the issuing CA
+ESTCLIENT=/path/to/estclient deploy/est-test.sh   # also with estclient (github.com/globalsign/est)
+```
+
+EST is disabled by default (ADR-0018): the script checks that every EST route answers 404, runs
+`h42pki config set est.enabled true`, creates an account (the generated password stays in memory, curl reads it on
+standard input), then `cacerts`, `simpleenroll` (Basic, then a manual approval with a retry), `simplereenroll` with
+the client certificate obtained, `serverkeygen` (the key received matches the certificate, delivered once, stored
+copy deleted) and `csrattrs`, and checks that the container logs hold no password nor private key.
+
+`estclient` v1.0.6 builds in a container (its PKCS#11 dependency needs cgo):
+
+```bash
+podman run --rm -e CGO_ENABLED=1 -e GOBIN=/out -v "$PWD":/out:Z docker.io/library/golang:1.23 \
+  go install github.com/globalsign/est/cmd/estclient@v1.0.6
+```
+
+Run `est-test.sh` before `revocation-test.sh`, which revokes the issuing CA.
+
 ## Revocation
 
 ```bash

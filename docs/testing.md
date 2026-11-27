@@ -119,6 +119,14 @@ intégration `test_revocation.py`, `test_cli_revocation.py`, `test_revocation_op
 `test_tasks.py` (`time_machine`), `test_health_revocation.py`, `server/test_parent_check.py`,
 `server/test_process.py` (mode « à vide » refusé avec révocation). Non-régression : B34, B41, B44.
 
+## 4 quinquies. EST (phase 4)
+
+`docs/protocols/est.md` §8. Unitaires `test_passwords.py` (les tests abaissent le coût de scrypt par la fixture
+`fast_password_hashing`, les vrais paramètres sont testés une fois), `test_est.py` ; intégration `test_est.py`,
+`test_est_accounts.py`, `test_est_reenroll.py`, `test_est_serverkeygen.py`, `server/test_est_tls.py` (vrai
+certificat client en TLS). Le certificat client d'un proxy de confiance se simule par l'en-tête `Client-Cert` avec
+`H42_PKI_TRUSTED_PROXIES` couvrant le client de test. Non-régression : B45, B55.
+
 ## 5. Interopérabilité (`-m interop`)
 
 Outils de l'hôte (`openssl`, `curl`, `bash`) et moteur de conteneurs (Podman par défaut, ADR-0016) ; pas de conteneur
@@ -128,13 +136,14 @@ Outils de l'hôte (`openssl`, `curl`, `bash`) et moteur de conteneurs (Podman pa
   -inform DER -text`, `openssl verify -crl_check`) ; OCSP (`openssl ocsp -reqout` puis `-reqin -respin`, avec et sans
   nonce) ;
 - `tests/interop/test_compose.py` : `deploy/bootstrap.sh` (hiérarchie `root`, `intermediate`, `issuing` de
-  `deploy/compose.yaml`, toutes avec `--crl --ocsp`) puis `deploy/revocation-test.sh`.
+  `deploy/compose.yaml`, toutes avec `--crl --ocsp`), `deploy/est-test.sh` (avec `estclient` si `ESTCLIENT` est
+  défini) puis `deploy/revocation-test.sh`.
 
 | Scénario | Outil | État |
 |---|---|---|
 | Chaîne racine → intermédiaire → émettrice valide | `openssl verify` | ✅ phase 2 |
 | Révocation visible dans la CRL et en OCSP, émettrice révoquée par l'intermédiaire | `openssl crl`, `openssl verify -crl_check[_all]`, `openssl ocsp` | ✅ phase 3 |
-| Enrôlement / réenrôlement EST | `curl` + `openssl pkcs7` | phase 4 |
+| EST : `cacerts`, `simpleenroll`, approbation manuelle, `simplereenroll` (mTLS), `serverkeygen`, `csrattrs` | `curl` + `openssl`, `estclient` (`ESTCLIENT=…`) | ✅ phase 4 |
 | Enrôlement SCEP | `sscep getca`, `sscep enroll` | phase 5 |
 | Émission ACME http-01 et dns-01, révocation | `lego` | phase 6 |
 
