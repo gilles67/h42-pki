@@ -43,6 +43,10 @@ LOCAL_ISSUERS = (
 class ClientCertificateRefused(Unauthorized):
     """The client certificate cannot authenticate the request (the reason stays in the log)."""
 
+    def __init__(self, detail: str, *, expired: bool = False) -> None:
+        super().__init__(detail)
+        self.expired = expired
+
 
 @dataclass(frozen=True)
 class VerifiedClient:
@@ -71,13 +75,23 @@ def _issued_by(certificate: x509.Certificate, issuer: x509.Certificate) -> bool:
 
 
 async def verify_client_certificate(
-    certificate: x509.Certificate, *, now: datetime, local_only: bool = False
+    certificate: x509.Certificate,
+    *,
+    now: datetime,
+    local_only: bool = False,
+    tls_usage: bool = True,
 ) -> VerifiedClient:
-    """The verified client, or ``ClientCertificateRefused`` with a short reason."""
+    """The verified client, or ``ClientCertificateRefused`` with a short reason.
+
+    ``tls_usage``: the clientAuth rule of the TLS handshake; SCEP (a signed CMS message, not
+    TLS) leaves it out.
+    """
     fingerprint = certificate.fingerprint(hashes.SHA256()).hex()
     if not certificate.not_valid_before_utc <= now < certificate.not_valid_after_utc:
-        raise ClientCertificateRefused("the client certificate is outside its validity period")
-    if not _client_usage(certificate):
+        raise ClientCertificateRefused(
+            "the client certificate is outside its validity period", expired=True
+        )
+    if tls_usage and not _client_usage(certificate):
         raise ClientCertificateRefused("the certificate is not meant for client authentication")
     local = await Authority.filter(
         kind=AuthorityKind.LOCAL, status__in=LOCAL_ISSUERS

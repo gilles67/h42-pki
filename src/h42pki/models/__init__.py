@@ -9,6 +9,7 @@ from h42pki.models.federation import FederationInvitation, InvitationStatus
 from h42pki.models.private_key import KeyBackend, KeyPurpose, PrivateKey
 from h42pki.models.profile import Profile
 from h42pki.models.request import CertificateRequest, Channel, RequestStatus
+from h42pki.models.scep import ScepNonce, ScepTransaction, ScepTransactionStatus
 from h42pki.models.setting import Setting, SettingsRevision
 
 __models__ = [
@@ -20,6 +21,8 @@ __models__ = [
     Crl,
     FederationInvitation,
     EnrollmentCredential,
+    ScepTransaction,
+    ScepNonce,
     AuditLog,
     Setting,
     SettingsRevision,
@@ -45,6 +48,9 @@ __all__ = [
     "PrivateKey",
     "Profile",
     "RequestStatus",
+    "ScepNonce",
+    "ScepTransaction",
+    "ScepTransactionStatus",
     "Setting",
     "SettingsRevision",
 ]

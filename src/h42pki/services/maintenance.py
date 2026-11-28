@@ -2,7 +2,7 @@
 
 import logging
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from tortoise.transactions import in_transaction
@@ -15,6 +15,7 @@ from h42pki.models import (
     CertificateStatus,
     KeyPurpose,
     PrivateKey,
+    ScepNonce,
 )
 
 log = logging.getLogger(__name__)
@@ -22,6 +23,7 @@ log = logging.getLogger(__name__)
 SYSTEM_ACTOR = "system"
 # Internal certificates purged once replaced and expired, with the purpose of their key.
 INTERNAL_KEYS = {SERVICE_TLS_PROFILE: KeyPurpose.TLS, SCEP_RA_PROFILE: KeyPurpose.SCEP_RA}
+SCEP_NONCE_RETENTION = timedelta(days=30)
 # The audit entry of an expiry run lists at most this many certificate ids.
 MAX_AUDITED_IDS = 100
 
@@ -74,6 +76,8 @@ class MaintenanceService:
         result = PurgeResult()
         for profile, purpose in INTERNAL_KEYS.items():
             await MaintenanceService._purge(profile, purpose, now, result)
+        # SCEP senderNonces: a replay of an old message is refused by its expired signer anyway.
+        await ScepNonce.filter(created_at__lt=now - SCEP_NONCE_RETENTION).delete()
         if result.certificates:
             log.info(
                 "purged %d replaced internal certificate(s) and %d key(s)",

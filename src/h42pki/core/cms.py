@@ -325,6 +325,15 @@ def envelope(content: bytes, recipient: x509.Certificate, algorithm: str) -> byt
     return bytes(cms.ContentInfo({"content_type": "enveloped_data", "content": enveloped}).dump())
 
 
+def parse_issuer_and_serial(der: bytes) -> tuple[bytes, int]:
+    """IssuerAndSerialNumber of GetCert and GetCRL: DER of the issuer Name, serial number."""
+    try:
+        parsed = cms.IssuerAndSerialNumber.load(der)
+        return bytes(parsed["issuer"].dump()), int(parsed["serial_number"].native)
+    except (ValueError, TypeError, KeyError):
+        raise ScepError(FailInfo.BAD_REQUEST, "unreadable IssuerAndSerialNumber") from None
+
+
 # --- degenerate SignedData (certs-only, CRL) -----------------------------------------------------
 
 
@@ -449,6 +458,7 @@ __all__ = [
     "digest_algorithms",
     "envelope",
     "parse_envelope",
+    "parse_issuer_and_serial",
     "parse_pki_message",
     "verify",
 ]

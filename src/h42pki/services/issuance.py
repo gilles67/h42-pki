@@ -156,6 +156,8 @@ class IssuanceService:
         channel: Channel = Channel.API,
         metadata: dict[str, Any] | None = None,
         server_keygen: bool = False,
+        sealed_csr: bool = False,
+        on_recorded: Callable[[CertificateRequest], Awaitable[None]] | None = None,
     ) -> CertificateRequest:
         """Record a request; issue it at once when the profile auto-approves.
 
@@ -163,6 +165,9 @@ class IssuanceService:
         ``server_keygen``: the key is generated here at issuance (EST serverkeygen): the CSR only
         gives the subject and the SANs; its algorithm is kept if the profile allows it, otherwise
         the first one the profile allows. The key is stored encrypted with the certificate.
+        ``sealed_csr``: the CSR is stored sealed by the key store (SCEP: it carries the challenge in
+        clear), with its SHA-256 in the metadata. ``on_recorded`` runs in the transaction that
+        records the request (consumes a SCEP challenge; raising cancels everything).
 
         The request is checked against the profile and the active CA before being stored: a
         request that could never be issued is refused (422) instead of waiting for a decision.
@@ -178,6 +183,12 @@ class IssuanceService:
         extra = dict(metadata or {})
         if server_keygen:
             extra["server_keygen"] = {"algorithm": prepared.parsed.key_algorithm.value}
+        stored_csr: bytes | None = None
+        if sealed_csr:
+            der = prepared.parsed.csr.public_bytes(serialization.Encoding.DER)
+            stored_csr = await self._keystore.seal(der)
+            extra["csr_sealed"] = True
+            extra["csr_sha256"] = hashlib.sha256(der).hexdigest()
         async with in_transaction():
             request = await self._record(
                 prepared,
@@ -185,7 +196,10 @@ class IssuanceService:
                 actor=actor,
                 channel=channel,
                 extra=extra,
+                csr_der=stored_csr,
             )
+            if on_recorded is not None:
+                await on_recorded(request)
         if prepared.spec.auto_approve:
             return await self._issue(
                 request, parsed=prepared.parsed, actor=actor, decided_by=AUTO_APPROVE
@@ -283,6 +297,7 @@ class IssuanceService:
         channel: Channel,
         federation: dict[str, Any] | None = None,
         extra: dict[str, Any] | None = None,
+        csr_der: bytes | None = None,
     ) -> CertificateRequest:
         """Store a checked request (inside the transaction of the caller)."""
         ignored = [*prepared.parsed.ignored_extensions]
@@ -290,7 +305,7 @@ class IssuanceService:
         if federation is not None:
             metadata["federation"] = federation
         request = await CertificateRequest.create(
-            csr_der=prepared.parsed.csr.public_bytes(serialization.Encoding.DER),
+            csr_der=csr_der or prepared.parsed.csr.public_bytes(serialization.Encoding.DER),
             profile=prepared.profile,
             requested_validity_days=validity_days,
             requester=actor,
@@ -404,7 +419,7 @@ class IssuanceService:
             await self._check_child_name(child.name, approving=True)
         await self._audit(actor, "request.approve", request, {})
         return await self._issue(
-            request, parsed=parse_csr(request.csr_der), actor=actor, decided_by=actor
+            request, parsed=parse_csr(await self.csr_of(request)), actor=actor, decided_by=actor
         )
 
     async def reject(self, request_id: UUID, *, reason: str, actor: str) -> CertificateRequest:
@@ -422,6 +437,12 @@ class IssuanceService:
                 raise Conflict("the request has already been decided")
             await self._audit(actor, "request.reject", request, {"reason": reason})
         return await self.get(request.id)
+
+    async def csr_of(self, request: CertificateRequest) -> bytes:
+        """The DER CSR of a request, opened by the key store when it was stored sealed."""
+        if request.metadata.get("csr_sealed"):
+            return await self._keystore.open(request.csr_der)
+        return request.csr_der
 
     # --- internals ------------------------------------------------------------------------
 
