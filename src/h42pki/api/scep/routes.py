@@ -75,11 +75,13 @@ async def scep(request: Request, operation: Operation = None, label: str | None 
 
 
 for path in ("", "/pkiclient.exe", "/{label}", "/{label}/pkiclient.exe"):
-    router.add_api_route(
-        path,
-        scep,
-        methods=["GET", "POST"],
-        response_class=Response,
-        name=f"scep{path.replace('/', '_').replace('{label}', 'label').replace('.', '_')}",
-        summary="SCEP operation (RFC 8894)",
-    )
+    suffix = path.replace("/", "_").replace("{label}", "label").replace(".", "_")
+    for method in ("GET", "POST"):
+        router.add_api_route(
+            path,
+            scep,
+            methods=[method],
+            response_class=Response,
+            operation_id=f"scep{suffix}_{method.lower()}",
+            summary=f"SCEP operation (RFC 8894), {method}",
+        )
