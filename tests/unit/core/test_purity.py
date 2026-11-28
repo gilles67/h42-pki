@@ -11,7 +11,7 @@ import h42pki.core
 
 CORE_DIR = Path(h42pki.core.__file__).parent
 FORBIDDEN = ("tortoise", "fastapi", "starlette", "h42pki.models", "h42pki.services", "h42pki.api")
-CORE_FILES = sorted(CORE_DIR.glob("*.py"))
+CORE_FILES = sorted(CORE_DIR.rglob("*.py"))
 
 
 def _is_forbidden(module: str) -> bool:
@@ -28,7 +28,9 @@ def _imported_modules(path: Path) -> set[str]:
     return modules
 
 
-@pytest.mark.parametrize("path", CORE_FILES, ids=[path.name for path in CORE_FILES])
+@pytest.mark.parametrize(
+    "path", CORE_FILES, ids=[str(path.relative_to(CORE_DIR)) for path in CORE_FILES]
+)
 def test_core_module_has_no_forbidden_import(path: Path) -> None:
     forbidden = sorted(module for module in _imported_modules(path) if _is_forbidden(module))
 
@@ -37,7 +39,11 @@ def test_core_module_has_no_forbidden_import(path: Path) -> None:
 
 def test_importing_core_loads_no_forbidden_module() -> None:
     """Transitive check: import every core module in a fresh interpreter."""
-    modules = [f"h42pki.core.{path.stem}" for path in CORE_FILES if path.stem != "__init__"]
+    modules = [
+        "h42pki.core." + ".".join(path.relative_to(CORE_DIR).with_suffix("").parts)
+        for path in CORE_FILES
+        if path.stem != "__init__"
+    ]
     code = "\n".join(
         [
             "import importlib, sys",
