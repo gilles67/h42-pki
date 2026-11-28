@@ -3,6 +3,7 @@
 import pytest
 from asn1crypto import cms
 from cryptography import x509
+from cryptography.hazmat.primitives import hashes
 from httpx import AsyncClient
 
 from h42pki.api.listener import served_over_http
@@ -68,10 +69,12 @@ async def test_get_ca_cert(client: AsyncClient, path: str) -> None:
     response = await client.get(path, params={"operation": "GetCACert"})
 
     assert response.status_code == 200 and response.headers["content-type"] == CA_RA_CERT
+    # A DER SET OF is sorted at encoding: the order is not kept, clients find the RA by its
+    # key usage (keyEncipherment, no keyCertSign).
     received = certificates(response.content)
-    assert received[0] == published[0]  # the CA
-    assert received[1] == x509.load_der_x509_certificate(ra.der)  # the RA
-    assert received[2:] == published[1:]  # ancestors of the CA (none for a root)
+    assert sorted(c.fingerprint(hashes.SHA256()) for c in received) == sorted(
+        c.fingerprint(hashes.SHA256()) for c in [*published, x509.load_der_x509_certificate(ra.der)]
+    )
 
 
 async def test_get_ca_cert_waits_for_the_ra(client: AsyncClient, make_root: RootFactory) -> None:
