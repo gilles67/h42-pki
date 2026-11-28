@@ -36,6 +36,7 @@ class PeriodicTask:
         self.interval = interval
         self._first_delay = first_delay
         self.state = TaskState()
+        self._wake = asyncio.Event()
 
     async def run_once(self) -> bool:
         """One run; True when it succeeded."""
@@ -58,15 +59,26 @@ class PeriodicTask:
         self.state.last_error = None
         return True
 
+    def trigger(self) -> None:
+        """Run now instead of waiting for the next interval (e.g. a setting changed)."""
+        self._wake.set()
+
     async def run(self, stop: asyncio.Event) -> None:
-        """Run after ``first_delay``, then every ``interval`` seconds, until ``stop`` is set."""
+        """Run after ``first_delay``, then every ``interval`` seconds (or when triggered), until
+        ``stop`` is set."""
         delay = self._first_delay
         while True:
+            stop_waiter = asyncio.create_task(stop.wait())
+            wake_waiter = asyncio.create_task(self._wake.wait())
             try:
-                await asyncio.wait_for(stop.wait(), timeout=delay)
-            except TimeoutError:
-                pass
-            else:
+                await asyncio.wait(
+                    {stop_waiter, wake_waiter}, timeout=delay, return_when=asyncio.FIRST_COMPLETED
+                )
+            finally:
+                stop_waiter.cancel()
+                wake_waiter.cancel()
+            if stop.is_set():
                 return
+            self._wake.clear()
             await self.run_once()
             delay = self.interval

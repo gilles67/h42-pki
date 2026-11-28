@@ -39,6 +39,7 @@ class ProfileKind(StrEnum):
     OCSP_SIGNER = "ocsp_signer"
     DEVICE = "device"
     SERVICE_TLS = "service_tls"
+    SCEP_RA = "scep_ra"
 
 
 class SubjectPolicy(BaseModel):
@@ -136,6 +137,7 @@ CA_SUBJECT = SubjectPolicy(
 
 # Internal profile of the built-in HTTPS server certificate (ADR-0013).
 SERVICE_TLS_PROFILE = "service_tls"
+SCEP_RA_PROFILE = "scep_ra"
 # Profile of the CAs signed by this one, by request or by federation (ADR-0015).
 SUB_CA_PROFILE = "sub_ca"
 
@@ -252,6 +254,28 @@ BUILTIN_PROFILES: dict[str, ProfileSpec] = {
             allowed_key_algorithms=ALL_ALGORITHMS,
             subject_policy=SubjectPolicy(required=["common_name"], cn_must_match_san=True),
             san_policy=SanPolicy(types=["dns", "ip"], required=True),
+            internal=True,
+        ),
+        ProfileSpec(
+            name=SCEP_RA_PROFILE,
+            kind=ProfileKind.SCEP_RA,
+            description=(
+                "Internal: SCEP registration authority of this CA, which decrypts the requests and "
+                "signs the answers, so that SCEP never uses the CA key (ADR-0019). Issued and "
+                "renewed by the CA itself; never available to requests or enrolment protocols."
+            ),
+            auto_approve=True,
+            validity_days=365,
+            max_validity_days=825,
+            basic_constraints=BasicConstraints(ca=False),
+            key_usage=KeyUsage(digital_signature=True, key_encipherment=True),
+            allowed_key_algorithms=[
+                KeyAlgorithm.RSA2048,
+                KeyAlgorithm.RSA3072,
+                KeyAlgorithm.RSA4096,
+            ],
+            subject_policy=SubjectPolicy(required=["common_name"]),
+            san_policy=SanPolicy(),
             internal=True,
         ),
     )

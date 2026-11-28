@@ -106,10 +106,20 @@ async def test_wrong_ciphertext_gives_no_padding_error(
     """OpenSSL implicit rejection: no oracle, pseudo-random bytes come back."""
     import os
 
-    first = await keystore.decrypt(rsa_stored.encrypted_key, os.urandom(256))
-    again = await keystore.decrypt(rsa_stored.encrypted_key, os.urandom(256))
+    # Below the modulus (first byte < 0x80): a value above it is refused by a public range check.
+    first = await keystore.decrypt(rsa_stored.encrypted_key, b"\x00" + os.urandom(255))
+    again = await keystore.decrypt(rsa_stored.encrypted_key, b"\x01" + os.urandom(255))
 
     assert isinstance(first, bytes) and isinstance(again, bytes)
+
+
+async def test_ciphertext_above_the_modulus_fails_without_detail(
+    keystore: SoftwareKeyStore, rsa_stored: Any
+) -> None:
+    from h42pki.keystore import KeyOperationFailed
+
+    with pytest.raises(KeyOperationFailed, match="^decryption failed$"):
+        await keystore.decrypt(rsa_stored.encrypted_key, b"\xff" * 256)
 
 
 async def test_decrypt_and_sign_need_an_rsa_key(keystore: SoftwareKeyStore) -> None:

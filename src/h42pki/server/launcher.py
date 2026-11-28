@@ -45,7 +45,13 @@ from h42pki.server.ssl_context import build_context, load_certificate
 from h42pki.services.authority import AuthorityService
 from h42pki.services.settings import SettingsWatcher
 from h42pki.services.tls_service import TlsMaterial, TlsServiceManager
-from h42pki.tasks.maintenance import crl_task, expiry_task, parent_check_task, purge_task
+from h42pki.tasks.maintenance import (
+    crl_task,
+    expiry_task,
+    parent_check_task,
+    purge_task,
+    scep_ra_task,
+)
 from h42pki.tasks.periodic import PeriodicTask, TaskState
 from h42pki.tasks.tls_service import TlsRenewalTask
 
@@ -133,7 +139,13 @@ class Launcher:
         self._tasks = (
             scheduled_tasks
             if scheduled_tasks is not None
-            else [crl_task(keystore), expiry_task(), purge_task(), parent_check_task()]
+            else [
+                crl_task(keystore),
+                expiry_task(),
+                purge_task(),
+                parent_check_task(),
+                scep_ra_task(keystore),
+            ]
         )
         self.status.tasks = {task.name: task.state for task in self._tasks}
 
@@ -272,6 +284,10 @@ class Launcher:
             log.info("log level set to %s", current.logging.level)
         if previous.tls_service != current.tls_service and self._renewal is not None:
             self._renewal.check_soon()
+        if previous.scep != current.scep:  # SCEP enabled, or RA settings changed: check the RA
+            for task in self._tasks:
+                if task.name == "scep_ra":
+                    task.trigger()
         for name in sorted(changed_listeners(previous, current)):
             async with self._lock:
                 if name in self._servers:

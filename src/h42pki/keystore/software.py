@@ -62,7 +62,9 @@ class SoftwareKeyStore:
             raise KeyOperationFailed("decryption failed")
         try:
             return await asyncio.to_thread(key.decrypt, ciphertext, padding.PKCS1v15())
-        except ValueError:  # pragma: no cover - implicit rejection in OpenSSL >= 3.2
+        except ValueError:
+            # Not a padding error (implicit rejection, OpenSSL >= 3.2): a public check, such as
+            # a ciphertext above the modulus. Same message as any other failure.
             raise KeyOperationFailed("decryption failed") from None
 
     async def sign(self, stored: bytes, data: bytes, algorithm: hashes.HashAlgorithm) -> bytes:

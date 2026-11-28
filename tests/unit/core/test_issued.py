@@ -419,8 +419,9 @@ AIA_URL = "http://pki.example.test/ca/test-root.crt"
 @pytest.mark.parametrize("profile", sorted(BUILTIN_PROFILES))
 def test_aia_ca_issuers(root: Root, key_for: KeyFor, profile: str) -> None:
     sans = ["dns:a.example.test"] if profile in ("tls_server", "service_tls") else []
+    algorithm = KeyAlgorithm.RSA2048 if profile == "scep_ra" else KeyAlgorithm.EC_P384
     cert = _issue(
-        root, profile, key_for(KeyAlgorithm.EC_P384), name(CN="a.example.test"), sans=sans,
+        root, profile, key_for(algorithm), name(CN="a.example.test"), sans=sans,
         ca_issuers_url=AIA_URL,
     ).certificate  # fmt: skip
 

@@ -38,6 +38,7 @@ from h42pki.core.publication import crl_url
 from h42pki.errors import NotFound
 from h42pki.models import CertificateStatus, Channel, RequestStatus
 from h42pki.services.certificates import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
+from h42pki.services.scep_ra import ScepRaManager
 
 PEM_MEDIA_TYPE = "application/x-pem-file"
 DER_CERT_MEDIA_TYPE = "application/pkix-cert"
@@ -195,7 +196,9 @@ async def get_authority(authorities: AuthorityServiceDep) -> AuthorityOut:
     authority = await authorities.find_local()
     if authority is None:
         raise NotFound("no local certificate authority: run `h42pki authority init` first")
-    return AuthorityOut.from_model(authority, await authorities.certificate_of(authority))
+    return AuthorityOut.from_model(
+        authority, await authorities.certificate_of(authority), await ScepRaManager().current()
+    )
 
 
 # --- configuration (read-only: written by the CLI, ADR-0011) --------------------------------

@@ -1,4 +1,4 @@
-"""Housekeeping run by the scheduled tasks: expired status (B34), purge of old HTTPS keys (B44)."""
+"""Housekeeping of the scheduled tasks: expired status (B34), purge of old internal keys (B44)."""
 
 import logging
 from dataclasses import dataclass, field
@@ -7,7 +7,7 @@ from uuid import UUID
 
 from tortoise.transactions import in_transaction
 
-from h42pki.core.profiles import SERVICE_TLS_PROFILE
+from h42pki.core.profiles import SCEP_RA_PROFILE, SERVICE_TLS_PROFILE
 from h42pki.models import (
     AuditLog,
     Certificate,
@@ -20,6 +20,8 @@ from h42pki.models import (
 log = logging.getLogger(__name__)
 
 SYSTEM_ACTOR = "system"
+# Internal certificates purged once replaced and expired, with the purpose of their key.
+INTERNAL_KEYS = {SERVICE_TLS_PROFILE: KeyPurpose.TLS, SCEP_RA_PROFILE: KeyPurpose.SCEP_RA}
 # The audit entry of an expiry run lists at most this many certificate ids.
 MAX_AUDITED_IDS = 100
 
@@ -62,12 +64,27 @@ class MaintenanceService:
 
     @staticmethod
     async def purge_service_tls(now: datetime | None = None) -> PurgeResult:
-        """Delete the HTTPS certificates replaced since and expired, with their key (B44).
+        """Delete the internal certificates replaced since and expired, with their key (B44).
 
-        The latest certificate of each CA is always kept, even expired.
+        The built-in HTTPS server certificates and the SCEP RA certificates (ADR-0019; an old RA
+        keeps decrypting until it expires, so only then is it deleted). The latest certificate of
+        each CA and profile is always kept, even expired.
         """
         now = now or datetime.now(UTC)
-        records = await Certificate.filter(profile__name=SERVICE_TLS_PROFILE).order_by(
+        result = PurgeResult()
+        for profile, purpose in INTERNAL_KEYS.items():
+            await MaintenanceService._purge(profile, purpose, now, result)
+        if result.certificates:
+            log.info(
+                "purged %d replaced internal certificate(s) and %d key(s)",
+                len(result.certificates),
+                len(result.keys),
+            )
+        return result
+
+    @staticmethod
+    async def _purge(profile: str, purpose: KeyPurpose, now: datetime, result: PurgeResult) -> None:
+        records = await Certificate.filter(profile__name=profile).order_by(
             "issuer_id", "-created_at"
         )
         latest: set[UUID | None] = set()
@@ -78,7 +95,6 @@ class MaintenanceService:
                 continue
             if record.not_after <= now:
                 doomed.append(record)
-        result = PurgeResult()
         for record in doomed:
             async with in_transaction():
                 key_id = record.private_key_id
@@ -90,27 +106,20 @@ class MaintenanceService:
                     object_type="certificate",
                     object_id=record.id,
                     details={
-                        "profile": SERVICE_TLS_PROFILE,
+                        "profile": profile,
                         "serial_hex": record.serial_hex,
                         "not_after": record.not_after.isoformat(),
                     },
                 )
                 result.certificates.append(record.id)
                 if key_id is not None and not await Certificate.exists(private_key_id=key_id):
-                    deleted = await PrivateKey.filter(id=key_id, purpose=KeyPurpose.TLS).delete()
+                    deleted = await PrivateKey.filter(id=key_id, purpose=purpose).delete()
                     if deleted:
                         await AuditLog.record(
                             actor=SYSTEM_ACTOR,
                             action="private_key.delete",
                             object_type="private_key",
                             object_id=key_id,
-                            details={"purpose": KeyPurpose.TLS.value, "reason": "purge"},
+                            details={"purpose": purpose.value, "reason": "purge"},
                         )
                         result.keys.append(key_id)
-        if result.certificates:
-            log.info(
-                "purged %d replaced HTTPS certificate(s) and %d key(s)",
-                len(result.certificates),
-                len(result.keys),
-            )
-        return result

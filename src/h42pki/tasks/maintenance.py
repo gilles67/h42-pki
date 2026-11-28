@@ -4,6 +4,7 @@ from h42pki.keystore import KeyStore
 from h42pki.services.crl import CrlService
 from h42pki.services.maintenance import MaintenanceService
 from h42pki.services.parent_check import ParentCheckService
+from h42pki.services.scep_ra import ScepRaManager
 from h42pki.tasks.periodic import PeriodicTask
 
 CRL_INTERVAL_SECONDS = 15 * 60.0
@@ -52,3 +53,12 @@ def parent_check_task(
         interval=interval or PARENT_CHECK_INTERVAL_SECONDS,
         first_delay=(PARENT_CHECK_FIRST_DELAY_SECONDS if first_delay is None else first_delay),
     )
+
+
+SCEP_RA_INTERVAL_SECONDS = 24 * 3600.0
+
+
+def scep_ra_task(keystore: KeyStore, *, interval: float | None = None) -> PeriodicTask:
+    """Every day, at start-up, and when a scep setting changes: the SCEP RA certificate."""
+    manager = ScepRaManager(keystore)
+    return PeriodicTask("scep_ra", manager.ensure, interval=interval or SCEP_RA_INTERVAL_SECONDS)

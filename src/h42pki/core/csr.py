@@ -123,7 +123,7 @@ def parse_csr(data: bytes | str) -> ParsedCsr:
 
 
 def build_csr(key: SupportedPrivateKey, common_name: str, names: Sequence[str]) -> bytes:
-    """DER CSR for a server key held here: CN plus DNS / IP SANs (built-in HTTPS server).
+    """DER CSR for a key held here: CN plus DNS / IP SANs (built-in HTTPS server, SCEP RA).
 
     The key is handed over by the service, as for the CA key; the CSR then follows the same
     issuance path as any other request (ADR-0013).
@@ -132,13 +132,12 @@ def build_csr(key: SupportedPrivateKey, common_name: str, names: Sequence[str]) 
         x509.IPAddress(ipaddress.ip_address(name)) if is_ip_address(name) else x509.DNSName(name)
         for name in names
     ]
-    csr = (
-        x509.CertificateSigningRequestBuilder()
-        .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, common_name)]))
-        .add_extension(x509.SubjectAlternativeName(general_names), critical=False)
-        .sign(key, signature_hash(key))
+    builder = x509.CertificateSigningRequestBuilder().subject_name(
+        x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, common_name)])
     )
-    return csr.public_bytes(serialization.Encoding.DER)
+    if general_names:  # none for the SCEP RA certificate
+        builder = builder.add_extension(x509.SubjectAlternativeName(general_names), critical=False)
+    return builder.sign(key, signature_hash(key)).public_bytes(serialization.Encoding.DER)
 
 
 def build_ca_csr(key: SupportedPrivateKey, subject: Subject) -> bytes:

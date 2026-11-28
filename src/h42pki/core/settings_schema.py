@@ -295,6 +295,65 @@ class EstSettings(_Section):
         return value
 
 
+class ScepSettings(_Section):
+    """SCEP enrollment (RFC 8894, ADR-0019): disabled by default, like every enrollment protocol."""
+
+    enabled: bool = _setting(
+        False,
+        apply=ApplyLevel.HOT,
+        description="Serve SCEP (/scep, HTTP and HTTPS); false: every SCEP route answers 404.",
+    )
+    default_profile: str = _setting(
+        "",
+        apply=ApplyLevel.HOT,
+        description=(
+            "Profile of /scep without label; empty: those routes answer 404 and a label is "
+            "required (/scep/{profile})."
+        ),
+    )
+    allow_legacy_crypto: bool = _setting(
+        False,
+        apply=ApplyLevel.HOT,
+        description=(
+            "Also accept 3DES and SHA-1 (and announce them in GetCACaps), for old devices; "
+            "false: AES and SHA-256/512 only."
+        ),
+    )
+    ra_validity_days: int = _setting(
+        365,
+        apply=ApplyLevel.HOT,
+        description="Validity of the SCEP RA certificate, in days (next issuance).",
+        ge=2,
+        le=825,
+    )
+    ra_renew_before_days: int = _setting(
+        30,
+        apply=ApplyLevel.HOT,
+        description="Renew the SCEP RA certificate when this many days or fewer remain.",
+        ge=1,
+        le=824,
+    )
+
+    @field_validator("default_profile")
+    @classmethod
+    def _check_profile(cls, value: str) -> str:
+        if value and value not in _disableable_profiles():
+            raise ValueError(
+                f"unknown profile {value!r} "
+                f"(built-in profiles: {', '.join(sorted(_disableable_profiles()))})"
+            )
+        return value
+
+    @model_validator(mode="after")
+    def _check_renewal(self) -> Self:
+        if self.ra_renew_before_days >= self.ra_validity_days:
+            raise ValueError(
+                "scep.ra_renew_before_days must be lower than scep.ra_validity_days, otherwise "
+                "every check would issue a new RA certificate"
+            )
+        return self
+
+
 class LoggingSettings(_Section):
     level: Literal["debug", "info", "warning", "error"] = _setting(
         "info", apply=ApplyLevel.HOT, description="Log level of the server."
@@ -326,6 +385,7 @@ class RuntimeSettings(_Section):
     crl: CrlSettings = Field(default_factory=CrlSettings)
     ocsp: OcspSettings = Field(default_factory=OcspSettings)
     est: EstSettings = Field(default_factory=EstSettings)
+    scep: ScepSettings = Field(default_factory=ScepSettings)
     logging: LoggingSettings = Field(default_factory=LoggingSettings)
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
 

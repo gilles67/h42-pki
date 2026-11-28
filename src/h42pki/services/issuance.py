@@ -327,18 +327,38 @@ class IssuanceService:
     async def issue_service_certificate(
         self, names: Sequence[str], *, validity_days: int
     ) -> CertificateRequest:
-        """Certificate of the built-in HTTPS server (ADR-0013): internal, never exposed.
+        """Certificate of the built-in HTTPS server (ADR-0013): CN = first name, SANs = all."""
+        return await self.issue_internal_certificate(
+            SERVICE_TLS_PROFILE,
+            key_algorithm=SERVICE_TLS_KEY_ALGORITHM,
+            purpose=KeyPurpose.TLS,
+            common_name=names[0],
+            names=names,
+            validity_days=validity_days,
+        )
 
-        A new key (``purpose = tls``) and a CSR are made here, then the request follows the same
-        path as any other: checked against the internal ``service_tls`` profile, recorded, and
-        issued by ``_issue``. CN = the first name, SANs = all names.
+    async def issue_internal_certificate(
+        self,
+        profile_name: str,
+        *,
+        key_algorithm: KeyAlgorithm,
+        purpose: KeyPurpose,
+        common_name: str,
+        names: Sequence[str],
+        validity_days: int,
+    ) -> CertificateRequest:
+        """A certificate the CA issues for its own use: HTTPS server (ADR-0013), SCEP RA (ADR-0019).
+
+        Internal, never exposed. A new key (with ``purpose``) and a CSR are made here, then the
+        request follows the same path as any other: checked against the internal profile,
+        recorded on the ``system`` channel, and issued by ``_issue``.
         """
-        profile = await Profile.get(name=SERVICE_TLS_PROFILE)
+        profile = await Profile.get(name=profile_name)
         spec = spec_of(profile)
         authority = await self._authorities.get_issuing()
-        stored = await self._keystore.generate(SERVICE_TLS_KEY_ALGORITHM)
+        stored = await self._keystore.generate(key_algorithm)
         key = await self._keystore.load(stored.encrypted_key)
-        csr_der = await asyncio.to_thread(build_csr, key, names[0], names)
+        csr_der = await asyncio.to_thread(build_csr, key, common_name, names)
         parsed = parse_csr(csr_der)
         now = datetime.now(UTC)
         issuer_cert = await self._issuer_certificate(authority, now)
@@ -369,7 +389,7 @@ class IssuanceService:
             parsed=parsed,
             actor=SYSTEM_ACTOR,
             decided_by=AUTO_APPROVE,
-            held_key=HeldKey(stored, SERVICE_TLS_KEY_ALGORITHM, KeyPurpose.TLS),
+            held_key=HeldKey(stored, key_algorithm, purpose),
         )
 
     async def approve(self, request_id: UUID, *, actor: str) -> CertificateRequest:

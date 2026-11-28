@@ -177,7 +177,8 @@ def test_every_decryption_failure_looks_the_same(
     )
     sealed = parse_envelope(message.content, legacy=False)
     good = ra_key.decrypt(sealed.encrypted_key, padding.PKCS1v15())
-    wrong_key = client_key.decrypt(sealed.encrypted_key, padding.PKCS1v15())  # implicit rejection
+    # Implicit rejection: a ciphertext that is not ours decrypts to pseudo-random bytes.
+    wrong_key = ra_key.decrypt(b"\x00" + os.urandom(255), padding.PKCS1v15())
     altered = type(sealed)(
         **{**sealed.__dict__, "encrypted_content": bytes(16) + sealed.encrypted_content[16:]}
     )

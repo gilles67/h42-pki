@@ -181,6 +181,22 @@ class ParentOut(Schema):
     url: str | None = Field(description="Where this CA enrolled.")
 
 
+class ScepRaOut(Schema):
+    certificate_id: UUID
+    serial_hex: str
+    subject_dn: str
+    not_after: datetime
+
+    @classmethod
+    def from_model(cls, certificate: Certificate) -> "ScepRaOut":
+        return cls(
+            certificate_id=certificate.id,
+            serial_hex=certificate.serial_hex,
+            subject_dn=certificate.subject_dn,
+            not_after=certificate.not_after,
+        )
+
+
 class AuthorityOut(Schema):
     name: str
     status: AuthorityStatus
@@ -196,9 +212,14 @@ class AuthorityOut(Schema):
     public_base_url: str | None
     crl_enabled: bool  # chosen at creation, never changed (ADR-0017)
     ocsp_enabled: bool
+    scep_ra: ScepRaOut | None = Field(
+        default=None, description="Current SCEP RA certificate, once SCEP is enabled (ADR-0019)."
+    )
 
     @classmethod
-    def from_model(cls, authority: Authority, certificate: Certificate) -> "AuthorityOut":
+    def from_model(
+        cls, authority: Authority, certificate: Certificate, scep_ra: Certificate | None = None
+    ) -> "AuthorityOut":
         """``authority.private_key`` and ``parent__certificate`` must be prefetched."""
         assert authority.private_key is not None  # noqa: S101 - set at creation
         parent = authority.parent
@@ -224,6 +245,7 @@ class AuthorityOut(Schema):
             public_base_url=authority.public_base_url,
             crl_enabled=authority.crl_enabled,
             ocsp_enabled=authority.ocsp_enabled,
+            scep_ra=ScepRaOut.from_model(scep_ra) if scep_ra is not None else None,
         )
 
 

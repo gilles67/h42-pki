@@ -36,6 +36,11 @@ EXPECTED_LEVELS = {
     "est.enabled": ("hot", ()),
     "est.default_profile": ("hot", ()),
     "est.retry_after_seconds": ("hot", ()),
+    "scep.enabled": ("hot", ()),
+    "scep.default_profile": ("hot", ()),
+    "scep.allow_legacy_crypto": ("hot", ()),
+    "scep.ra_validity_days": ("hot", ()),
+    "scep.ra_renew_before_days": ("hot", ()),
     "logging.level": ("hot", ()),
     "logging.format": ("process", ()),
     "database.pool_size": ("process", ()),
@@ -189,3 +194,17 @@ def test_est_default_profile_must_be_a_profile() -> None:
         build_settings({"est.default_profile": "service_tls"})  # internal
     with pytest.raises(InvalidSetting, match="unknown profile"):
         build_settings({"est.default_profile": "nope"})
+
+
+def test_scep_settings() -> None:
+    settings = RuntimeSettings().scep
+    assert (settings.enabled, settings.default_profile, settings.allow_legacy_crypto) == (
+        False,
+        "",
+        False,
+    )
+    assert (settings.ra_validity_days, settings.ra_renew_before_days) == (365, 30)
+    with pytest.raises(InvalidSetting, match="lower than scep.ra_validity_days"):
+        build_settings({"scep.ra_validity_days": 30})
+    with pytest.raises(InvalidSetting, match="unknown profile"):
+        build_settings({"scep.default_profile": "scep_ra"})

@@ -17,6 +17,7 @@ class KeyPurpose(StrEnum):
     CA = "ca"
     TLS = "tls"  # key of the built-in HTTPS server; the CA key never serves TLS (ADR-0013)
     SERVERKEYGEN = "serverkeygen"  # generated for an EST client, copy kept encrypted (ADR-0018)
+    SCEP_RA = "scep_ra"  # SCEP registration authority: never the CA key (ADR-0019)
 
 
 class PrivateKey(TimestampedModel):

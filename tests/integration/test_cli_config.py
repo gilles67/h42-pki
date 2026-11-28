@@ -48,7 +48,7 @@ def test_show_lists_every_setting() -> None:
     assert result.exit_code == 0, result.output
     lines = plain(result, "stdout").splitlines()
     assert lines[0].split() == ["KEY", "VALUE", "DEFAULT", "ORIGIN", "LEVEL"]
-    assert len(lines) == 1 + 19
+    assert len(lines) == 1 + 24
     row = next(line for line in lines if line.startswith("server.tls_min_version"))
     assert row.split() == [
         "server.tls_min_version",

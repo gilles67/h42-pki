@@ -55,6 +55,14 @@ def fast_password_hashing(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
+@pytest.fixture(autouse=True)
+def fast_scep_ra(monkeypatch: pytest.MonkeyPatch) -> None:
+    """RSA 2048 for the SCEP RA in tests (RSA 3072 in the code, see test_scep_ra.py)."""
+    from h42pki.services import scep_ra
+
+    monkeypatch.setattr(scep_ra, "RA_KEY_ALGORITHM", KeyAlgorithm.RSA2048)
+
+
 @pytest.fixture
 def settings(monkeypatch: pytest.MonkeyPatch) -> Settings:
     monkeypatch.setenv(f"{ENV_PREFIX}ENVIRONMENT", "test")

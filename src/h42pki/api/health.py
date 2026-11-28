@@ -17,6 +17,8 @@ from h42pki.heartbeat import HEARTBEAT_MAX_AGE_SECONDS, heartbeat_age
 from h42pki.models import AuthorityStatus
 from h42pki.services.authority import AuthorityService
 from h42pki.services.crl import CrlService
+from h42pki.services.scep_ra import ScepRaManager
+from h42pki.services.settings import SettingsService
 
 log = logging.getLogger(__name__)
 
@@ -42,6 +44,11 @@ class ParentCheckHealth(BaseModel):
     checked_at: datetime
 
 
+class ScepHealth(BaseModel):
+    ra_not_after: datetime | None
+    renewal: Literal["ok", "failing", "unknown"] = "unknown"  # scheduled task of the launcher
+
+
 class Health(BaseModel):
     status: Literal["ok", "degraded", "unavailable"]
     version: str
@@ -54,6 +61,7 @@ class Health(BaseModel):
     crl: CrlHealth | None  # None without a local CA
     ocsp: Literal["enabled", "disabled"] | None
     parent_check: ParentCheckHealth | None  # subordinate CA, once checked
+    scep: ScepHealth | Literal["disabled"] | None  # None without a local CA
     warnings: list[str]
 
 
@@ -111,6 +119,27 @@ async def _revocation(
     return crl, "enabled" if authority.ocsp_enabled else "disabled", parent_check
 
 
+async def _scep(
+    launcher: object | None, warnings: list[str]
+) -> ScepHealth | Literal["disabled"] | None:
+    """SCEP and its RA certificate (ADR-0019): statuses only."""
+    if await AuthorityService().find_local() is None:
+        return None
+    if not (await SettingsService().effective()).scep.enabled:
+        return "disabled"
+    ra = await ScepRaManager().current()
+    health = ScepHealth(ra_not_after=ra.not_after if ra is not None else None)
+    tasks = getattr(launcher, "tasks", {}) or {}
+    state = tasks.get("scep_ra")
+    if state is not None and state.last_run is not None:
+        health.renewal = "failing" if state.failing else "ok"
+    if ra is None:
+        warnings.append("SCEP is enabled but has no RA certificate yet")
+    if health.renewal == "failing":
+        warnings.append("the renewal of the SCEP RA certificate is failing")
+    return health
+
+
 @router.get("/health")
 async def health(request: Request, response: Response) -> Health:
     launcher = getattr(request.app.state, "launcher", None)
@@ -149,8 +178,10 @@ async def health(request: Request, response: Response) -> Health:
     crl: CrlHealth | None = None
     ocsp: Literal["enabled", "disabled"] | None = None
     parent_check: ParentCheckHealth | None = None
+    scep: ScepHealth | Literal["disabled"] | None = None
     if database:
         crl, ocsp, parent_check = await _revocation(launcher, warnings)
+        scep = await _scep(launcher, warnings)
 
     if not database:
         status: Literal["ok", "degraded", "unavailable"] = "unavailable"
@@ -169,5 +200,6 @@ async def health(request: Request, response: Response) -> Health:
         crl=crl,
         ocsp=ocsp,
         parent_check=parent_check,
+        scep=scep,
         warnings=warnings,
     )

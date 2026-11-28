@@ -76,12 +76,14 @@ async def test_profiles(client: AsyncClient) -> None:
     assert set(profiles) == {
         "device",
         "ocsp_signer",
+        "scep_ra",
         "service_tls",
         "sub_ca",
         "tls_client",
         "tls_server",
     }
     assert profiles["service_tls"]["internal"] is True
+    assert profiles["scep_ra"]["internal"] is True
     assert profiles["tls_server"]["internal"] is False
     tls = profiles["tls_server"]
     assert (tls["validity_days"], tls["max_validity_days"]) == (90, 200)

@@ -19,10 +19,22 @@ def test_the_builtin_profiles() -> None:
         "ocsp_signer",
         "device",
         "service_tls",
+        "scep_ra",
     }
     assert {spec.kind for spec in BUILTIN_PROFILES.values()} == set(ProfileKind)
-    # Only the built-in HTTPS server profile is internal (ADR-0013).
-    assert [spec.name for spec in BUILTIN_PROFILES.values() if spec.internal] == ["service_tls"]
+    # Internal: the built-in HTTPS server (ADR-0013) and the SCEP RA (ADR-0019).
+    internal = [spec.name for spec in BUILTIN_PROFILES.values() if spec.internal]
+    assert internal == ["service_tls", "scep_ra"]
+
+
+def test_scep_ra_profile() -> None:
+    spec = BUILTIN_PROFILES["scep_ra"]
+
+    assert (spec.validity_days, spec.max_validity_days) == (365, 825)
+    assert spec.key_usage.digital_signature and spec.key_usage.key_encipherment
+    assert not spec.key_usage.key_cert_sign and spec.extended_key_usage == []
+    assert spec.basic_constraints.ca is False
+    assert all(algorithm.value.startswith("rsa") for algorithm in spec.allowed_key_algorithms)
 
 
 def test_service_tls_profile() -> None:
