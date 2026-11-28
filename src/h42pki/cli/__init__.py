@@ -9,6 +9,7 @@ import typer
 import h42pki
 from h42pki import __version__
 from h42pki.cli import (
+    acme,
     authority,
     certificate,
     crl,
@@ -36,6 +37,7 @@ app.add_typer(certificate.app, name="certificate")
 app.add_typer(crl.app, name="crl")
 app.add_typer(est.app, name="est")
 app.add_typer(scep.app, name="scep")
+app.add_typer(acme.app, name="acme")
 app.add_typer(request.app, name="request")
 app.add_typer(federation.app, name="federation")
 app.add_typer(config_cli.app, name="config")
