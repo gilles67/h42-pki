@@ -51,6 +51,13 @@ def _normalize_dns(value: str, *, min_labels: int, what: str) -> str:
     return name
 
 
+def normalize_dns_name(value: str, *, what: str = "DNS name") -> str:
+    """A fully qualified DNS name (at least two labels), lower case, without wildcard nor IP."""
+    if _is_ip(value.strip()):
+        raise InvalidHostname(f"{what} {value.strip()!r} is an IP address")
+    return _normalize_dns(value, min_labels=2, what=what)
+
+
 def normalize_fqdn(value: str) -> str:
     """Validate the service FQDN: lower case, trailing dot removed; never an IP or a wildcard."""
     if _is_ip(value.strip()):

@@ -20,11 +20,13 @@ STATUS = {
     "connection": 400,
     "dns": 400,
     "incorrectResponse": 400,
+    "invalidContact": 400,
     "malformed": 400,
     "orderNotReady": 403,
     "rejectedIdentifier": 400,
     "serverInternal": 500,
     "unauthorized": 403,
+    "unsupportedContact": 400,
     "unsupportedIdentifier": 400,
 }
 
