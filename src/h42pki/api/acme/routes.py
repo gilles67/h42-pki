@@ -29,6 +29,7 @@ from h42pki.services.acme.context import (
 )
 from h42pki.services.acme.nonces import NonceService
 from h42pki.services.acme.orders import OrderService
+from h42pki.services.acme.revocation import AcmeRevocation
 from h42pki.services.acme.validation import AcmeValidation
 from h42pki.services.settings import SettingsService
 
@@ -143,6 +144,7 @@ async def _directory(acme: AcmeContext, label: str | None) -> Response:
         "newNonce": acme.url(f"{PREFIX}/new-nonce"),
         "newAccount": acme.url(f"{PREFIX}/new-account"),
         "newOrder": acme.new_order_url(profile),
+        "revokeCert": acme.url(f"{PREFIX}/revoke-cert"),
         "meta": meta,
     }
     return await answer(acme, document, index=acme.directory_url(profile))
@@ -255,6 +257,17 @@ async def certificate(request: Request, acme: Context, order_id: UUID) -> Respon
     signed_request = await signed(request, acme)
     chain = await _orders(request).certificate_chain(acme, signed_request, order_id)
     return await answer(acme, raw=chain, media_type=PEM_CHAIN)
+
+
+@router.post("/revoke-cert", operation_id="acme_revoke_cert")
+async def revoke_cert(request: Request, acme: Context) -> Response:
+    signed_request = await signed(request, acme, jwk_allowed=True)
+    revocation = AcmeRevocation(
+        optional_keystore(request.app.state.settings),
+        getattr(request.app.state, "revocation_listener", None),
+    )
+    await revocation.revoke(signed_request)
+    return await answer(acme, status=200)
 
 
 # --- per profile (declared last: the fixed paths above come first) --------------------------
