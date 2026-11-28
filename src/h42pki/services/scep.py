@@ -101,6 +101,20 @@ def _challenge_of(csr: x509.CertificateSigningRequest) -> str | None:
     return value.decode("utf-8", errors="replace") if isinstance(value, bytes) else None
 
 
+def _signed_by_existing(message: PkiMessage, csr: x509.CertificateSigningRequest) -> bool:
+    """A PKCSReq without challenge, signed by a certificate that is not self-signed: a renewal.
+
+    RFC 8894 section 2.3 lets a client sign a PKCSReq with an existing certificate; sscep 0.10
+    renews that way (``-K`` / ``-O``) and never sends RenewalReq. The rules of RenewalReq apply.
+    """
+    signer = message.signer
+    return (
+        message.message_type is MessageType.PKCS_REQ
+        and _challenge_of(csr) is None
+        and signer.issuer.public_bytes() != signer.subject.public_bytes()
+    )
+
+
 class ScepService:
     def __init__(self, keystore: KeyStore | None = None) -> None:
         """``keystore`` is needed by PKIOperation (RA decryption and signature, issuance)."""
@@ -242,7 +256,9 @@ class ScepService:
             parsed = parse_csr(content)
         except H42Error:
             raise ScepError(FailInfo.BAD_REQUEST, "unreadable CSR") from None
-        renewal = message.message_type is MessageType.RENEWAL_REQ
+        renewal = message.message_type is MessageType.RENEWAL_REQ or _signed_by_existing(
+            message, parsed.csr
+        )
         requester, profile, credential, previous = await self._authorize(
             message, parsed.csr, profile=profile, renewal=renewal
         )

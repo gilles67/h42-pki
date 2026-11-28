@@ -410,11 +410,18 @@ async def enrolled(send: Send, ra: x509.Certificate, key: rsa.RSAPrivateKey) -> 
     return certificate
 
 
-async def test_renewal(send: Send, ra: x509.Certificate, device_key: rsa.RSAPrivateKey) -> None:
+@pytest.mark.parametrize(
+    "message_type",
+    # PKCSReq signed by the current certificate, without challenge: how sscep 0.10 renews.
+    [MessageType.RENEWAL_REQ, MessageType.PKCS_REQ],
+)
+async def test_renewal(
+    send: Send, ra: x509.Certificate, device_key: rsa.RSAPrivateKey, message_type: MessageType
+) -> None:
     current = await enrolled(send, ra, device_key)
     scep = ScepClient(device_key, current, ra)
 
-    reply = await send(scep, MessageType.RENEWAL_REQ, enrolment(device_key, None))  # no challenge
+    reply = await send(scep, message_type, enrolment(device_key, None))  # no challenge
 
     assert reply.status is PkiStatus.SUCCESS
     [renewed] = reply.certificates
@@ -425,6 +432,17 @@ async def test_renewal(send: Send, ra: x509.Certificate, device_key: rsa.RSAPriv
         ).id
     )
     assert request.requester.startswith("scep-cert:")
+
+
+async def test_pkcsreq_without_challenge_signed_by_itself(
+    send: Send, ra: x509.Certificate, device_key: rsa.RSAPrivateKey
+) -> None:
+    reply = await send(
+        new_client(device_key, ra), MessageType.PKCS_REQ, enrolment(device_key, None)
+    )
+
+    assert (reply.status, reply.fail_info) == (PkiStatus.FAILURE, FailInfo.BAD_REQUEST)
+    assert await CertificateRequest.filter(channel=Channel.SCEP).count() == 0
 
 
 async def test_renewal_needs_the_same_subject(
