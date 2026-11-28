@@ -1,4 +1,4 @@
-"""Three-level hierarchy with compose, then EST and revocation: Podman by default, Docker otherwise.
+"""Three-level hierarchy with compose, then EST, SCEP and revocation (Podman, or Docker).
 
 Needs bash, curl, openssl and a container engine. ``CONTAINER_ENGINE`` forces the engine, as for the
 scripts of ``deploy/``; without it, the first one that is installed is used, Podman first.
@@ -62,31 +62,21 @@ def test_bootstrap(tmp_path: Path) -> None:
         )
         assert result.returncode == 0, result.stdout + result.stderr
         assert "leaf.pem: OK" in result.stdout
-        # EST on the issuing CA (with a real client when ESTCLIENT is set), before the revocation
-        # scenario revokes that CA.
-        est = subprocess.run(  # noqa: S603
-            [bash, str(ROOT / "deploy" / "est-test.sh"), str(tmp_path)],
-            env=env,
-            stdin=subprocess.DEVNULL,
-            capture_output=True,
-            text=True,
-            timeout=600,
-            check=False,
-        )
-        assert est.returncode == 0, est.stdout + est.stderr
-        assert "est-test: all checks passed" in est.stdout
-        # Revocation on the same hierarchy: CRL and OCSP with openssl, revoked issuing CA.
-        revocation = subprocess.run(  # noqa: S603
-            [bash, str(ROOT / "deploy" / "revocation-test.sh"), str(tmp_path)],
-            env=env,
-            stdin=subprocess.DEVNULL,
-            capture_output=True,
-            text=True,
-            timeout=600,
-            check=False,
-        )
-        assert revocation.returncode == 0, revocation.stdout + revocation.stderr
-        assert "revocation-test: all checks passed" in revocation.stdout
+        # EST then SCEP on the issuing CA, before the revocation scenario revokes that CA: EST
+        # with a real client when ESTCLIENT is set, SCEP with sscep (deploy/sscep/Containerfile),
+        # then CRL and OCSP with openssl.
+        for scenario in ("est-test", "scep-test", "revocation-test"):
+            run = subprocess.run(  # noqa: S603
+                [bash, str(ROOT / "deploy" / f"{scenario}.sh"), str(tmp_path)],
+                env=env,
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                text=True,
+                timeout=900,
+                check=False,
+            )
+            assert run.returncode == 0, run.stdout + run.stderr
+            assert f"{scenario}: all checks passed" in run.stdout
     finally:
         subprocess.run(  # noqa: S603
             [*COMPOSE[ENGINE], "-f", str(ROOT / "deploy" / "compose.yaml"), "down", "--volumes"],

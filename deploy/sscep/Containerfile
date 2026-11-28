@@ -1,0 +1,15 @@
+# sscep (github.com/certnanny/sscep), SCEP client of deploy/scep-test.sh. It is no longer packaged by
+# Debian (neither 13 nor 12 nor sid): built from the sources of a pinned release.
+FROM docker.io/library/debian:trixie-slim AS build
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      build-essential autoconf automake libtool pkg-config libssl-dev git ca-certificates
+ARG SSCEP_VERSION=v0.10.0
+RUN git clone --depth 1 --branch "$SSCEP_VERSION" https://github.com/certnanny/sscep /src
+WORKDIR /src
+RUN (./bootstrap.sh || autoreconf -fi) && ./configure --prefix=/usr/local && make && make install
+
+FROM docker.io/library/debian:trixie-slim
+RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=build /usr/local/bin/sscep /usr/local/bin/sscep
+ENTRYPOINT ["sscep"]
