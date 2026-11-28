@@ -153,7 +153,7 @@ def test_profile_list() -> None:
     assert lines[0].split()[:4] == ["NAME", "KIND", "ENABLED", "APPROVAL"]
     tls_server = next(line for line in lines if line.startswith("tls_server"))
     assert tls_server.split()[2:4] == ["yes", "auto"]
-    assert "90 (max 200)" in tls_server and "server_auth" in tls_server
+    assert "47 (max 100)" in tls_server and "server_auth" in tls_server
     assert len(lines) == 8
     service_tls = next(line for line in lines if line.startswith("service_tls"))
     assert service_tls.split()[2] == "internal"

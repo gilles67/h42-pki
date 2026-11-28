@@ -161,12 +161,13 @@ BUILTIN_PROFILES: dict[str, ProfileSpec] = {
             name="tls_server",
             kind=ProfileKind.TLS_SERVER,
             description=(
-                "TLS server certificate. Validity follows CA/Browser Forum ballot SC-081v3: "
-                "200 days at most since 2026-03-15, 90 days by default."
+                "TLS server certificate. Validity follows CA/Browser Forum ballot SC-081v3, "
+                "ahead of its schedule: 47 days by default, 100 at most (47 at most from "
+                "2029-03-15)."
             ),
             auto_approve=True,
-            validity_days=90,
-            max_validity_days=200,
+            validity_days=47,
+            max_validity_days=100,
             basic_constraints=BasicConstraints(ca=False),
             key_usage=KeyUsage(digital_signature=True, key_encipherment=True),
             extended_key_usage=["server_auth"],

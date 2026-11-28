@@ -111,7 +111,7 @@ def test_tls_server_certificate(root: Root, key_for: KeyFor, algorithm: KeyAlgor
 
     cert.verify_directly_issued_by(issuer_cert)
     assert cert.issuer == issuer_cert.subject
-    assert cert.not_valid_after_utc - cert.not_valid_before_utc == timedelta(days=90)
+    assert cert.not_valid_after_utc - cert.not_valid_before_utc == timedelta(days=47)
     assert not issued.validity_truncated
     assert isinstance(cert.signature_hash_algorithm, hashes.SHA384)  # issuer key is P-384
 
@@ -323,15 +323,15 @@ def test_optional_sans_accepted(root: Root, key_for: KeyFor) -> None:
 
 def test_requested_validity_up_to_the_maximum(root: Root, key_for: KeyFor) -> None:
     cert = _issue(
-        root, "tls_server", key_for(KeyAlgorithm.EC_P256), sans=["dns:a"], validity_days=200
+        root, "tls_server", key_for(KeyAlgorithm.EC_P256), sans=["dns:a"], validity_days=100
     ).certificate
 
-    assert cert.not_valid_after_utc - cert.not_valid_before_utc == timedelta(days=200)
+    assert cert.not_valid_after_utc - cert.not_valid_before_utc == timedelta(days=100)
 
 
 def test_requested_validity_over_the_maximum(root: Root, key_for: KeyFor) -> None:
-    with pytest.raises(InvalidValidity, match="at most 200 days, not 201"):
-        _issue(root, "tls_server", key_for(KeyAlgorithm.EC_P256), sans=["dns:a"], validity_days=201)
+    with pytest.raises(InvalidValidity, match="at most 100 days, not 101"):
+        _issue(root, "tls_server", key_for(KeyAlgorithm.EC_P256), sans=["dns:a"], validity_days=101)
 
 
 def test_zero_validity_rejected(root: Root, key_for: KeyFor) -> None:

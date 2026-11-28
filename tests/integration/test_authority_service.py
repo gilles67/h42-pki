@@ -129,7 +129,7 @@ async def test_profiles_are_realigned_on_the_code(client: AsyncClient) -> None:
     await ProfileService().sync_builtin()  # what every start-up does
 
     profile = await Profile.get(name="tls_server")
-    assert (profile.validity_days, profile.max_validity_days) == (90, 200)
+    assert (profile.validity_days, profile.max_validity_days) == (47, 100)
     entry = await AuditLog.get(action="profile.realign")
     assert entry.actor == "system"
     assert entry.details == {

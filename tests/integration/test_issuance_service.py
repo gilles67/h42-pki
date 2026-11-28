@@ -71,7 +71,7 @@ async def test_auto_approved_tls_server(
     assert request.metadata["validity_truncated"] is False
     cert = await _certificate(request)
     cert.verify_directly_issued_by(await _root_certificate(root))
-    assert cert.not_valid_after_utc - cert.not_valid_before_utc == timedelta(days=90)
+    assert cert.not_valid_after_utc - cert.not_valid_before_utc == timedelta(days=47)
     record = await Certificate.get(id=request.certificate_id).prefetch_related("profile", "issuer")
     assert record.profile is not None and record.profile.name == "tls_server"
     assert record.issuer is not None and record.issuer.id == root.id
@@ -88,14 +88,14 @@ async def test_validity_up_to_the_profile_maximum(
     await make_root()
 
     request = await issuance.submit(
-        csr=_server_csr(key_for), profile_name="tls_server", validity_days=200, actor="anonymous"
+        csr=_server_csr(key_for), profile_name="tls_server", validity_days=100, actor="anonymous"
     )
 
     cert = await _certificate(request)
-    assert cert.not_valid_after_utc - cert.not_valid_before_utc == timedelta(days=200)
+    assert cert.not_valid_after_utc - cert.not_valid_before_utc == timedelta(days=100)
     with pytest.raises(InvalidValidity):
         await issuance.submit(
-            csr=_server_csr(key_for), profile_name="tls_server", validity_days=201, actor="x"
+            csr=_server_csr(key_for), profile_name="tls_server", validity_days=101, actor="x"
         )
     assert await CertificateRequest.all().count() == 1  # the refused request is not stored
 

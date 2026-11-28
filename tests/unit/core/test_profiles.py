@@ -52,7 +52,7 @@ def test_service_tls_profile() -> None:
 def test_tls_server_follows_sc081v3() -> None:
     spec = BUILTIN_PROFILES["tls_server"]
 
-    assert (spec.validity_days, spec.max_validity_days) == (90, 200)
+    assert (spec.validity_days, spec.max_validity_days) == (47, 100)
     assert "SC-081v3" in spec.description
     assert spec.auto_approve
     assert spec.extended_key_usage == ["server_auth"]

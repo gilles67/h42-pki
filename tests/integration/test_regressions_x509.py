@@ -228,7 +228,7 @@ async def test_regression_B34_effective_expired_status(
 ) -> None:
     await make_root()
     csr = make_csr(key_for(KeyAlgorithm.EC_P256), sans=["dns:www.example.test"])
-    request = await issue("tls_server", csr_pem(csr))  # 90 days
+    request = await issue("tls_server", csr_pem(csr))  # 47 days
     url = f"/api/v1/certificates/{request.certificate_id}"
 
     async def statuses() -> tuple[str, int, int]:

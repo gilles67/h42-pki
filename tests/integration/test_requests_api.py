@@ -86,7 +86,7 @@ async def test_profiles(client: AsyncClient) -> None:
     assert profiles["scep_ra"]["internal"] is True
     assert profiles["tls_server"]["internal"] is False
     tls = profiles["tls_server"]
-    assert (tls["validity_days"], tls["max_validity_days"]) == (90, 200)
+    assert (tls["validity_days"], tls["max_validity_days"]) == (47, 100)
     assert tls["builtin"] is True and tls["auto_approve"] is True
     assert "SC-081v3" in tls["description"]
 
@@ -125,11 +125,11 @@ async def test_full_tls_server_flow(
     assert body["subject_dn"] == f"CN={HOST}"
     leaf = await download(client, body["certificate_id"])
     leaf.verify_directly_issued_by(root)
-    assert _days(leaf) == timedelta(days=90)
+    assert _days(leaf) == timedelta(days=47)
     assert (await client.get(f"/api/v1/requests/{body['id']}")).json() == body
 
 
-@pytest.mark.parametrize(("validity_days", "status_code"), [(200, 201), (201, 422), (0, 422)])
+@pytest.mark.parametrize(("validity_days", "status_code"), [(100, 201), (101, 422), (0, 422)])
 async def test_tls_server_validity(
     client: AsyncClient,
     make_root: RootFactory,
@@ -288,4 +288,4 @@ async def test_builtin_profiles_realigned_at_restart(settings: Settings, tmp_pat
     async with LifespanManager(create_app(file_settings)):  # restart on the same database
         profile = await Profile.get(name="tls_server")
 
-    assert (profile.validity_days, profile.max_validity_days) == (90, 200)
+    assert (profile.validity_days, profile.max_validity_days) == (47, 100)

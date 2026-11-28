@@ -106,7 +106,7 @@ async def test_openssl_csr_is_issued_and_verified(
     assert "CRL Distribution Points" not in text
     assert "Authority Information Access" not in text
     leaf = x509.load_pem_x509_certificate(leaf_pem.read_bytes())
-    assert leaf.not_valid_after_utc - leaf.not_valid_before_utc == timedelta(days=90)
+    assert leaf.not_valid_after_utc - leaf.not_valid_before_utc == timedelta(days=47)
 
 
 async def test_aia_and_published_chain(
