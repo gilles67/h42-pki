@@ -235,7 +235,7 @@ class ScepService:
             authority_id=authority.id, transaction_id=message.transaction_id
         )
         if transaction is not None:  # retransmission: same answer, nothing new
-            if transaction.signer_cert_der != _der(message.signer):
+            if not _same_key(transaction, message):
                 raise ScepError(FailInfo.BAD_REQUEST, "transactionID of another client")
             return await self._state(transaction)
         try:
@@ -320,7 +320,7 @@ class ScepService:
         transaction = await ScepTransaction.get_or_none(
             authority_id=authority.id, transaction_id=message.transaction_id
         )
-        if transaction is None or transaction.signer_cert_der != _der(message.signer):
+        if transaction is None or not _same_key(transaction, message):
             raise ScepError(FailInfo.BAD_CERT_ID, "unknown transaction")
         return await self._state(transaction)
 
@@ -406,6 +406,20 @@ class ScepService:
             ra.encrypted_key, unsigned.to_sign, unsigned.hash_algorithm
         )
         return unsigned.assemble(signature)
+
+
+def _same_key(transaction: ScepTransaction, message: PkiMessage) -> bool:
+    """The transaction belongs to the key of the signer, not to its certificate: clients such as
+    sscep sign each retransmission or poll with a new self-signed certificate of the same key
+    (the transactionID is a hash of that key, RFC 8894 section 3.2.1.1)."""
+    stored = x509.load_der_x509_certificate(transaction.signer_cert_der).public_key()
+    return _key_der(stored) == _key_der(message.signer.public_key())
+
+
+def _key_der(key: object) -> bytes:
+    return key.public_bytes(  # type: ignore[attr-defined, no-any-return]
+        serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo
+    )
 
 
 def _der(certificate: x509.Certificate) -> bytes:

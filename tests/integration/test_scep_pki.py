@@ -4,6 +4,7 @@ import base64
 import logging
 import os
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from datetime import timedelta
 from typing import Any
 
@@ -132,6 +133,42 @@ async def test_retransmission_gets_the_same_answer(
     assert again.status is PkiStatus.SUCCESS and again.certificates == first.certificates
     assert await CertificateRequest.filter(channel=Channel.SCEP).count() == 1
     assert (await EnrollmentCredential.get(identifier=text[:8])).use_count == 1
+
+
+async def test_retransmission_with_a_new_self_signed_certificate(
+    send: Send, ra: x509.Certificate, device_key: rsa.RSAPrivateKey
+) -> None:
+    """sscep signs each run with a new self-signed certificate of the same key (regression)."""
+    text = await challenge()
+    scep = new_client(device_key, ra)
+    request = enrolment(device_key, text)
+    first = await send(scep, MessageType.PKCS_REQ, request)
+    resent = replace(scep, certificate=self_signed(device_key, "device-1"))
+    assert resent.certificate != scep.certificate
+    poll = issuer_and_subject(
+        resent.certificate.subject, x509.Name.from_rfc4514_string("CN=device-1")
+    )
+
+    again = await send(resent, MessageType.PKCS_REQ, request)
+    polled = await send(resent, MessageType.CERT_POLL, poll)
+
+    assert again.status is PkiStatus.SUCCESS and again.certificates == first.certificates
+    assert polled.status is PkiStatus.SUCCESS and polled.certificates == first.certificates
+    assert await CertificateRequest.filter(channel=Channel.SCEP).count() == 1
+
+
+async def test_transaction_of_another_key_is_refused(
+    send: Send, ra: x509.Certificate, device_key: rsa.RSAPrivateKey
+) -> None:
+    text = await challenge(max_uses=None)
+    scep = new_client(device_key, ra)
+    await send(scep, MessageType.PKCS_REQ, enrolment(device_key, text))
+    other_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    intruder = replace(new_client(other_key, ra), transaction_id=scep.transaction_id)
+
+    reply = await send(intruder, MessageType.PKCS_REQ, enrolment(other_key, text))
+
+    assert (reply.status, reply.fail_info) == (PkiStatus.FAILURE, FailInfo.BAD_REQUEST)
 
 
 async def test_single_use_challenge(
