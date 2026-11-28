@@ -52,7 +52,26 @@ podman run --rm -e CGO_ENABLED=1 -e GOBIN=/out -v "$PWD":/out:Z docker.io/librar
   go install github.com/globalsign/est/cmd/estclient@v1.0.6
 ```
 
-Run `est-test.sh` before `revocation-test.sh`, which revokes the issuing CA.
+## SCEP
+
+```bash
+deploy/scep-test.sh                # after bootstrap.sh, on the issuing CA
+```
+
+SCEP is disabled by default ([ADR-0019](../docs/adr/0019-scep.md)): the script checks that the SCEP routes answer 404,
+runs `h42pki config set scep.enabled true`, waits for the RA certificate, then runs `sscep` in a container on the
+network of the hierarchy, over plain HTTP: `getcaps`, `getca`, `enroll` with a single-use challenge (then the same
+challenge refused), a reusable challenge twice, the manual `ocsp_signer` profile (PENDING, `h42pki request approve`,
+SUCCESS by polling), renewal signed by the certificate obtained, `getcert` and `getcrl`; it checks that the container
+logs hold no challenge nor private key. Challenges only go into private openssl configuration files, never on a
+command line.
+
+sscep is no longer packaged by Debian: the script builds `localhost/h42-sscep:0.10.0` from
+[`sscep/Containerfile`](sscep/Containerfile) (a pinned release of github.com/certnanny/sscep) when the image is
+missing; `SSCEP_IMAGE=…` selects another one. With sscep, `-c` must be the RA certificate (sscep verifies the answer
+with it): `sscep enroll -c ra.crt -e ra.crt …`.
+
+Run `est-test.sh` and `scep-test.sh` before `revocation-test.sh`, which revokes the issuing CA.
 
 ## Revocation
 

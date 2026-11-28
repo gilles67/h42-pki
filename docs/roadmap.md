@@ -165,7 +165,7 @@ avec nonce (B54).
 Décisions : ADR-0018. Réalisée en deux étapes.
 
 - ✅ **Désactivé par défaut** : `est.enabled` (404 sur toutes les routes), `est.default_profile`,
-  `est.retry_after_seconds` (niveau `hot`). Même principe à venir pour SCEP et ACME.
+  `est.retry_after_seconds` (niveau `hot`). Même principe pour SCEP (phase 5) et ACME.
 - ✅ **Comptes** `EnrollmentCredential` (HTTP Basic, scrypt, sans restriction de profil) : API
   `/api/v1/est/accounts` et `h42pki est account …`.
 - ✅ **`cacerts`, `simpleenroll`** : label = profil ; approbation du profil, `202` + `Retry-After`, relance retrouvée
@@ -186,13 +186,30 @@ Décisions : ADR-0018. Réalisée en deux étapes.
 compte, relecture des clés conservées, révocation automatique au réenrôlement. **Reporté** : limitation des essais
 de mot de passe (B56).
 
-## Phase 5 — SCEP
+## Phase 5 — SCEP — ✅ terminée (2026-11-28)
 
-- **Désactivé par défaut** (`scep.enabled`, 404 sur toutes les routes), comme EST (ADR-0018).
-- Spike `core/cms.py` (asn1crypto + cryptography) avec aller-retour testé **avant** les endpoints.
-- Certificat RA, `GetCACaps`, `GetCACert`, `PKIOperation` (PKCSReq, RenewalReq, CertPoll, GetCert, GetCRL), challenges.
+Décisions : ADR-0019. Réalisée en deux étapes.
+
+- ✅ **Désactivé par défaut** (`scep.enabled`, 404 sur toutes les routes), comme EST (ADR-0018) ; label = profil,
+  `scep.default_profile` ; HTTP et HTTPS.
+- ✅ `core/cms.py` (asn1crypto + cryptography) avec aller-retour testé **avant** les endpoints.
+- ✅ **RA dédié** (profil interne `scep_ra`, RSA 3072, renouvelé automatiquement ; la clé de l'AC n'est jamais
+  utilisée par SCEP) ; `KeyStore.decrypt`, `sign`, `seal`, `open`.
+- ✅ **Challenges** générés, à usage limité ou réutilisables : API `/api/v1/scep/challenges` et
+  `h42pki scep challenge …`.
+- ✅ `GetCACaps`, `GetCACert`, `PKIOperation` (PKCSReq, CertPoll, RenewalReq, GetCert, GetCRL) ; `PENDING` puis
+  `CertPoll` pour un profil à approbation manuelle ; 3DES / SHA-1 derrière `scep.allow_legacy_crypto`.
+- ✅ `deploy/scep-test.sh` avec `sscep` 0.10.0 (construit depuis ses sources, `deploy/sscep/Containerfile`).
 
 **Fait quand** : `sscep enroll` obtient un certificat dans le compose d'interop.
+
+> État au 2026-11-28 : vérifié par les tests (1276, plus 10 d'interop) et sur Debian 13 / Podman 5.4.2 rootless /
+> podman-compose 1.3.0 : `deploy/bootstrap.sh --fresh` puis `deploy/scep-test.sh` (`getcaps`, `getca`, `enroll` avec
+> challenge à usage unique puis refusé, challenge réutilisable deux fois, profil manuel `PENDING` → `SUCCESS`,
+> renouvellement, `getcert`, `getcrl`) ; aucun challenge ni clé privée dans les journaux du conteneur.
+
+**Hors périmètre** : `GetNextCACert` (phase 7, avec le rollover d'AC), restriction des profils par challenge, second
+client SCEP en interop (micromdm/scep non construit). **Reporté** : limitation des essais de challenge (B58).
 
 ## Phase 6 — ACME
 
@@ -209,7 +226,7 @@ de mot de passe (B56).
 - Spike puis backend **PKCS#11** (carte à puce / HSM via OpenSC) — cf. ADR-0004 ; image `-pkcs11` (paquets apt
   `opensc`, `opensc-pkcs11`, `pcscd`, `libccid` de l'ancien `src/Makefile`, `PYKCS11LIB`, extra `pkcs11`).
 - PostgreSQL validé en CI ; `/metrics` Prometheus ; logs JSON structurés.
-- Rollover de clé d'AC (`GetNextCACert`, coexistence des générations).
+- Rollover de clé d'AC (`GetNextCACert` de SCEP, coexistence des générations, RA de chaque génération).
 - Runbook d'exploitation : sauvegarde/restauration, perte de passphrase, compromission de clé.
 
 ## Jalon « Première release »

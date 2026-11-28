@@ -18,7 +18,7 @@ dev = [
   "pytest", "pytest-asyncio", "pytest-cov", "time-machine",
   "ruff", "mypy", "asgi-lifespan",  # asgi-lifespan : exécute le lifespan de l'app en test
 ]
-# asn1crypto : ajouté (prod) avec la phase SCEP.
+# asn1crypto : dépendance de production depuis la phase 5 (CMS de SCEP, core/cms.py).
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -137,14 +137,17 @@ Outils de l'hôte (`openssl`, `curl`, `bash`) et moteur de conteneurs (Podman pa
   nonce) ;
 - `tests/interop/test_compose.py` : `deploy/bootstrap.sh` (hiérarchie `root`, `intermediate`, `issuing` de
   `deploy/compose.yaml`, toutes avec `--crl --ocsp`), `deploy/est-test.sh` (avec `estclient` si `ESTCLIENT` est
-  défini) puis `deploy/revocation-test.sh`.
+  défini), `deploy/scep-test.sh` (`sscep` construit depuis ses sources par `deploy/sscep/Containerfile`) puis
+  `deploy/revocation-test.sh`.
+- Client SCEP des tests d'intégration : `tests/scep_client.py` (asn1crypto + `cryptography`), qui construit
+  `PKCSReq`, `RenewalReq`, `CertPoll`, `GetCert`, `GetCRL` et lit les `CertRep`.
 
 | Scénario | Outil | État |
 |---|---|---|
 | Chaîne racine → intermédiaire → émettrice valide | `openssl verify` | ✅ phase 2 |
 | Révocation visible dans la CRL et en OCSP, émettrice révoquée par l'intermédiaire | `openssl crl`, `openssl verify -crl_check[_all]`, `openssl ocsp` | ✅ phase 3 |
 | EST : `cacerts`, `simpleenroll`, approbation manuelle, `simplereenroll` (mTLS), `serverkeygen`, `csrattrs` | `curl` + `openssl`, `estclient` (`ESTCLIENT=…`) | ✅ phase 4 |
-| Enrôlement SCEP | `sscep getca`, `sscep enroll` | phase 5 |
+| SCEP : `getcaps`, `getca`, `enroll` (challenge à usage unique puis refusé, réutilisable), `PENDING` → `SUCCESS` par interrogation, renouvellement, `getcert`, `getcrl` | `sscep` 0.10.0 | ✅ phase 5 |
 | Émission ACME http-01 et dns-01, révocation | `lego` | phase 6 |
 
 ## 6. Couverture et qualité

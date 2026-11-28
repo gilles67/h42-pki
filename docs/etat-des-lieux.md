@@ -80,6 +80,8 @@ Gravité : 🔴 sécurité / perte de données · 🟠 fonctionnel · 🟡 quali
 | B54 | 🟡 | `services/ocsp.py` | Une requête OCSP **avec nonce** n'est jamais servie depuis le cache : chaque requête anonyme provoque une signature par la clé de l'AC (coût CPU ; à surveiller avec une clé PKCS#11). | Risque accepté (ADR-0017) ; limitation de débit ou répondeur délégué à étudier (phase 7) |
 | B55 | ✅ | `services/publication.py` | Une AC locale révoquée par sa mère ne publiait plus son certificat (`/ca/{name}.crt`, cible de l'AIA caIssuers) : `revoked` manquait aux statuts publiés, alors que l'ADR-0017 maintient la publication. | Résolu (phase 4) ; `test_regression_B55_revoked_ca_still_publishes_its_certificate` |
 | B56 | 🟡 | `services/est_accounts.py` | Aucune limitation du nombre d'essais de mot de passe EST : scrypt rend chaque essai coûteux (environ 0,15 s et 32 Mio), mais pour le serveur aussi, et des essais simultanés peuvent l'occuper. | Limitation par compte et par adresse à prévoir (avant la release) |
+| B57 | ✅ | `services/scep.py` | Une transaction SCEP était liée au **certificat** signataire : `sscep`, qui signe chaque essai avec un nouveau certificat auto-signé de la même clé, voyait sa retransmission refusée (`badRequest`). Trouvé par `deploy/scep-test.sh`. | Résolu (phase 5) : transaction liée à la clé publique du signataire ; `test_retransmission_with_a_new_self_signed_certificate` |
+| B58 | 🟡 | `services/scep.py` | Aucune limitation du nombre d'essais de challenge SCEP. Un essai coûte un déchiffrement RSA par la clé du RA ; l'espace des secrets (~165 bits) rend la recherche impraticable, mais des requêtes en masse occupent le serveur. | Limitation par adresse à prévoir (avant la release), avec B56 |
 
 ## 3. Ce qui est bon et à garder
 
