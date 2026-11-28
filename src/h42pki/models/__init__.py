@@ -1,5 +1,18 @@
 """Tortoise models, one module per aggregate (registered as the "models" app)."""
 
+from h42pki.models.acme import (
+    AccountStatus,
+    AcmeAccount,
+    AcmeAuthorization,
+    AcmeChallenge,
+    AcmeNonce,
+    AcmeOrder,
+    AuthorizationStatus,
+    ChallengeStatus,
+    ChallengeType,
+    IdentifierType,
+    OrderStatus,
+)
 from h42pki.models.audit import AuditLog
 from h42pki.models.authority import Authority, AuthorityKind, AuthorityStatus
 from h42pki.models.certificate import Certificate, CertificateStatus
@@ -23,28 +36,44 @@ __models__ = [
     EnrollmentCredential,
     ScepTransaction,
     ScepNonce,
+    AcmeNonce,
+    AcmeAccount,
+    AcmeOrder,
+    AcmeAuthorization,
+    AcmeChallenge,
     AuditLog,
     Setting,
     SettingsRevision,
 ]
 
 __all__ = [
+    "AccountStatus",
+    "AcmeAccount",
+    "AcmeAuthorization",
+    "AcmeChallenge",
+    "AcmeNonce",
+    "AcmeOrder",
     "AuditLog",
     "Authority",
     "AuthorityKind",
     "AuthorityStatus",
+    "AuthorizationStatus",
     "Certificate",
     "CertificateRequest",
     "CertificateStatus",
+    "ChallengeStatus",
+    "ChallengeType",
     "Channel",
     "CredentialKind",
     "CredentialStatus",
     "Crl",
     "EnrollmentCredential",
     "FederationInvitation",
+    "IdentifierType",
     "InvitationStatus",
     "KeyBackend",
     "KeyPurpose",
+    "OrderStatus",
     "PrivateKey",
     "Profile",
     "RequestStatus",

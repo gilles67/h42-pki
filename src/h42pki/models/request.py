@@ -24,7 +24,7 @@ class RequestStatus(StrEnum):
 
 
 class Channel(StrEnum):
-    """How a certificate or a request reached the CA (ACME later)."""
+    """How a certificate or a request reached the CA."""
 
     CLI = "cli"
     API = "api"
@@ -32,6 +32,7 @@ class Channel(StrEnum):
     SYSTEM = "system"  # issued by the CA for itself: built-in HTTPS server (ADR-0013)
     EST = "est"  # enrollment over secure transport, RFC 7030 (ADR-0018)
     SCEP = "scep"  # simple certificate enrollment protocol, RFC 8894 (ADR-0019)
+    ACME = "acme"  # automatic certificate management environment, RFC 8555 (ADR-0020)
 
 
 class CertificateRequest(TimestampedModel):
