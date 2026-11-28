@@ -1,4 +1,4 @@
-"""Three-level hierarchy with compose, then EST, SCEP and revocation (Podman, or Docker).
+"""Three-level hierarchy with compose, then EST, SCEP, ACME and revocation (Podman or Docker).
 
 Needs bash, curl, openssl and a container engine. ``CONTAINER_ENGINE`` forces the engine, as for the
 scripts of ``deploy/``; without it, the first one that is installed is used, Podman first.
@@ -62,10 +62,10 @@ def test_bootstrap(tmp_path: Path) -> None:
         )
         assert result.returncode == 0, result.stdout + result.stderr
         assert "leaf.pem: OK" in result.stdout
-        # EST then SCEP on the issuing CA, before the revocation scenario revokes that CA: EST
-        # with a real client when ESTCLIENT is set, SCEP with sscep (deploy/sscep/Containerfile),
-        # then CRL and OCSP with openssl.
-        for scenario in ("est-test", "scep-test", "revocation-test"):
+        # EST, SCEP then ACME on the issuing CA, before the revocation scenario revokes that CA:
+        # EST with a real client when ESTCLIENT is set, SCEP with sscep, ACME with lego and
+        # certbot, then CRL and OCSP with openssl.
+        for scenario in ("est-test", "scep-test", "acme-test", "revocation-test"):
             run = subprocess.run(  # noqa: S603
                 [bash, str(ROOT / "deploy" / f"{scenario}.sh"), str(tmp_path)],
                 env=env,
