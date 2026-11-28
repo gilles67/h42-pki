@@ -15,7 +15,7 @@ from h42pki.main import create_app
 from h42pki.server.launcher import Launcher
 from h42pki.services.authority import AuthorityService
 from h42pki.services.profiles import ProfileService
-from h42pki.services.settings import SettingsService
+from h42pki.services.settings import SettingsService, check_lab_mode
 
 log = logging.getLogger(__name__)
 
@@ -52,6 +52,8 @@ async def run_server(settings: Settings, stop: asyncio.Event | None = None) -> N
     try:
         # A CA with CRL or OCSP must serve them (ADR-0017): refused before anything starts.
         await AuthorityService.check_serving(idle=settings.idle)
+        # ACME lab mode (no validation) never runs in production (ADR-0020).
+        await check_lab_mode()
         runtime = await SettingsService().effective()
         configure_logging(runtime.logging.format, runtime.logging.level)
         app = create_app(settings, manage_database=False)

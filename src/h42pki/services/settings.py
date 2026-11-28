@@ -18,6 +18,7 @@ from typing import Any
 from tortoise.expressions import F
 from tortoise.transactions import in_transaction
 
+from h42pki.config import get_settings
 from h42pki.core.errors import InvalidSetting
 from h42pki.core.settings_schema import (
     SETTINGS,
@@ -28,6 +29,7 @@ from h42pki.core.settings_schema import (
     setting_info,
     value_of,
 )
+from h42pki.errors import LabModeInProduction
 from h42pki.models import AuditLog, Setting, SettingsRevision
 
 log = logging.getLogger(__name__)
@@ -62,6 +64,17 @@ class SettingChange:
 
 def _decode(row: Setting) -> Any:
     return json.loads(row.value)
+
+
+LAB_MODE = "acme.insecure_skip_validation"
+
+
+async def check_lab_mode() -> None:
+    """At start-up: ``LabModeInProduction`` if lab mode is stored and this is production."""
+    if (await SettingsService().effective()).acme.insecure_skip_validation and (
+        get_settings().environment == "production"
+    ):
+        raise LabModeInProduction
 
 
 class SettingsService:
@@ -111,6 +124,8 @@ class SettingsService:
             values = {k: _decode(row) for k, row in rows.items() if k in SETTINGS}
             previous = value_of(build_settings(values), key)
             new = value_of(build_settings({**values, key: value}), key)  # normalized
+            if key == LAB_MODE and new is True and get_settings().environment == "production":
+                raise LabModeInProduction
             encoded = json.dumps(new, separators=(",", ":"))
             row = rows.get(key)
             if row is not None and _decode(row) == new:  # already stored: nothing to write

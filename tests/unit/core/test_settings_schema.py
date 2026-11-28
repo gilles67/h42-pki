@@ -41,6 +41,16 @@ EXPECTED_LEVELS = {
     "scep.allow_legacy_crypto": ("hot", ()),
     "scep.ra_validity_days": ("hot", ()),
     "scep.ra_renew_before_days": ("hot", ()),
+    "acme.enabled": ("hot", ()),
+    "acme.default_profile": ("hot", ()),
+    "acme.base_url": ("hot", ()),
+    "acme.terms_of_service_url": ("hot", ()),
+    "acme.insecure_skip_validation": ("hot", ()),
+    "acme.manual_approval": ("hot", ()),
+    "acme.retry_after_seconds": ("hot", ()),
+    "acme.nonce_lifetime_minutes": ("hot", ()),
+    "acme.authorization_lifetime_hours": ("hot", ()),
+    "acme.order_lifetime_hours": ("hot", ()),
     "logging.level": ("hot", ()),
     "logging.format": ("process", ()),
     "database.pool_size": ("process", ()),
@@ -208,3 +218,23 @@ def test_scep_settings() -> None:
         build_settings({"scep.ra_validity_days": 30})
     with pytest.raises(InvalidSetting, match="unknown profile"):
         build_settings({"scep.default_profile": "scep_ra"})
+
+
+def test_acme_settings() -> None:
+    settings = RuntimeSettings().acme
+    assert (settings.enabled, settings.default_profile, settings.base_url) == (
+        False,
+        "tls_server",
+        "",
+    )
+    assert (settings.insecure_skip_validation, settings.manual_approval) == (False, False)
+    assert (settings.nonce_lifetime_minutes, settings.order_lifetime_hours) == (60, 168)
+    normalized = build_settings({"acme.base_url": " https://pki.test:8443/ "}).acme.base_url
+    assert normalized == "https://pki.test:8443"
+    for bad in ("http://pki.test", "https://pki.test/acme", "https://", "https://pki.test:99999"):
+        with pytest.raises(InvalidSetting, match="acme.base_url"):
+            build_settings({"acme.base_url": bad})
+    with pytest.raises(InvalidSetting, match="terms_of_service_url"):
+        build_settings({"acme.terms_of_service_url": "ftp://x"})
+    with pytest.raises(InvalidSetting, match="unknown profile"):
+        build_settings({"acme.default_profile": "service_tls"})

@@ -10,8 +10,7 @@ Each field declares how a change is applied:
 - ``listener``: the launcher restarts the listed listeners only (``http``, ``https``);
 - ``process``: at the next start of the container.
 
-Settings of phases 1.1 and 3 (ARCHITECTURE section 7.2); EST, SCEP and ACME settings arrive with
-their phase.
+Settings of phases 1.1 to 6 (ARCHITECTURE section 7.2).
 """
 
 import json
@@ -20,6 +19,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Literal, Self
+from urllib.parse import urlsplit
 
 from cryptography import x509
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
@@ -354,6 +354,126 @@ class ScepSettings(_Section):
         return self
 
 
+def _https_origin(value: str, name: str) -> str:
+    """An https:// origin without path, query or fragment (trailing slash dropped)."""
+    value = value.strip().rstrip("/")
+    if not value:
+        return ""
+    parts = urlsplit(value)
+    if parts.scheme != "https" or not parts.hostname or parts.path or parts.query or parts.fragment:
+        raise ValueError(
+            f"{name} must be an https:// URL without path, for example https://pki.test"
+        )
+    try:
+        parts.port  # noqa: B018 - validates the port
+    except ValueError:
+        raise ValueError(f"{name} has an invalid port") from None
+    return value
+
+
+class AcmeSettings(_Section):
+    """ACME (RFC 8555, ADR-0020): disabled by default, like every enrollment protocol."""
+
+    enabled: bool = _setting(
+        False,
+        apply=ApplyLevel.HOT,
+        description="Serve ACME (/acme, HTTPS only); false: every ACME route answers 404.",
+    )
+    default_profile: str = _setting(
+        "tls_server",
+        apply=ApplyLevel.HOT,
+        description=(
+            "Profile of /acme/directory; empty: that directory answers 404 and a profile is "
+            "required (/acme/{profile}/directory)."
+        ),
+    )
+    base_url: str = _setting(
+        "",
+        apply=ApplyLevel.HOT,
+        description=(
+            "Origin of the absolute ACME URLs (https://host[:port]); empty: https://"
+            "H42_PKI_SERVER_HOSTNAME:H42_PKI_HTTPS_PORT. Never taken from the Host header."
+        ),
+    )
+    terms_of_service_url: str = _setting(
+        "",
+        apply=ApplyLevel.HOT,
+        description=(
+            "Terms of service announced in the directory (meta.termsOfService); empty: none, "
+            "and newAccount does not ask for termsOfServiceAgreed."
+        ),
+    )
+    insecure_skip_validation: bool = _setting(
+        False,
+        apply=ApplyLevel.HOT,
+        description=(
+            "Lab mode: every challenge is declared valid without any check. Refused when "
+            "H42_PKI_ENVIRONMENT is production."
+        ),
+    )
+    manual_approval: bool = _setting(
+        False,
+        apply=ApplyLevel.HOT,
+        description=(
+            "Every ACME order waits for a decision (h42pki request approve|reject), whatever the "
+            "approval of its profile; the order stays processing with Retry-After."
+        ),
+    )
+    retry_after_seconds: int = _setting(
+        60,
+        apply=ApplyLevel.HOT,
+        description="Retry-After of an order or a challenge still being processed.",
+        ge=1,
+        le=3600,
+    )
+    nonce_lifetime_minutes: int = _setting(
+        60,
+        apply=ApplyLevel.HOT,
+        description="Lifetime of a Replay-Nonce not used yet.",
+        ge=1,
+        le=1440,
+    )
+    authorization_lifetime_hours: int = _setting(
+        168,
+        apply=ApplyLevel.HOT,
+        description="Lifetime of a new authorization (its challenges must be validated within it).",
+        ge=1,
+        le=720,
+    )
+    order_lifetime_hours: int = _setting(
+        168,
+        apply=ApplyLevel.HOT,
+        description="Lifetime of a new order (it must be finalized within it).",
+        ge=1,
+        le=720,
+    )
+
+    @field_validator("default_profile")
+    @classmethod
+    def _check_profile(cls, value: str) -> str:
+        if value and value not in _disableable_profiles():
+            raise ValueError(
+                f"unknown profile {value!r} "
+                f"(built-in profiles: {', '.join(sorted(_disableable_profiles()))})"
+            )
+        return value
+
+    @field_validator("base_url")
+    @classmethod
+    def _check_base_url(cls, value: str) -> str:
+        return _https_origin(value, "acme.base_url")
+
+    @field_validator("terms_of_service_url")
+    @classmethod
+    def _check_terms(cls, value: str) -> str:
+        value = value.strip()
+        if value and (
+            urlsplit(value).scheme not in ("http", "https") or not urlsplit(value).netloc
+        ):
+            raise ValueError("acme.terms_of_service_url must be an http(s) URL")
+        return value
+
+
 class LoggingSettings(_Section):
     level: Literal["debug", "info", "warning", "error"] = _setting(
         "info", apply=ApplyLevel.HOT, description="Log level of the server."
@@ -386,6 +506,7 @@ class RuntimeSettings(_Section):
     ocsp: OcspSettings = Field(default_factory=OcspSettings)
     est: EstSettings = Field(default_factory=EstSettings)
     scep: ScepSettings = Field(default_factory=ScepSettings)
+    acme: AcmeSettings = Field(default_factory=AcmeSettings)
     logging: LoggingSettings = Field(default_factory=LoggingSettings)
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
 

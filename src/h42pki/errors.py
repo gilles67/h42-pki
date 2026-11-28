@@ -67,6 +67,19 @@ class NoActiveAuthority(ServiceUnavailable):
     title = "No Active Certificate Authority"
 
 
+class LabModeInProduction(Conflict):
+    """acme.insecure_skip_validation is refused in production, written or found (ADR-0020)."""
+
+    title = "Lab Mode Refused In Production"
+
+    def __init__(self) -> None:
+        super().__init__(
+            "acme.insecure_skip_validation declares every ACME challenge valid without checking "
+            "it: it is refused when H42_PKI_ENVIRONMENT is production "
+            "(h42pki config unset acme.insecure_skip_validation)"
+        )
+
+
 class RevocationNeedsListener(Conflict):
     """A CA with CRL or OCSP cannot run without any listener (idle mode, ADR-0017)."""
 

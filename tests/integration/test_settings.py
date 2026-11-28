@@ -145,7 +145,7 @@ async def test_describe_lists_every_setting() -> None:
 
     views = {view.key: view for view in await service.describe()}
 
-    assert len(views) == 24
+    assert len(views) == 34
     assert views["logging.level"].origin == "database"
     assert views["logging.format"].origin == "default"
 
