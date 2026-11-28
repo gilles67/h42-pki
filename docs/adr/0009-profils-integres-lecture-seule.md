@@ -29,6 +29,8 @@ d'élargir ce que l'AC accepte de signer.
   `ocsp_signer` garde un simple `common_name`.
 - **`tls_server` suit le vote CA/Browser Forum SC-081v3** : 200 jours au plus depuis le 15 mars 2026, 90 jours par
   défaut. La baisse suivante (100 puis 47 jours) arrive avec ACME en phase 6.
+  **Depuis la phase 6 (ADR-0020)** : 47 jours par défaut, 100 au plus, pour tous les canaux ; 47 au plus le
+  15 mars 2029.
 
 ### Complément du 2026-11-22 : activation des profils et profil interne
 

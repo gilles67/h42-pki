@@ -180,8 +180,8 @@ h42pki request approve <id>
 
 [`deploy/`](deploy/README.md) builds a root → intermediate → issuing hierarchy with `podman-compose` (or Docker Compose),
 every CA with CRL and OCSP; `deploy/est-test.sh` then exercises EST on the issuing CA (curl, openssl, optionally
-`estclient`), `deploy/scep-test.sh` SCEP with `sscep`, and `deploy/revocation-test.sh` checks revocation with
-`openssl`.
+`estclient`), `deploy/scep-test.sh` SCEP with `sscep`, `deploy/acme-test.sh` ACME with `lego` and `certbot`, and
+`deploy/revocation-test.sh` checks revocation with `openssl`.
 
 ### SCEP
 
@@ -194,6 +194,22 @@ h42pki scep challenge create              # single use, printed once; --reusable
 sscep getca  -u http://pki.example:8080/scep/tls_client -c ca.crt     # CA and RA: ca.crt-0, ca.crt-1…
 sscep enroll -u http://pki.example:8080/scep/tls_client -c ra.crt -e ra.crt \
   -k device.key -r device.csr -l device.crt -E aes256 -S sha256        # challengePassword in device.csr
+```
+
+### ACME
+
+ACME is disabled by default and served over HTTPS only, one directory per profile (`/acme/directory` is
+`tls_server`: 47-day certificates). Challenges: http-01 and dns-01 (wildcards), IP addresses with http-01. Any
+client can open an account, and the challenge alone decides: there is no domain restriction yet.
+
+```bash
+h42pki config set acme.enabled true
+# lego, trusting the root of the hierarchy, answering http-01 on port 80 of www.example.test
+LEGO_CA_CERTIFICATES=root.pem lego run --server https://pki.example:8443/acme/directory \
+  --accept-tos --email admin@example.test --domains www.example.test --http
+# certbot
+REQUESTS_CA_BUNDLE=root.pem certbot certonly --standalone \
+  --server https://pki.example:8443/acme/directory -d www.example.test
 ```
 
 ### Configuration
@@ -248,7 +264,7 @@ CI (GitHub Actions) runs lint and type checking on Python 3.13, tests on Python 
 | 3 | Revocation: CRL and OCSP chosen per CA, revocation API and CLI, child CA status check | ✅ done |
 | 4 | EST enrolment (RFC 7030): accounts, simpleenroll, simplereenroll, csrattrs, serverkeygen; disabled by default | ✅ done |
 | 5 | SCEP enrolment (RFC 8894): dedicated RA, generated challenges, polling, renewal; disabled by default | ✅ done |
-| 6 | ACME (RFC 8555): http-01, dns-01, then tls-alpn-01, EAB, renewal info; disabled by default | 🚧 next |
+| 6 | ACME (RFC 8555): 6a done (accounts, orders, http-01, dns-01 and wildcards, IP addresses, revocation); 6b: keyChange, EAB, renewal info; disabled by default | 🚧 6b next |
 | 7 | Hardening: PKCS#11 (smart card / HSM), PostgreSQL, metrics, CA key rollover, operations runbook | ⏳ |
 
 **First release** requires, on top of the phases above: database migrations and admin API authentication.

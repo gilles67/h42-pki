@@ -21,5 +21,6 @@
 | [0017](0017-revocation.md) | Révocation : CRL et OCSP choisis à la création de l'AC | accepté |
 | [0018](0018-est.md) | EST : protocoles d'enrôlement désactivés par défaut, comptes, relance, serverkeygen | accepté |
 | [0019](0019-scep.md) | SCEP : RA dédié, clé de l'AC jamais exposée, challenges générés, PENDING | accepté |
+| [0020](0020-acme.md) | ACME : répertoire par profil, comptes ouverts, http-01 et dns-01, mode lab | accepté |
 
 Nouvelle décision : copier `0000-template.md`, numéro suivant, mettre à jour ce tableau.

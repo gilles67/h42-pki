@@ -71,7 +71,28 @@ sscep is no longer packaged by Debian: the script builds `localhost/h42-sscep:0.
 missing; `SSCEP_IMAGE=…` selects another one. With sscep, `-c` must be the RA certificate (sscep verifies the answer
 with it): `sscep enroll -c ra.crt -e ra.crt …`.
 
-Run `est-test.sh` and `scep-test.sh` before `revocation-test.sh`, which revokes the issuing CA.
+## ACME
+
+```bash
+deploy/acme-test.sh                # after bootstrap.sh, on the issuing CA
+```
+
+ACME is disabled by default ([ADR-0020](../docs/adr/0020-acme.md)): the script checks that `/acme/directory`
+answers 404, runs `h42pki config set acme.enabled true`, then runs the clients in containers on the network of the
+hierarchy, trusting the root (`LEGO_CA_CERTIFICATES`, `REQUESTS_CA_BUNDLE`):
+
+- lego 5.8.1, http-01 on port 80 under the network alias `www.pki.test`;
+- certbot 5.10.0 `--standalone` (`certbot.pki.test`);
+- lego dns-01 with a wildcard (`*.wild.pki.test` and `wild.pki.test`) through `pebble-challtestsrv` 2.8.0, fed by
+  the `exec` provider of lego, its address in `acme.dns_resolvers`;
+- lego with the IP address of its container (http-01, RFC 8738);
+- `acme.manual_approval`: lego waits while the order is `processing`, `h42pki request approve` releases it;
+- `lego certificates revoke`, then `openssl ocsp` answers `revoked`;
+- no private key, challenge token or unused nonce in the logs of the container.
+
+Images: `LEGO_IMAGE`, `CERTBOT_IMAGE`, `CHALLTESTSRV_IMAGE` select others.
+
+Run `est-test.sh`, `scep-test.sh` and `acme-test.sh` before `revocation-test.sh`, which revokes the issuing CA.
 
 ## Revocation
 

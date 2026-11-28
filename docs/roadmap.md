@@ -213,13 +213,37 @@ client SCEP en interop (micromdm/scep non construit). **Reporté** : limitation 
 
 ## Phase 6 — ACME
 
-- **Désactivé par défaut** (`acme.enabled`, 404 sur toutes les routes), comme EST (ADR-0018).
-- 6a : choix lib JWS, nonces, comptes, commandes, autorisations, http-01, dns-01, finalize, certificat, revokeCert.
-- 6b : tls-alpn-01, keyChange, EAB, ARI (RFC 9773).
-- Validité de `tls_server` alignée sur la suite de SC-081v3 : **47 jours par défaut et 100 au maximum**, puis **47 au
-  maximum au 15 mars 2029** (aujourd'hui 90 / 200, lot 5a).
+Décisions : ADR-0020.
+
+### Lot 6a — ✅ terminé (2026-11-28)
+
+- ✅ **Désactivé par défaut** (`acme.enabled`, 404 sur toutes les routes), HTTPS seulement ; un répertoire par profil
+  (`/acme/{profil}/directory`, `acme.default_profile`) ; URL depuis `acme.base_url`.
+- ✅ JWS sur `cryptography` (sans bibliothèque JOSE), nonces à usage unique, comptes ouverts (contacts, CGU,
+  désactivation, `orders`), commandes, autorisations, défis.
+- ✅ **http-01** et **dns-01** (jokers par dns-01 seul, `acme.dns_resolvers`), **adresses IP** par http-01 (RFC 8738),
+  validation en tâche de fond reprise au démarrage ; pas de tls-alpn-01.
+- ✅ Mode lab `acme.insecure_skip_validation`, refusé en production.
+- ✅ `finalize` (CSR strictement égal aux identifiants), approbation du profil ou `acme.manual_approval`
+  (`processing` + `Retry-After`), chaîne `application/pem-certificate-chain` (B38), `revokeCert`.
+- ✅ Administration : `/api/v1/acme/accounts`, `h42pki acme account list|show|deactivate`.
+- ✅ Validité de `tls_server` : **47 jours par défaut et 100 au maximum**, tous canaux.
+- ✅ `deploy/acme-test.sh` : lego (http-01, dns-01 avec joker, IP, approbation, révocation) et certbot (http-01).
 
 **Fait quand** : `lego` obtient puis révoque un certificat en http-01 et en dns-01.
+
+> État au 2026-11-28 : vérifié par les tests (1430, plus 10 d'interop) et sur Debian 13 / Podman 5.4.2 rootless /
+> podman-compose 1.3.0 : `deploy/bootstrap.sh --fresh` puis `deploy/acme-test.sh` avec lego 5.8.1, certbot 5.10.0 et
+> pebble-challtestsrv 2.8.0 ; aucune clé privée, aucun jeton ni nonce dans les journaux.
+
+**Hors périmètre** : restriction de domaines (risque accepté, ADR-0020), limitation de débit (B60), profils ACME
+(brouillon IETF), réutilisation d'autorisations.
+
+### Lot 6b — à venir
+
+- `keyChange` (RFC 8555 §7.3.5), EAB (`acme.require_eab`, clé HMAC générée par la CLI), ARI (RFC 9773).
+- **Pas de tls-alpn-01.**
+- Validité de `tls_server` : **47 jours au maximum à partir du 15 mars 2029** (SC-081v3).
 
 ## Phase 7 — Durcissement
 

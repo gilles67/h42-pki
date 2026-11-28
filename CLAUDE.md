@@ -28,15 +28,16 @@ Granian.
 
 ## 2. État actuel du code (important)
 
-**Phases 1, 1.1, 2, 3, 4 et 5 terminées** : outillage, sécurité, modèle de données, API `/api/v1`, AC racine par CLI,
+**Phases 1, 1.1, 2, 3, 4, 5 et lot 6a terminés** : outillage, sécurité, modèle de données, API `/api/v1`, AC racine par CLI,
 profils, demandes, émission depuis un CSR, publication `/ca/*` et AIA caIssuers, liste des certificats (phase 1) ;
 Python 3.13, configuration en base, profils désactivables, lanceur HTTP/HTTPS intégré, certificat HTTPS émis par l'AC
 locale, santé (phase 1.1) ; fédération : invitations, inscription d'une AC fille, chaîne complète (phase 2) ;
 révocation : CRL, OCSP, statut `expired` en base, purge, contrôle par une AC fille de son statut (phase 3) ; EST :
 comptes, `cacerts`, `simpleenroll`, `simplereenroll`, `csrattrs`, `serverkeygen` (phase 4) ; SCEP : RA dédié,
-challenges, `GetCACaps`, `GetCACert`, `PKCSReq`, `CertPoll`, renouvellement, `GetCert`, `GetCRL` (phase 5). Le code
-suit la structure en couches cible ; ce qui n'existe pas encore est marqué « à venir » au §3.
-**Prochaine étape : phase 6 (ACME).**
+challenges, `GetCACaps`, `GetCACert`, `PKCSReq`, `CertPoll`, renouvellement, `GetCert`, `GetCRL` (phase 5) ; ACME :
+comptes, commandes, http-01, dns-01 et jokers, adresses IP, `finalize`, `revokeCert` (lot 6a). Le code suit la
+structure en couches cible ; ce qui n'existe pas encore est marqué « à venir » au §3.
+**Prochaine étape : phase 6, lot 6b (ACME `keyChange`, EAB, ARI).**
 
 **Décisions du 2026-11-22, en place depuis la phase 1.1** — à respecter :
 - **Configuration en base** (ADR-0011) : hors de la base, seulement une **liste fermée** de variables d'environnement
@@ -80,6 +81,14 @@ suit la structure en couches cible ; ce qui n'existe pas encore est marqué « �
   certificat valide de l'AC, même sujet (`RenewalReq`, ou `PKCSReq` sans challenge comme `sscep`) ; transaction liée à
   la clé du signataire ; CSR **scellé** par le keystore ; 3DES / SHA-1 derrière `scep.allow_legacy_crypto` ; pas de
   `GetNextCACert` (phase 7).
+- **ACME** (ADR-0020, 2026-11-28) : **désactivé par défaut** (`acme.enabled`, 404 partout), HTTPS seulement ; un
+  répertoire par profil (`/acme/{profil}/directory`, `acme.default_profile` = `tls_server`) ; URL absolues depuis
+  `acme.base_url`, **jamais depuis `Host`** ; JWS sur `cryptography` (RS256, ES256, ES384, EdDSA), nonces à usage
+  unique ; **comptes ouverts** (EAB au lot 6b) ; http-01 et dns-01 (jokers par dns-01 seul), adresses IP par http-01,
+  pas de tls-alpn-01 ; **aucune restriction de domaines (risque accepté)** ; validation en tâche de fond reprise au
+  démarrage ; mode lab `acme.insecure_skip_validation` **refusé en production** ; approbation du profil ou
+  `acme.manual_approval` → `processing` + `Retry-After` ; chaîne `application/pem-certificate-chain` (B38) ;
+  `revokeCert` par la clé du compte ou du certificat ; **`tls_server` à 47 jours, 100 au plus** (SC-081v3).
 
 - **Socle** : `config.py` (`Settings`, variables `H42_PKI_*`, `H42_PKI_*_FILE`, secrets de conteneur (Podman ou Docker) dans `/run/secrets`
   ou `H42_PKI_SECRETS_DIR`, contrôle des permissions des fichiers de secrets), `db.py` (config Tortoise), `main.py`
@@ -92,11 +101,13 @@ suit la structure en couches cible ; ce qui n'existe pas encore est marqué « �
   `ssl_context.py` (`SSLContext`, clé chiffrée via un dossier temporaire privé), `run.py` (base, journaux, signaux).
 - **`tasks/`** : `tls_service.py` (renouvellement quotidien du certificat HTTPS, nouvelle tentative le lendemain),
   `periodic.py` (`PeriodicTask` : au démarrage puis à intervalle, état pour `/health`), `maintenance.py` (CRL toutes les
-  15 min, statut `expired` toutes les heures, purge `service_tls` / `scep_ra` et des nonces SCEP, contrôle auprès de
+  15 min, validations ACME dues et nonces ACME expirés toutes les 30 s, statut `expired` toutes les heures, purge
+  `service_tls` / `scep_ra` et des nonces SCEP, contrôle auprès de
   la mère et certificat RA SCEP (`scep_ra`) chaque jour).
 - **`core/`** (pur, synchrone, testé par `tests/unit/core/test_purity.py`) : `keys.py` (`KeyAlgorithm` RSA/EC/Ed25519,
   génération, PKCS#8 DER chiffré, hachage de signature), `names.py` (`NameAttributes`, `Subject`, `rfc4514`),
-  `passwords.py` (scrypt des comptes EST), `challenges.py` (challenges SCEP), `cms.py` (CMS et attributs SCEP,
+  `passwords.py` (scrypt des comptes EST), `challenges.py` (challenges SCEP), `acme/` (`jws.py` JWS et empreintes,
+  `identifiers.py` identifiants et CSR de `finalize`, `states.py` transitions, `errors.py` problèmes ACME), `cms.py` (CMS et attributs SCEP,
   `asn1crypto`), `est.py` (base64 tolérant, certs-only, `CsrAttrs`, `multipart/mixed`),
   `extensions.py` (`Extensions`, `validate_for_key`), `profiles.py` (`ProfileSpec`, `BUILTIN_PROFILES`, dont les profils
   internes `service_tls` et `scep_ra`), `csr.py` (`parse_csr`, `build_csr`), `issuance.py` (`build_self_signed` pour la racine, `plan_issuance` / `build_issued` pour le reste,
@@ -118,11 +129,12 @@ suit la structure en couches cible ; ce qui n'existe pas encore est marqué « �
   (génération, fraîcheur, publication), `OcspService` / `OcspCache` (répondeur), `MaintenanceService` (statut
   `expired`, purge), `ParentCheckService` (statut de l'AC fille auprès de sa mère), `EstAccountService` (comptes EST),
   `EstService` (EST), `client_auth` (vérification des certificats clients, B45), `ScepRaManager` (certificat RA),
-`ScepChallengeService` (challenges), `ScepService` (SCEP). Transactions, audit, crypto via `asyncio.to_thread` ; le
+`ScepChallengeService` (challenges), `ScepService` (SCEP), `services/acme/` (`context`, `nonces`, `auth`,
+`accounts`, `orders`, `validation` (`AcmeValidation`, `NetworkChecker`), `revocation`). Transactions, audit, crypto via `asyncio.to_thread` ; le
   keystore est passé explicitement et n'est construit que pour les opérations sur une clé (passphrase facultative
   ailleurs, B32).
 - **Modèles** `models/` (un fichier par agrégat : `private_key` (`purpose` `ca|tls|serverkeygen|scep_ra`), `authority`, `profile`,
-  `certificate`, `request` (canal `system`), `audit`, `setting` (`Setting`, `SettingsRevision`), `federation` (`FederationInvitation`), `crl` (`Crl`), `enrollment` (`EnrollmentCredential`), `scep` (`ScepTransaction`, `ScepNonce`), base
+  `certificate`, `request` (canal `system`), `audit`, `setting` (`Setting`, `SettingsRevision`), `federation` (`FederationInvitation`), `crl` (`Crl`), `enrollment` (`EnrollmentCredential`), `scep` (`ScepTransaction`, `ScepNonce`), `acme` (`AcmeNonce`, `AcmeAccount`, `AcmeOrder`, `AcmeAuthorization`, `AcmeChallenge`), base
   `TimestampedModel`) : FK sans cycle (B27), stockage DER, `AuditLog.record()`. Un certificat est
   toujours enregistré signé.
 - **API** : `api/admin/` (`routes.py`, `schemas.py` écrits à la main, `extra="forbid"`, `deps.py` : keystore,
@@ -135,13 +147,15 @@ suit la structure en couches cible ; ce qui n'existe pas encore est marqué « �
   `api/federation/` (invitations, `enroll`, AC filles ; HTTPS seulement), `api/admin/est.py` (comptes EST),
   `api/est/` (`/.well-known/est`, HTTPS seulement, erreurs en texte brut, désactivé par défaut),
   `api/admin/scep.py` (challenges SCEP), `api/scep/` (`/scep`, HTTP et HTTPS, erreurs en texte brut, désactivé par
+  défaut), `api/admin/acme.py` (comptes ACME), `api/acme/` (`/acme`, HTTPS seulement, problèmes ACME, désactivé par
   défaut).
 - **CLI** `cli/` : `version`, `serve` (lanceur, `--reload`), `healthcheck`,
   `authority init|status|export|update|abandon|check-parent`, `request list|show|approve|reject`,
   `federation invite|invitations|revoke-invitation|children|revoke-child`, `profile list|show|enable|disable`,
   `certificate list|export|revoke|delete-key`, `crl show|generate`,
   `est account create|list|show|disable|enable|reset-password|delete`,
-  `scep challenge create|list|show|disable|enable|delete`, `config show|get|set|unset` ; `_runtime.py`
+  `scep challenge create|list|show|disable|enable|delete`, `acme account list|show|deactivate`,
+  `config show|get|set|unset` ; `_runtime.py`
   ouvre la même base que le serveur et transforme les erreurs en message
   lisible (code de sortie non nul).
 - **Règles métier** : le seul certificat auto-signé est celui de l'AC racine, créé par `h42pki authority init`
@@ -171,13 +185,14 @@ src/h42pki/
     keys.py  names.py  extensions.py  profiles.py  csr.py  issuance.py  publication.py  inspection.py
     hostnames.py  settings_schema.py  service_tls.py  federation.py  chain.py  validity.py  serial.py
     crl.py  ocsp.py  passwords.py  est.py  challenges.py  cms.py  errors.py     — en place
+    acme/  (jws, identifiers, states, errors)                                   — en place
   keystore/          # base.py (KeyStore), software.py — en place ; pkcs11.py en phase 7
   models/            # private_key, authority, profile, certificate, request, audit, setting, federation, crl,
-                     # enrollment, scep
+                     # enrollment, scep, acme
   services/          # authority, issuance, profiles, publication, keys, certificates, settings, tls_service,
                      # federation, federation_client, subordinate, x509_fields, revocation, crl, ocsp,
                      # maintenance, parent_check, est_accounts, est, client_auth, scep_ra,
-                     # scep_challenges, scep — en place
+                     # scep_challenges, scep, acme/ — en place
   api/
     problems.py      # handlers application/problem+json (RFC 9457)        — en place
     listener.py  client_cert.py  health.py                                  — en place
@@ -187,12 +202,12 @@ src/h42pki/
     ocsp/            # /ocsp — en place
     est/             # /.well-known/est — en place
     scep/            # /scep — en place
-    acme/
+    acme/            # /acme — en place
   tasks/             # tls_service, periodic, maintenance (CRL, expired, purge, contrôle auprès de la mère)
-  cli/               # Typer : authority, profile, certificate, crl, est, scep, request, federation, config,
+  cli/               # Typer : authority, profile, certificate, crl, est, scep, acme, request, federation, config,
                      # healthcheck, serve
 deploy/              # compose.yaml (3 niveaux), bootstrap.sh, est-test.sh, scep-test.sh (sscep/ : image de
-                     # sscep), revocation-test.sh, smoke-test.sh, engine.sh
+                     # sscep), acme-test.sh, revocation-test.sh, smoke-test.sh, engine.sh
 tests/
   unit/  integration/  interop/  conftest.py
 docs/
@@ -225,11 +240,13 @@ uv run h42pki authority init --name root --common-name "Test Root CA"   # AC rac
 uv run h42pki certificate revoke ID --reason key_compromise           # puis `crl show`, `authority check-parent`
 uv run h42pki config set est.enabled true   # EST désactivé par défaut ; `est account create NAME --password -`
 uv run h42pki config set scep.enabled true  # SCEP désactivé par défaut ; `scep challenge create [--reusable]`
+uv run h42pki config set acme.enabled true  # ACME désactivé par défaut ; `acme account list`
 podman build --format docker -t h42-pki:dev .   # image (non-root, /data, `h42pki serve`, ports 8080 et 8443) ;
                                          # --format docker garde HEALTHCHECK (ADR-0016)
 deploy/bootstrap.sh [--fresh]            # hiérarchie racine + intermédiaire + émettrice, --crl --ocsp (Podman)
 deploy/est-test.sh                       # ensuite : EST (curl, openssl ; ESTCLIENT=… pour estclient)
 deploy/scep-test.sh                      # puis : SCEP avec sscep (image construite depuis deploy/sscep/)
+deploy/acme-test.sh                      # puis : ACME avec lego et certbot (http-01, dns-01, joker, IP, révocation)
 deploy/revocation-test.sh                # puis : CRL et OCSP vérifiés par openssl, émettrice révoquée
 ```
 
@@ -305,6 +322,9 @@ Avant de déclarer une tâche terminée : `ruff check`, `ruff format --check`, `
     est passée à `KeyStore.decrypt` / `sign`.
 12. Un secret à relire (CSR SCEP qui contient le challenge) est stocké **scellé** par `KeyStore.seal`, jamais en
     clair.
+13. ACME : une URL absolue se construit depuis `acme.base_url`, jamais depuis l'en-tête `Host` ; un nonce sert une
+    seule fois ; le mode lab `acme.insecure_skip_validation` est refusé en production (écriture et démarrage) et
+    toujours signalé (journal, `/health`, audit) ; ni jeton de défi ni nonce dans les journaux ou l'audit.
 
 ## 7. Tests
 

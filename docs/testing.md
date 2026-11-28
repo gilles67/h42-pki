@@ -137,8 +137,11 @@ Outils de l'hôte (`openssl`, `curl`, `bash`) et moteur de conteneurs (Podman pa
   nonce) ;
 - `tests/interop/test_compose.py` : `deploy/bootstrap.sh` (hiérarchie `root`, `intermediate`, `issuing` de
   `deploy/compose.yaml`, toutes avec `--crl --ocsp`), `deploy/est-test.sh` (avec `estclient` si `ESTCLIENT` est
-  défini), `deploy/scep-test.sh` (`sscep` construit depuis ses sources par `deploy/sscep/Containerfile`) puis
-  `deploy/revocation-test.sh`.
+  défini), `deploy/scep-test.sh` (`sscep` construit depuis ses sources par `deploy/sscep/Containerfile`),
+  `deploy/acme-test.sh` (lego, certbot, pebble-challtestsrv en conteneurs) puis `deploy/revocation-test.sh`.
+- Client ACME des tests d'intégration : `tests/acme_client.py` et `tests/acme_jws.py` (sur `cryptography`) ; le
+  validateur réseau est remplacé par `app.state.acme_validation.checker` ; http-01 et dns-01 réels sont testés contre
+  un serveur HTTP et un serveur DNS locaux.
 - Client SCEP des tests d'intégration : `tests/scep_client.py` (asn1crypto + `cryptography`), qui construit
   `PKCSReq`, `RenewalReq`, `CertPoll`, `GetCert`, `GetCRL` et lit les `CertRep`.
 
@@ -148,7 +151,7 @@ Outils de l'hôte (`openssl`, `curl`, `bash`) et moteur de conteneurs (Podman pa
 | Révocation visible dans la CRL et en OCSP, émettrice révoquée par l'intermédiaire | `openssl crl`, `openssl verify -crl_check[_all]`, `openssl ocsp` | ✅ phase 3 |
 | EST : `cacerts`, `simpleenroll`, approbation manuelle, `simplereenroll` (mTLS), `serverkeygen`, `csrattrs` | `curl` + `openssl`, `estclient` (`ESTCLIENT=…`) | ✅ phase 4 |
 | SCEP : `getcaps`, `getca`, `enroll` (challenge à usage unique puis refusé, réutilisable), `PENDING` → `SUCCESS` par interrogation, renouvellement, `getcert`, `getcrl` | `sscep` 0.10.0 | ✅ phase 5 |
-| Émission ACME http-01 et dns-01, révocation | `lego` | phase 6 |
+| ACME : http-01 (lego, certbot), dns-01 avec joker, adresse IP, approbation manuelle, `revokeCert` puis OCSP | lego 5.8.1, certbot 5.10.0, pebble-challtestsrv 2.8.0, `openssl ocsp` | ✅ phase 6 (6a) |
 
 ## 6. Couverture et qualité
 
