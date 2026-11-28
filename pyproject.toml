@@ -5,6 +5,7 @@ description = "Simple very complex PKI"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "asn1crypto>=1.5.1",
     "cryptography>=48.0.0",
     "fastapi[standard]>=0.136.3",
     "httpx>=0.28.1",
@@ -62,6 +63,11 @@ packages = ["h42pki"]
 plugins = ["pydantic.mypy"]
 strict = true
 warn_unused_configs = true
+
+[[tool.mypy.overrides]]
+# asn1crypto (CMS structures for SCEP) ships no type information.
+module = ["asn1crypto", "asn1crypto.*"]
+ignore_missing_imports = true
 
 # --- pytest -----------------------------------------------------------------
 [tool.pytest.ini_options]
