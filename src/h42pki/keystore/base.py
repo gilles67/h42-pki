@@ -13,6 +13,8 @@ assemble the TBS structures themselves (spike required, see ADR-0004).
 from dataclasses import dataclass
 from typing import Protocol
 
+from cryptography.hazmat.primitives import hashes
+
 from h42pki.core.keys import KeyAlgorithm, SupportedPrivateKey
 
 
@@ -25,6 +27,10 @@ class StoredKey:
 
     def __repr__(self) -> str:
         return f"StoredKey(<{len(self.encrypted_key)} encrypted bytes>)"
+
+
+class KeyOperationFailed(Exception):
+    """A key store operation failed; never says why (no oracle, no detail about the key)."""
 
 
 class KeyStore(Protocol):
@@ -50,4 +56,24 @@ class KeyStore(Protocol):
         The single plaintext export of the key store: the EST service hands it to the client
         that asked for it, inside the TLS session (RFC 7030 section 4.4.2), once. Never logged.
         """
+        ...
+
+    async def decrypt(self, stored: bytes, ciphertext: bytes) -> bytes:
+        """RSA PKCS#1 v1.5 decryption with a stored key (SCEP RA: content-encryption keys).
+
+        Raises ``KeyOperationFailed`` for any failure, without detail. With OpenSSL 3.2 or later a
+        wrong padding is not even an error (implicit rejection): pseudo-random bytes come back.
+        """
+        ...
+
+    async def sign(self, stored: bytes, data: bytes, algorithm: hashes.HashAlgorithm) -> bytes:
+        """Signature of ``data`` by a stored RSA key (PKCS#1 v1.5): the SCEP RA answers."""
+        ...
+
+    async def seal(self, data: bytes) -> bytes:
+        """Encrypt a secret that must be read again (ADR-0011), under the passphrase."""
+        ...
+
+    async def open(self, sealed: bytes) -> bytes:
+        """The data of ``seal``."""
         ...

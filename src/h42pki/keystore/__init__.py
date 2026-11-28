@@ -2,7 +2,7 @@
 
 from h42pki.config import Settings
 from h42pki.errors import MissingPassphrase
-from h42pki.keystore.base import KeyStore, StoredKey
+from h42pki.keystore.base import KeyOperationFailed, KeyStore, StoredKey
 from h42pki.keystore.software import SoftwareKeyStore
 
 KEY_OPERATIONS_REQUIREMENT = (
@@ -25,6 +25,7 @@ def optional_keystore(settings: Settings) -> KeyStore | None:
 
 __all__ = [
     "KEY_OPERATIONS_REQUIREMENT",
+    "KeyOperationFailed",
     "KeyStore",
     "SoftwareKeyStore",
     "StoredKey",

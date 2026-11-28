@@ -2,7 +2,8 @@
 
 import asyncio
 
-from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from pydantic import SecretStr
 
 from h42pki.core.keys import (
@@ -10,11 +11,13 @@ from h42pki.core.keys import (
     SupportedPrivateKey,
     generate_private_key,
     load_encrypted,
+    open_sealed,
     public_key_der,
+    seal,
     serialize_encrypted,
     serialize_encrypted_pem,
 )
-from h42pki.keystore.base import StoredKey
+from h42pki.keystore.base import KeyOperationFailed, StoredKey
 
 # Same encoding as the former PkiConfiguration (config/pki.json).
 TEXT_ENCODING = "utf-8"
@@ -52,3 +55,24 @@ class SoftwareKeyStore:
             serialization.PrivateFormat.PKCS8,
             serialization.NoEncryption(),  # EST serverkeygen, inside TLS (ADR-0018)
         )
+
+    async def decrypt(self, stored: bytes, ciphertext: bytes) -> bytes:
+        key = await self.load(stored)
+        if not isinstance(key, rsa.RSAPrivateKey):
+            raise KeyOperationFailed("decryption failed")
+        try:
+            return await asyncio.to_thread(key.decrypt, ciphertext, padding.PKCS1v15())
+        except ValueError:  # pragma: no cover - implicit rejection in OpenSSL >= 3.2
+            raise KeyOperationFailed("decryption failed") from None
+
+    async def sign(self, stored: bytes, data: bytes, algorithm: hashes.HashAlgorithm) -> bytes:
+        key = await self.load(stored)
+        if not isinstance(key, rsa.RSAPrivateKey):
+            raise KeyOperationFailed("signature failed")
+        return await asyncio.to_thread(key.sign, data, padding.PKCS1v15(), algorithm)
+
+    async def seal(self, data: bytes) -> bytes:
+        return await asyncio.to_thread(seal, data, self._secret())
+
+    async def open(self, sealed: bytes) -> bytes:
+        return await asyncio.to_thread(open_sealed, sealed, self._secret())

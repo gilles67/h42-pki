@@ -66,7 +66,7 @@ warn_unused_configs = true
 
 [[tool.mypy.overrides]]
 # asn1crypto (CMS structures for SCEP) ships no type information.
-module = ["asn1crypto", "asn1crypto.*"]
+module = ["asn1crypto"]
 ignore_missing_imports = true
 
 # --- pytest -----------------------------------------------------------------

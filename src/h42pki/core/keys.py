@@ -4,12 +4,16 @@ Only ``h42pki.keystore`` calls the generation and (de)serialization functions: i
 component that holds the passphrase (ADR-0004).
 """
 
+import hashlib
+import os
 from enum import StrEnum
 from typing import assert_never
 
+from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519, rsa
 from cryptography.hazmat.primitives.asymmetric.types import PrivateKeyTypes, PublicKeyTypes
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from h42pki.core.errors import InvalidPassphrase, UnsupportedAlgorithm
 
@@ -132,3 +136,38 @@ def spki_der(public_key: PublicKeyTypes) -> bytes:
         encoding=serialization.Encoding.DER,
         format=serialization.PublicFormat.SubjectPublicKeyInfo,
     )
+
+
+# --- sealed secrets (ADR-0011: secrets that must be read again, encrypted with the passphrase) ----
+
+SEAL_MAGIC = b"h42seal1"
+SEAL_SALT_BYTES = 16
+SEAL_NONCE_BYTES = 12
+# scrypt work for the sealing key: as for the EST passwords, a few tens of milliseconds.
+SEAL_SCRYPT = {"n": 2**14, "r": 8, "p": 1}
+
+
+def _seal_key(passphrase: bytes, salt: bytes) -> bytes:
+    return hashlib.scrypt(passphrase, salt=salt, dklen=32, maxmem=64 * 1024 * 1024, **SEAL_SCRYPT)
+
+
+def seal(data: bytes, passphrase: bytes) -> bytes:
+    """AES-256-GCM under a key derived from the passphrase (new salt and nonce each time)."""
+    salt, nonce = os.urandom(SEAL_SALT_BYTES), os.urandom(SEAL_NONCE_BYTES)
+    sealed = AESGCM(_seal_key(passphrase, salt)).encrypt(nonce, data, SEAL_MAGIC)
+    return SEAL_MAGIC + salt + nonce + sealed
+
+
+def open_sealed(sealed: bytes, passphrase: bytes) -> bytes:
+    """The data of ``seal``; a generic error for anything else, without details."""
+    head = len(SEAL_MAGIC)
+    if not sealed.startswith(SEAL_MAGIC) or len(sealed) < head + SEAL_SALT_BYTES + SEAL_NONCE_BYTES:
+        raise InvalidPassphrase("the sealed data cannot be opened")
+    salt = sealed[head : head + SEAL_SALT_BYTES]
+    nonce = sealed[head + SEAL_SALT_BYTES : head + SEAL_SALT_BYTES + SEAL_NONCE_BYTES]
+    try:
+        return AESGCM(_seal_key(passphrase, salt)).decrypt(
+            nonce, sealed[head + SEAL_SALT_BYTES + SEAL_NONCE_BYTES :], SEAL_MAGIC
+        )
+    except InvalidTag:
+        raise InvalidPassphrase("the sealed data cannot be opened") from None
