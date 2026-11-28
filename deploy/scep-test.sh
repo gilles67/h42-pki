@@ -7,8 +7,8 @@
 #   3. enroll with a single-use challenge, then the same challenge refused;
 #   4. enroll twice with a reusable challenge;
 #   5. a profile with manual approval: PENDING, `h42pki request approve`, SUCCESS by polling;
-#   6. renewal (sscep sends a PKCSReq signed by the certificate obtained, no challenge); getcrl (GetCert is covered by the tests:
-#      sscep cannot pass a 159-bit serial number);
+#   6. renewal (sscep sends a PKCSReq signed by the certificate obtained, no challenge);
+#      getcert, getcrl;
 #   7. no challenge nor private key in the logs of the container.
 #
 # Usage: deploy/scep-test.sh [OUTPUT_DIRECTORY]   (the directory given to bootstrap.sh)
@@ -157,6 +157,13 @@ old_serial="$(openssl x509 -in "$WORK/single.crt" -noout -serial)"
 new_serial="$(openssl x509 -in "$WORK/renewed.crt" -noout -serial)"
 [ "$old_serial" != "$new_serial" ] || fail "renewal: same certificate"
 openssl x509 -in "$WORK/renewed.crt" -noout -subject -serial
+
+step "getcert (the serial number in hexadecimal, with colons)"
+serial="$(openssl x509 -in "$WORK/single.crt" -noout -serial | cut -d= -f2 | sed 's/../&:/g; s/:$//')"
+sscep getcert -u "$URL/tls_client" -c ra.crt -e ra.crt -k renewed.key -l renewed.crt \
+  -s "$serial" -w got.crt
+expect "$(openssl x509 -in "$WORK/got.crt" -noout -fingerprint -sha256)" \
+  "$(openssl x509 -in "$WORK/single.crt" -noout -fingerprint -sha256)" "GetCert of the first certificate"
 
 step "getcrl"
 sscep getcrl -u "$URL/tls_client" -c ra.crt -e ra.crt -k single.key -l single.crt -w crl.der

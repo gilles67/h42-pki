@@ -372,7 +372,7 @@ class ScepService:
     async def _get_cert(message: PkiMessage, content: bytes) -> Outcome:
         await _local_signer(message)
         issuer, serial = parse_issuer_and_serial(content)
-        authority = await _issuer_named(issuer)
+        authority = await _issuer_named(issuer) or await _named_by_ra(issuer)
         record = (
             await Certificate.get_or_none(issuer_id=authority.id, serial_hex=format(serial, "x"))
             if authority is not None
@@ -463,15 +463,19 @@ async def _issuer_named(name_der: bytes) -> Authority | None:
     return None
 
 
-async def _named_by_ra(name_der: bytes, serial: int) -> Authority | None:
-    """The local CA when ``name_der`` and ``serial`` are those of one of its RA certificates.
+async def _named_by_ra(name_der: bytes, serial: int | None = None) -> Authority | None:
+    """The local CA when ``name_der`` (and ``serial``, if given) are those of one of its RA
+    certificates.
 
     sscep verifies the CertRep with its ``-c`` certificate, which must therefore be the RA, and
-    builds the IssuerAndSerialNumber of GetCRL from that same certificate.
+    takes from that same certificate the issuer of GetCert and the issuer and serial of GetCRL.
     """
     for ra in await ScepRaManager().decryption_keys():
         certificate = _x509(ra.certificate)
-        if certificate.subject.public_bytes() == name_der and certificate.serial_number == serial:
+        if certificate.subject.public_bytes() == name_der and serial in (
+            None,
+            certificate.serial_number,
+        ):
             return await _local_authority()
     return None
 

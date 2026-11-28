@@ -501,8 +501,13 @@ async def test_get_cert(send: Send, ra: x509.Certificate, device_key: rsa.RSAPri
     anonymous = await send(
         new_client(device_key, ra), MessageType.GET_CERT, issuer_and_serial(current)
     )
+    # sscep names its -c certificate, the RA, as the issuer.
+    by_ra = await send(
+        scep, MessageType.GET_CERT, issuer_and_serial_of(ra.subject, current.serial_number)
+    )
 
     assert found.status is PkiStatus.SUCCESS and found.certificates == [current]
+    assert by_ra.status is PkiStatus.SUCCESS and by_ra.certificates == [current]
     assert (missing.status, missing.fail_info) == (PkiStatus.FAILURE, FailInfo.BAD_CERT_ID)
     assert (anonymous.status, anonymous.fail_info) == (PkiStatus.FAILURE, FailInfo.BAD_REQUEST)
 
