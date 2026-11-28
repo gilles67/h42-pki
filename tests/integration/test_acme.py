@@ -86,6 +86,9 @@ async def validate_all(acme_client: AcmeClient, app: FastAPI, order: dict[str, A
         [challenge] = [c for c in authz["challenges"] if c["type"] == "http-01"]
         response = await acme_client.post(challenge["url"], {})
         assert response.status_code == 200, response.text
+        if response.json()["status"] == "processing":
+            assert response.headers["Retry-After"] == "2"
+        assert f'<{authz_url}>;rel="up"' in response.headers["link"]
     await app.state.acme_validation.drain()
 
 

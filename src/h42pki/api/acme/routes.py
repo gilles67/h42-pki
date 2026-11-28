@@ -36,6 +36,7 @@ log = logging.getLogger(__name__)
 
 PROBLEM = "application/problem+json"
 PEM_CHAIN = "application/pem-certificate-chain"
+CHALLENGE_RETRY_AFTER_SECONDS = 2
 
 
 async def context(settings: Annotated[Settings, Depends(app_settings)]) -> AcmeContext:
@@ -75,7 +76,7 @@ async def answer(
     status: int = 200,
     location: str | None = None,
     links: tuple[str, ...] = (),
-    retry_after: bool = False,
+    retry_after: bool | int = False,
     index: str | None = None,
     media_type: str = "application/json",
     raw: bytes | None = None,
@@ -85,8 +86,9 @@ async def answer(
         headers["Link"] = ", ".join([headers["Link"], *links])
     if location is not None:
         headers["Location"] = location
-    if retry_after:
-        headers["Retry-After"] = str(acme.settings.retry_after_seconds)
+    if retry_after is not False:
+        seconds = acme.settings.retry_after_seconds if retry_after is True else retry_after
+        headers["Retry-After"] = str(seconds)
     body = raw if raw is not None else (b"" if content is None else json.dumps(content).encode())
     return Response(body, status_code=status, headers=headers, media_type=media_type)
 
@@ -242,7 +244,9 @@ async def challenge(request: Request, acme: Context, challenge_id: UUID) -> Resp
         acme,
         document,
         links=(f'<{acme.authz_url(authz_id)}>;rel="up"',),
-        retry_after=document["status"] == "processing",
+        # A validation takes seconds: the client polls soon (acme.retry_after_seconds is for
+        # orders waiting for a decision).
+        retry_after=CHALLENGE_RETRY_AFTER_SECONDS if document["status"] == "processing" else False,
     )
 
 
