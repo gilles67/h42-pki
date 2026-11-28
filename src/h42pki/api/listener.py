@@ -15,9 +15,9 @@ from h42pki.api.problems import problem
 
 LISTENER_EXTENSION = "h42pki.listener"
 
-# Public routes, also served over HTTP. /scep joins them with its phase.
-HTTP_EXACT_ROUTES = frozenset({"/", "/health", "/favicon.ico", "/ocsp"})
-HTTP_ROUTE_PREFIXES = ("/ca/", "/crl/", "/ocsp/")
+# Public routes, also served over HTTP (SCEP rests on CMS, not on TLS: ADR-0019).
+HTTP_EXACT_ROUTES = frozenset({"/", "/health", "/favicon.ico", "/ocsp", "/scep"})
+HTTP_ROUTE_PREFIXES = ("/ca/", "/crl/", "/ocsp/", "/scep/")
 
 
 def listener_of(scope: Scope) -> str | None:
@@ -50,7 +50,7 @@ class ListenerRoutesMiddleware:
                 404,
                 "Not Found",
                 "this route is only served over HTTPS (the HTTP listener serves /, /health, "
-                "/favicon.ico, /ca/*, /crl/* and /ocsp only)",
+                "/favicon.ico, /ca/*, /crl/*, /ocsp and /scep only)",
             )
             await response(scope, receive, send)
             return
