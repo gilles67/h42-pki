@@ -51,6 +51,7 @@ EXPECTED_LEVELS = {
     "acme.nonce_lifetime_minutes": ("hot", ()),
     "acme.authorization_lifetime_hours": ("hot", ()),
     "acme.order_lifetime_hours": ("hot", ()),
+    "acme.dns_resolvers": ("hot", ()),
     "logging.level": ("hot", ()),
     "logging.format": ("process", ()),
     "database.pool_size": ("process", ()),
@@ -238,3 +239,14 @@ def test_acme_settings() -> None:
         build_settings({"acme.terms_of_service_url": "ftp://x"})
     with pytest.raises(InvalidSetting, match="unknown profile"):
         build_settings({"acme.default_profile": "service_tls"})
+
+
+def test_acme_dns_resolvers() -> None:
+    values = ["10.0.0.53", " 10.0.0.54:8053", "::1", "[2001:db8::1]:5353"]
+
+    assert build_settings({"acme.dns_resolvers": values}).acme.dns_resolvers == [
+        "10.0.0.53:53", "10.0.0.54:8053", "[::1]:53", "[2001:db8::1]:5353",
+    ]  # fmt: skip
+    for bad in ("dns.example", "10.0.0.1:0", "10.0.0.1:x", "[::1]x"):
+        with pytest.raises(InvalidSetting, match="invalid DNS resolver"):
+            build_settings({"acme.dns_resolvers": [bad]})

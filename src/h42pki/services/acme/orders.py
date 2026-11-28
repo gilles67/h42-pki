@@ -62,8 +62,13 @@ def rfc3339(moment: datetime) -> str:
 
 
 def challenge_types(identifier: Identifier) -> list[ChallengeType]:
-    """Challenges offered for an identifier (lot 6a: http-01)."""
-    return [ChallengeType.HTTP_01]
+    """Challenges offered (ADR-0020): a wildcard needs dns-01, an IP address http-01 (RFC 8738);
+    a DNS name both (one valid challenge is enough)."""
+    if identifier.wildcard:
+        return [ChallengeType.DNS_01]
+    if identifier.type == "ip":
+        return [ChallengeType.HTTP_01]
+    return [ChallengeType.HTTP_01, ChallengeType.DNS_01]
 
 
 @dataclass(frozen=True)
@@ -93,7 +98,7 @@ class OrderService:
             )
         record = await Profile.get(name=profile)
         spec = spec_of(record)
-        identifiers = parse_identifiers(body.identifiers, allow_wildcard=False, allow_ip=False)
+        identifiers = parse_identifiers(body.identifiers, allow_wildcard=True, allow_ip=True)
         for identifier in identifiers:
             if identifier.type not in spec.san_policy.types:
                 raise AcmeError(

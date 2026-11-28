@@ -1,4 +1,4 @@
-"""Validation of ACME challenges (RFC 8555 section 8), in the background.
+"""Validation of ACME challenges (RFC 8555 section 8: http-01, dns-01), in the background.
 
 A challenge the client responded to is ``processing`` with ``next_attempt_at``; a worker claims
 an attempt by a conditional update (``attempts``, a lease in ``next_attempt_at``), checks, then
@@ -11,17 +11,24 @@ is ``valid`` and marked ``lab_validated`` (the issuance audit says so).
 """
 
 import asyncio
+import hashlib
 import ipaddress
 import logging
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
 from urllib.parse import urljoin, urlsplit
 from uuid import UUID
 
+import dns.asyncresolver
+import dns.exception
+import dns.nameserver
+import dns.resolver
 import httpx
 
 from h42pki.core.acme.errors import AcmeError
-from h42pki.core.acme.jws import key_authorization
+from h42pki.core.acme.jws import b64url, key_authorization
+from h42pki.core.settings_schema import parse_resolver
 from h42pki.models import (
     AcmeAuthorization,
     AcmeChallenge,
@@ -39,6 +46,7 @@ RETRY_DELAYS_SECONDS = (5.0, 15.0)  # after the first and the second failed atte
 ATTEMPTS = len(RETRY_DELAYS_SECONDS) + 1
 LEASE = timedelta(seconds=60)  # an attempt not finished by then is resumed
 HTTP_TIMEOUT_SECONDS = 10.0
+DNS_TIMEOUT_SECONDS = 10.0
 MAX_REDIRECTS = 10
 MAX_BODY_BYTES = 8 * 1024
 USER_AGENT = "h42pki-acme-validator"
@@ -49,6 +57,8 @@ class ChallengeChecker(Protocol):
     """Checks a challenge; raises ``AcmeError`` (connection, incorrectResponse, dns…)."""
 
     async def http01(self, host: str, token: str, expected: str) -> None: ...
+
+    async def dns01(self, domain: str, expected: str, resolvers: Sequence[str]) -> None: ...
 
 
 def _host(identifier_type: IdentifierType, value: str) -> str:
@@ -69,6 +79,27 @@ class NetworkChecker:
             raise AcmeError("connection", f"no answer from {host} within 10 seconds") from None
         if body.rstrip() != expected:
             raise AcmeError("incorrectResponse", f"{host} did not answer the key authorization")
+
+    async def dns01(self, domain: str, expected: str, resolvers: Sequence[str]) -> None:
+        """TXT ``_acme-challenge.<domain>`` holds ``expected`` (RFC 8555 section 8.4)."""
+        name = f"_acme-challenge.{domain}"
+        resolver = dns.asyncresolver.Resolver(configure=not resolvers)
+        if resolvers:
+            resolver.nameservers = [
+                dns.nameserver.Do53Nameserver(address, port)
+                for address, port in map(parse_resolver, resolvers)
+            ]
+        try:
+            answer = await resolver.resolve(name, "TXT", lifetime=DNS_TIMEOUT_SECONDS)
+        except dns.resolver.NXDOMAIN:
+            raise AcmeError("dns", f"no TXT record {name} (NXDOMAIN)") from None
+        except dns.resolver.NoAnswer:
+            raise AcmeError("dns", f"no TXT record {name}") from None
+        except dns.exception.DNSException as exc:
+            raise AcmeError("dns", f"cannot resolve {name}: {type(exc).__name__}") from None
+        values = {b"".join(rdata.strings).decode("ascii", "replace") for rdata in answer}
+        if expected not in values:
+            raise AcmeError("incorrectResponse", f"no TXT record {name} with the expected digest")
 
     @staticmethod
     async def _fetch(url: str) -> str:
@@ -206,6 +237,11 @@ class AcmeValidation:
         if challenge.type is ChallengeType.HTTP_01:
             host = _host(authorization.identifier_type, authorization.identifier_value)
             await self.checker.http01(host, challenge.token, expected)
+            return
+        if challenge.type is ChallengeType.DNS_01:
+            digest = b64url(hashlib.sha256(expected.encode("ascii")).digest())
+            resolvers = (await SettingsService().effective()).acme.dns_resolvers
+            await self.checker.dns01(authorization.identifier_value, digest, resolvers)
             return
         raise AcmeError("malformed", f"challenge type {challenge.type.value} is not supported")
 

@@ -2,7 +2,8 @@
 
 Order: pending → ready (every authorization valid) → processing (finalize) → valid | invalid;
 pending or ready → invalid when an authorization fails or the order expires. Authorization:
-pending → valid | invalid | expired (deactivated by the client). Challenge: pending → processing
+pending → valid (one challenge valid) | invalid (one challenge failed) | expired
+(deactivated by the client). Challenge: pending → processing
 → valid | invalid. Statuses are plain strings here (``core`` does not import the models, whose
 ``StrEnum`` values are the same).
 """
@@ -22,7 +23,7 @@ def authorization_status(
     statuses = list(challenge_statuses)
     if "valid" in statuses:
         return "valid"
-    if statuses and all(status == "invalid" for status in statuses):
+    if "invalid" in statuses:  # RFC 8555 section 7.1.6: a failed attempt invalidates it
         return "invalid"
     if now >= expires_at:
         return "expired"

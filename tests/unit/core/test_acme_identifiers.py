@@ -124,7 +124,7 @@ def test_authorization_transitions() -> None:
     assert status("pending", ["pending"], expires_at=LATER, now=NOW) == "pending"
     assert status("pending", ["processing", "valid"], expires_at=LATER, now=NOW) == "valid"
     assert status("pending", ["invalid", "invalid"], expires_at=LATER, now=NOW) == "invalid"
-    assert status("pending", ["invalid", "pending"], expires_at=LATER, now=NOW) == "pending"
+    assert status("pending", ["invalid", "pending"], expires_at=LATER, now=NOW) == "invalid"
     assert status("pending", ["pending"], expires_at=NOW, now=NOW) == "expired"
     assert status("deactivated", ["valid"], expires_at=LATER, now=NOW) == "deactivated"
 

@@ -13,6 +13,7 @@ Each field declares how a change is applied:
 Settings of phases 1.1 to 6 (ARCHITECTURE section 7.2).
 """
 
+import ipaddress
 import json
 import ssl
 from collections.abc import Mapping
@@ -371,6 +372,33 @@ def _https_origin(value: str, name: str) -> str:
     return value
 
 
+def parse_resolver(value: str) -> tuple[str, int]:
+    """``IP``, ``IP:port`` or ``[IPv6]:port`` → (address, port); port 53 by default."""
+    text = value.strip()
+    host, port = text, "53"
+    if text.startswith("["):
+        host, _, rest = text[1:].partition("]")
+        if rest:
+            if not rest.startswith(":"):
+                raise ValueError(f"invalid DNS resolver {value!r}")
+            port = rest[1:]
+    elif text.count(":") == 1:
+        host, port = text.split(":")
+    try:
+        address = str(ipaddress.ip_address(host))
+        number = int(port)
+    except ValueError:
+        raise ValueError(f"invalid DNS resolver {value!r}: an IP address and a port") from None
+    if not 1 <= number <= 65535:
+        raise ValueError(f"invalid DNS resolver {value!r}: port out of range")
+    return address, number
+
+
+def format_resolver(address: str, port: int) -> str:
+    host = f"[{address}]" if ":" in address else address
+    return f"{host}:{port}"
+
+
 class AcmeSettings(_Section):
     """ACME (RFC 8555, ADR-0020): disabled by default, like every enrollment protocol."""
 
@@ -447,6 +475,14 @@ class AcmeSettings(_Section):
         ge=1,
         le=720,
     )
+    dns_resolvers: list[str] = _setting(
+        [],
+        apply=ApplyLevel.HOT,
+        description=(
+            "Resolvers asked for the TXT records of dns-01 (IP or IP:port, [IPv6]:port); "
+            "empty: the resolvers of the system."
+        ),
+    )
 
     @field_validator("default_profile")
     @classmethod
@@ -462,6 +498,11 @@ class AcmeSettings(_Section):
     @classmethod
     def _check_base_url(cls, value: str) -> str:
         return _https_origin(value, "acme.base_url")
+
+    @field_validator("dns_resolvers")
+    @classmethod
+    def _check_resolvers(cls, value: list[str]) -> list[str]:
+        return [format_resolver(*parse_resolver(item)) for item in value]
 
     @field_validator("terms_of_service_url")
     @classmethod

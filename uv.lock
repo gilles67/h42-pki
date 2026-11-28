@@ -527,6 +527,7 @@ source = { editable = "." }
 dependencies = [
     { name = "asn1crypto" },
     { name = "cryptography" },
+    { name = "dnspython" },
     { name = "fastapi", extra = ["standard"] },
     { name = "httpx" },
     { name = "pydantic-settings" },
@@ -557,6 +558,7 @@ dev = [
 requires-dist = [
     { name = "asn1crypto", specifier = ">=1.5.1" },
     { name = "cryptography", specifier = ">=48.0.0" },
+    { name = "dnspython", specifier = ">=2.8.0" },
     { name = "fastapi", extras = ["standard"], specifier = ">=0.136.3" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "pydantic-settings", specifier = ">=2.14.1" },
