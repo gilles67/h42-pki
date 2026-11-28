@@ -529,10 +529,20 @@ async def test_get_crl(
     await CrlService(keystore).ensure_fresh(await Authority.get(id=authority.id))
 
     with_crl = await send(scep, MessageType.GET_CRL, issuer_and_serial(current))
+    # sscep names its -c certificate, the RA (whose signature it verifies).
+    named_by_ra = await send(
+        scep, MessageType.GET_CRL, issuer_and_serial_of(ra.subject, ra.serial_number)
+    )
+    other_serial = await send(scep, MessageType.GET_CRL, issuer_and_serial_of(ra.subject, 1))
 
     assert (without.status, without.fail_info) == (PkiStatus.FAILURE, FailInfo.BAD_REQUEST)
     assert with_crl.status is PkiStatus.SUCCESS and len(with_crl.crls) == 1
     assert x509.load_der_x509_crl(with_crl.crls[0]).issuer == current.issuer
+    assert named_by_ra.status is PkiStatus.SUCCESS and named_by_ra.crls == with_crl.crls
+    assert (other_serial.status, other_serial.fail_info) == (
+        PkiStatus.FAILURE,
+        FailInfo.BAD_CERT_ID,
+    )
 
 
 # --- RA renewal, CA key, secrets --------------------------------------------------------------

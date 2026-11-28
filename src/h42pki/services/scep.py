@@ -385,8 +385,8 @@ class ScepService:
     @staticmethod
     async def _get_crl(message: PkiMessage, content: bytes) -> Outcome:
         await _local_signer(message)
-        issuer, _ = parse_issuer_and_serial(content)
-        authority = await _issuer_named(issuer)
+        issuer, serial = parse_issuer_and_serial(content)
+        authority = await _issuer_named(issuer) or await _named_by_ra(issuer, serial)
         if authority is None:
             raise ScepError(FailInfo.BAD_CERT_ID, "unknown issuer")
         crl = await CrlService.current(authority) if authority.crl_enabled else None
@@ -460,6 +460,19 @@ async def _issuer_named(name_der: bytes) -> Authority | None:
     ).prefetch_related("certificate"):
         if _x509(authority.certificate).subject.public_bytes() == name_der:
             return authority
+    return None
+
+
+async def _named_by_ra(name_der: bytes, serial: int) -> Authority | None:
+    """The local CA when ``name_der`` and ``serial`` are those of one of its RA certificates.
+
+    sscep verifies the CertRep with its ``-c`` certificate, which must therefore be the RA, and
+    builds the IssuerAndSerialNumber of GetCRL from that same certificate.
+    """
+    for ra in await ScepRaManager().decryption_keys():
+        certificate = _x509(ra.certificate)
+        if certificate.subject.public_bytes() == name_der and certificate.serial_number == serial:
+            return await _local_authority()
     return None
 
 
