@@ -38,6 +38,7 @@ class FakeChecker:
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, str, str]] = []
+        self.dns_calls: list[tuple[str, str, list[str]]] = []
         self.failures = 0
 
     async def http01(self, host: str, token: str, expected: str) -> None:
@@ -45,6 +46,12 @@ class FakeChecker:
         if self.failures:
             self.failures -= 1
             raise AcmeError("connection", f"cannot reach {host}")
+
+    async def dns01(self, domain: str, expected: str, resolvers: Any) -> None:
+        self.dns_calls.append((domain, expected, list(resolvers)))
+        if self.failures:
+            self.failures -= 1
+            raise AcmeError("dns", f"no TXT record _acme-challenge.{domain}")
 
 
 @pytest.fixture
@@ -74,16 +81,24 @@ async def acme_client(acme: None, client: AsyncClient, account_key: Any) -> Acme
     return acme_client
 
 
+def http01(authz: dict[str, Any]) -> dict[str, Any]:
+    [challenge] = [c for c in authz["challenges"] if c["type"] == "http-01"]
+    return challenge
+
+
 def problem(response: Any) -> str:
     assert response.headers["content-type"] == "application/problem+json", response.text
     assert "Replay-Nonce" in response.headers
     return str(response.json()["type"]).removeprefix(PROBLEM)
 
 
-async def validate_all(acme_client: AcmeClient, app: FastAPI, order: dict[str, Any]) -> None:
+async def validate_all(
+    acme_client: AcmeClient, app: FastAPI, order: dict[str, Any], kind: str = "http-01"
+) -> None:
     for authz_url in order["authorizations"]:
         authz = (await acme_client.get(authz_url)).json()
-        [challenge] = [c for c in authz["challenges"] if c["type"] == "http-01"]
+        offered = {c["type"]: c for c in authz["challenges"]}
+        challenge = offered.get(kind) or offered["dns-01"]  # a wildcard: dns-01 only
         response = await acme_client.post(challenge["url"], {})
         assert response.status_code == 200, response.text
         if response.json()["status"] == "processing":
@@ -93,15 +108,20 @@ async def validate_all(acme_client: AcmeClient, app: FastAPI, order: dict[str, A
 
 
 async def issue(
-    acme_client: AcmeClient, app: FastAPI, *names: str
+    acme_client: AcmeClient, app: FastAPI, *names: str, ips: tuple[str, ...] = ()
 ) -> tuple[str, dict[str, Any], ec.EllipticCurvePrivateKey]:
-    created = await acme_client.order(*names)
+    identifiers = [{"type": "dns", "value": n} for n in names]
+    identifiers += [{"type": "ip", "value": ip} for ip in ips]
+    created = await acme_client.post(
+        acme_client.directory["newOrder"], {"identifiers": identifiers}
+    )
     assert created.status_code == 201, created.text
     order_url = created.headers["Location"]
     await validate_all(acme_client, app, created.json())
     key = ec.generate_private_key(ec.SECP256R1())
     finalize = created.json()["finalize"]
-    response = await acme_client.post(finalize, {"csr": b64url(csr_der(key, list(names)))})
+    csr = csr_der(key, list(names), ips=list(ips))
+    response = await acme_client.post(finalize, {"csr": b64url(csr)})
     assert response.status_code == 200, response.text
     return order_url, response.json(), key
 
@@ -148,6 +168,7 @@ async def test_directory(client: AsyncClient) -> None:
         "newNonce": f"{BASE}/acme/new-nonce",
         "newAccount": f"{BASE}/acme/new-account",
         "newOrder": f"{BASE}/acme/new-order",
+        "revokeCert": f"{BASE}/acme/revoke-cert",
         "meta": {"externalAccountRequired": False, "profile": "tls_server"},
     }
     assert by_profile.json()["newOrder"] == f"{BASE}/acme/tls_client/new-order"
@@ -370,15 +391,16 @@ async def test_order_document(acme_client: AcmeClient) -> None:
     assert document["status"] == "pending"
     assert document["identifiers"] == [{"type": "dns", "value": "www.example.test"}]
     assert authz["identifier"] == {"type": "dns", "value": "www.example.test"}
-    assert [c["type"] for c in authz["challenges"]] == ["http-01"]
+    assert [c["type"] for c in authz["challenges"]] == ["dns-01", "http-01"]
     assert authz["challenges"][0]["status"] == "pending"
 
 
 @pytest.mark.parametrize(
     ("identifiers", "code"),
     [
-        ([{"type": "dns", "value": "*.example.test"}], "rejectedIdentifier"),
+        ([{"type": "dns", "value": "*.*.example.test"}], "rejectedIdentifier"),
         ([{"type": "dns", "value": "nodot"}], "rejectedIdentifier"),
+        ([{"type": "ip", "value": "not-an-ip"}], "malformed"),
         ([{"type": "email", "value": "a@b.test"}], "unsupportedIdentifier"),
         ([], "malformed"),
     ],
@@ -426,7 +448,8 @@ async def test_failed_validation_after_three_attempts(
 
     assert len(checker.calls) == 3
     assert order["status"] == "invalid" and authz["status"] == "invalid"
-    assert authz["challenges"][0]["error"]["type"] == PROBLEM + "connection"
+    [http] = [c for c in authz["challenges"] if c["type"] == "http-01"]
+    assert http["error"]["type"] == PROBLEM + "connection"
 
 
 async def test_validation_retried_then_valid(
@@ -446,7 +469,7 @@ async def test_validation_resumed_after_a_restart(
 ) -> None:
     created = await acme_client.order("resume.example.test")
     authz = (await acme_client.get(created.json()["authorizations"][0])).json()
-    challenge_id = authz["challenges"][0]["url"].rsplit("/", 1)[1]
+    challenge_id = http01(authz)["url"].rsplit("/", 1)[1]
     # As if the server stopped during an attempt: processing, lease expired.
     await AcmeChallenge.filter(id=challenge_id).update(
         status=ChallengeStatus.PROCESSING, attempts=1,
@@ -640,7 +663,7 @@ async def test_acme_task_resumes_and_purges(acme_client: AcmeClient, app: FastAP
 
     created = await acme_client.order("task.example.test")
     authz = (await acme_client.get(created.json()["authorizations"][0])).json()
-    challenge_id = authz["challenges"][0]["url"].rsplit("/", 1)[1]
+    challenge_id = http01(authz)["url"].rsplit("/", 1)[1]
     await AcmeChallenge.filter(id=challenge_id).update(
         status=ChallengeStatus.PROCESSING, next_attempt_at=datetime.now(UTC)
     )
@@ -651,3 +674,197 @@ async def test_acme_task_resumes_and_purges(acme_client: AcmeClient, app: FastAP
 
     assert (await AcmeChallenge.get(id=challenge_id)).status is ChallengeStatus.VALID
     assert not await AcmeNonce.filter(value="old").exists()
+
+
+# --- dns-01 and wildcards ---------------------------------------------------------------------
+
+
+async def test_wildcard_with_dns01(
+    acme_client: AcmeClient, app: FastAPI, checker: FakeChecker
+) -> None:
+    import hashlib
+
+    from h42pki.core.acme.jws import jwk_of, thumbprint
+
+    _, final, _ = await issue(acme_client, app, "*.example.test", "example.test")
+    wildcard, plain = [(await acme_client.get(url)).json() for url in final["authorizations"]]
+    leaf = x509.load_pem_x509_certificates((await acme_client.get(final["certificate"])).content)[0]
+
+    assert final["identifiers"] == [
+        {"type": "dns", "value": "*.example.test"}, {"type": "dns", "value": "example.test"},
+    ]  # fmt: skip
+    assert wildcard["identifier"] == {"type": "dns", "value": "example.test"}
+    assert wildcard["wildcard"] is True and [c["type"] for c in wildcard["challenges"]] == [
+        "dns-01"
+    ]
+    assert "wildcard" not in plain and plain["status"] == "valid"
+    sans = leaf.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+    assert sorted(sans.get_values_for_type(x509.DNSName)) == ["*.example.test", "example.test"]
+    # dns-01: TXT _acme-challenge.example.test = base64url(SHA-256(key authorization)).
+    token = wildcard["challenges"][0]["token"]
+    key_auth = f"{token}.{thumbprint(jwk_of(acme_client.key.public_key()))}"
+    assert checker.dns_calls == [
+        ("example.test", b64url(hashlib.sha256(key_auth.encode()).digest()), [])
+    ]
+
+
+async def test_dns01_resolvers_and_failure(
+    acme_client: AcmeClient, app: FastAPI, checker: FakeChecker
+) -> None:
+    await SettingsService().set("acme.dns_resolvers", ["10.89.0.53:8053"], actor="cli")
+    checker.failures = 3
+    created = await acme_client.order("*.down.example.test")
+    await validate_all(acme_client, app, created.json(), kind="dns-01")
+
+    order = (await acme_client.get(created.headers["Location"])).json()
+
+    assert order["status"] == "invalid"
+    assert [r for _, _, r in checker.dns_calls] == [["10.89.0.53:8053"]] * 3
+
+
+# --- IP identifiers (RFC 8738) ----------------------------------------------------------------
+
+
+async def test_ip_identifiers(acme_client: AcmeClient, app: FastAPI, checker: FakeChecker) -> None:
+    created = await acme_client.order("192.0.2.10", "2001:DB8::10", kind="ip")
+    authz = (await acme_client.get(created.json()["authorizations"][1])).json()
+    _, final, _ = await issue(acme_client, app, ips=("192.0.2.10", "2001:db8::10"))
+    leaf = x509.load_pem_x509_certificates((await acme_client.get(final["certificate"])).content)[0]
+
+    assert created.json()["identifiers"][1] == {"type": "ip", "value": "2001:db8::10"}
+    assert [c["type"] for c in authz["challenges"]] == ["http-01"]
+    assert {host for host, _, _ in checker.calls} == {"192.0.2.10", "[2001:db8::10]"}
+    sans = leaf.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+    assert sorted(str(ip) for ip in sans.get_values_for_type(x509.IPAddress)) == [
+        "192.0.2.10", "2001:db8::10",
+    ]  # fmt: skip
+
+
+async def test_ip_refused_by_the_profile(acme_client: AcmeClient) -> None:
+    response = await acme_client.post(
+        f"{BASE}/acme/tls_client/new-order", {"identifiers": [{"type": "ip", "value": "192.0.2.1"}]}
+    )
+
+    assert problem(response) == "rejectedIdentifier"
+
+
+# --- revokeCert -------------------------------------------------------------------------------
+
+
+@pytest.fixture
+async def revocable(client: AsyncClient, make_root: RootFactory, checker: FakeChecker) -> None:
+    await make_root(crl=True, ocsp=True, public_base_url="http://ca.test")
+    await SettingsService().set("acme.enabled", True, actor="cli")
+
+
+async def registered(client: AsyncClient) -> AcmeClient:
+    acme_client = AcmeClient(client, ec.generate_private_key(ec.SECP256R1()))
+    assert (await acme_client.register()).status_code == 201
+    return acme_client
+
+
+async def ocsp_status(client: AsyncClient, leaf: x509.Certificate) -> Any:
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.x509 import ocsp
+
+    from h42pki.models import Authority
+    from h42pki.models import Certificate as CertificateRecord
+
+    authority = await Authority.get(kind="local")
+    root = x509.load_der_x509_certificate(
+        (await CertificateRecord.get(authority_id=authority.id)).der
+    )
+    request = (
+        ocsp.OCSPRequestBuilder()
+        .add_certificate(leaf, root, hashes.SHA1())  # noqa: S303 - CertID of RFC 5019
+        .build()
+        .public_bytes(serialization.Encoding.DER)
+    )
+    response = await client.post(
+        "/ocsp", content=request, headers={"content-type": "application/ocsp-request"}
+    )
+    return ocsp.load_der_ocsp_response(response.content).certificate_status
+
+
+@pytest.mark.usefixtures("revocable")
+@pytest.mark.parametrize("signer", ["account", "certificate_key"])
+async def test_revoke_cert(client: AsyncClient, app: FastAPI, signer: str) -> None:
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.x509 import ocsp
+
+    from h42pki.models import Certificate as CertificateRecord
+    from h42pki.models import CertificateStatus, Crl
+
+    acme_client = await registered(client)
+    _, final, key = await issue(acme_client, app, "revoke.example.test")
+    leaf = x509.load_pem_x509_certificates((await acme_client.get(final["certificate"])).content)[0]
+    der = leaf.public_bytes(serialization.Encoding.DER)
+    assert await ocsp_status(client, leaf) is ocsp.OCSPCertStatus.GOOD
+
+    url = acme_client.directory["revokeCert"]
+    payload = {"certificate": b64url(der), "reason": 4}
+    if signer == "account":
+        response = await acme_client.post(url, payload)
+    else:
+        response = await acme_client.post(url, payload, use_jwk=True, key=key)
+    again = await acme_client.post(url, payload)
+
+    assert response.status_code == 200 and response.content == b"", response.text
+    assert problem(again) == "alreadyRevoked"
+    record = await CertificateRecord.get(sha256_fingerprint=leaf.fingerprint(hashes_sha256()).hex())
+    assert record.status is CertificateStatus.REVOKED
+    assert record.revocation_reason is x509.ReasonFlags.superseded
+    crl = x509.load_der_x509_crl((await Crl.all().order_by("-crl_number").first()).der)  # type: ignore[union-attr]
+    assert crl.get_revoked_certificate_by_serial_number(leaf.serial_number) is not None
+    assert await ocsp_status(client, leaf) is ocsp.OCSPCertStatus.REVOKED
+
+
+def hashes_sha256() -> Any:
+    from cryptography.hazmat.primitives import hashes
+
+    return hashes.SHA256()
+
+
+@pytest.mark.usefixtures("revocable")
+async def test_revoke_cert_refused(client: AsyncClient, app: FastAPI) -> None:
+    from cryptography.hazmat.primitives import serialization
+
+    owner = await registered(client)
+    other = await registered(client)
+    _, final, _ = await issue(owner, app, "keep.example.test")
+    leaf = x509.load_pem_x509_certificates((await owner.get(final["certificate"])).content)[0]
+    der = b64url(leaf.public_bytes(serialization.Encoding.DER))
+    url = owner.directory["revokeCert"]
+
+    by_other = await other.post(url, {"certificate": der})
+    by_other_key = await other.post(url, {"certificate": der}, use_jwk=True)
+    suspension = await owner.post(url, {"certificate": der, "reason": 6})
+    ca_compromise = await owner.post(url, {"certificate": der, "reason": 2})
+    unknown = await owner.post(url, {"certificate": b64url(b"\x30\x00")})
+
+    assert problem(by_other) == "unauthorized" and problem(by_other_key) == "unauthorized"
+    assert problem(suspension) == "badRevocationReason"
+    assert problem(ca_compromise) == "badRevocationReason"
+    assert problem(unknown) == "malformed"
+
+
+# --- administration ---------------------------------------------------------------------------
+
+
+async def test_admin_accounts(acme_client: AcmeClient, client: AsyncClient, app: FastAPI) -> None:
+    await issue(acme_client, app, "admin.example.test")
+    account_id = (acme_client.kid or "").rsplit("/", 1)[1]
+
+    listed = (await client.get("/api/v1/acme/accounts")).json()
+    shown = (await client.get(f"/api/v1/acme/accounts/{account_id}")).json()
+    deactivated = await client.post(f"/api/v1/acme/accounts/{account_id}/deactivate")
+    after = await acme_client.get(acme_client.kid or "")
+    missing = await client.get("/api/v1/acme/accounts/00000000-0000-0000-0000-000000000000")
+
+    assert [a["id"] for a in listed] == [account_id]
+    assert shown["orders"] == 1 and shown["key_type"] == "EC" and shown["status"] == "valid"
+    assert deactivated.json()["status"] == "deactivated"
+    assert problem(after) == "unauthorized"
+    assert missing.status_code == 404
+    entry = await AuditLog.filter(action="acme.account.deactivate").first()
+    assert entry is not None and entry.actor == "anonymous"
