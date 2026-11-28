@@ -15,6 +15,7 @@ from tortoise import connections
 from h42pki import __version__
 from h42pki.heartbeat import HEARTBEAT_MAX_AGE_SECONDS, heartbeat_age
 from h42pki.models import AuthorityStatus
+from h42pki.services.acme.context import LAB_MODE_WARNING
 from h42pki.services.authority import AuthorityService
 from h42pki.services.crl import CrlService
 from h42pki.services.scep_ra import ScepRaManager
@@ -44,6 +45,11 @@ class ParentCheckHealth(BaseModel):
     checked_at: datetime
 
 
+class AcmeHealth(BaseModel):
+    lab_mode: bool  # acme.insecure_skip_validation: challenges not checked
+    manual_approval: bool
+
+
 class ScepHealth(BaseModel):
     ra_not_after: datetime | None
     renewal: Literal["ok", "failing", "unknown"] = "unknown"  # scheduled task of the launcher
@@ -62,6 +68,7 @@ class Health(BaseModel):
     ocsp: Literal["enabled", "disabled"] | None
     parent_check: ParentCheckHealth | None  # subordinate CA, once checked
     scep: ScepHealth | Literal["disabled"] | None  # None without a local CA
+    acme: AcmeHealth | Literal["disabled"] | None  # None when the database is unavailable
     warnings: list[str]
 
 
@@ -117,6 +124,18 @@ async def _revocation(
                 f"the status check with the parent CA failed ({authority.parent_check_result})"
             )
     return crl, "enabled" if authority.ocsp_enabled else "disabled", parent_check
+
+
+async def _acme(warnings: list[str]) -> AcmeHealth | Literal["disabled"]:
+    """ACME (ADR-0020): lab mode is a warning, whether ACME is enabled or not."""
+    settings = (await SettingsService().effective()).acme
+    if settings.insecure_skip_validation:
+        warnings.append(LAB_MODE_WARNING)
+    if not settings.enabled:
+        return "disabled"
+    return AcmeHealth(
+        lab_mode=settings.insecure_skip_validation, manual_approval=settings.manual_approval
+    )
 
 
 async def _scep(
@@ -179,9 +198,11 @@ async def health(request: Request, response: Response) -> Health:
     ocsp: Literal["enabled", "disabled"] | None = None
     parent_check: ParentCheckHealth | None = None
     scep: ScepHealth | Literal["disabled"] | None = None
+    acme: AcmeHealth | Literal["disabled"] | None = None
     if database:
         crl, ocsp, parent_check = await _revocation(launcher, warnings)
         scep = await _scep(launcher, warnings)
+        acme = await _acme(warnings)
 
     if not database:
         status: Literal["ok", "degraded", "unavailable"] = "unavailable"
@@ -201,5 +222,6 @@ async def health(request: Request, response: Response) -> Health:
         ocsp=ocsp,
         parent_check=parent_check,
         scep=scep,
+        acme=acme,
         warnings=warnings,
     )

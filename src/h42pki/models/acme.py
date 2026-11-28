@@ -142,6 +142,7 @@ class AcmeChallenge(TimestampedModel):
     error: fields.JSONField[dict[str, Any] | None] = fields.JSONField(null=True)
     attempts = fields.IntField(default=0)  # validation attempts made
     next_attempt_at = fields.DatetimeField(null=True)  # while processing
+    lab_validated = fields.BooleanField(default=False)  # acme.insecure_skip_validation
 
     authorization_id: UUID
 

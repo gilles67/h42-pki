@@ -158,6 +158,7 @@ class IssuanceService:
         server_keygen: bool = False,
         sealed_csr: bool = False,
         on_recorded: Callable[[CertificateRequest], Awaitable[None]] | None = None,
+        force_manual: bool = False,
     ) -> CertificateRequest:
         """Record a request; issue it at once when the profile auto-approves.
 
@@ -168,6 +169,8 @@ class IssuanceService:
         ``sealed_csr``: the CSR is stored sealed by the key store (SCEP: it carries the challenge in
         clear), with its SHA-256 in the metadata. ``on_recorded`` runs in the transaction that
         records the request (consumes a SCEP challenge; raising cancels everything).
+        ``force_manual``: the request waits for a decision even if the profile auto-approves
+        (``acme.manual_approval``, ADR-0020).
 
         The request is checked against the profile and the active CA before being stored: a
         request that could never be issued is refused (422) instead of waiting for a decision.
@@ -189,6 +192,8 @@ class IssuanceService:
             stored_csr = await self._keystore.seal(der)
             extra["csr_sealed"] = True
             extra["csr_sha256"] = hashlib.sha256(der).hexdigest()
+        if force_manual and prepared.spec.auto_approve:
+            extra["manual_approval"] = True
         async with in_transaction():
             request = await self._record(
                 prepared,
@@ -200,7 +205,7 @@ class IssuanceService:
             )
             if on_recorded is not None:
                 await on_recorded(request)
-        if prepared.spec.auto_approve:
+        if prepared.spec.auto_approve and not force_manual:
             return await self._issue(
                 request, parsed=prepared.parsed, actor=actor, decided_by=AUTO_APPROVE
             )
@@ -572,6 +577,11 @@ class IssuanceService:
                     "validity_truncated": issued.validity_truncated,
                     "decided_by": decided_by,
                     "channel": request.channel.value,
+                    **(
+                        {"insecure_skip_validation": True}
+                        if (request.metadata or {}).get("insecure_skip_validation")
+                        else {}
+                    ),
                 },
             )
         return await self.get(request.id)

@@ -1,6 +1,9 @@
-"""Scheduled tasks of phase 3 (ADR-0017): CRL, expired status (B34), purge (B44), parent check."""
+"""Scheduled tasks: CRL, expired status (B34), purge (B44), parent check (ADR-0017), SCEP RA
+(ADR-0019), ACME validations and nonces (ADR-0020)."""
 
 from h42pki.keystore import KeyStore
+from h42pki.services.acme.nonces import NonceService
+from h42pki.services.acme.validation import AcmeValidation
 from h42pki.services.crl import CrlService
 from h42pki.services.maintenance import MaintenanceService
 from h42pki.services.parent_check import ParentCheckService
@@ -62,3 +65,17 @@ def scep_ra_task(keystore: KeyStore, *, interval: float | None = None) -> Period
     """Every day, at start-up, and when a scep setting changes: the SCEP RA certificate."""
     manager = ScepRaManager(keystore)
     return PeriodicTask("scep_ra", manager.ensure, interval=interval or SCEP_RA_INTERVAL_SECONDS)
+
+
+ACME_INTERVAL_SECONDS = 30.0
+
+
+def acme_task(validation: AcmeValidation, *, interval: float | None = None) -> PeriodicTask:
+    """Every 30 seconds (and at start-up): ACME validations due resumed (after a restart too),
+    expired nonces deleted."""
+
+    async def run() -> None:
+        await validation.resume()
+        await NonceService.purge()
+
+    return PeriodicTask("acme", run, interval=interval or ACME_INTERVAL_SECONDS)

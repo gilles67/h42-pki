@@ -42,10 +42,12 @@ from h42pki.logs import set_log_level
 from h42pki.models import Certificate
 from h42pki.server.protocol import HttpListenerProtocol, HttpsListenerProtocol
 from h42pki.server.ssl_context import build_context, load_certificate
+from h42pki.services.acme.context import LAB_MODE_WARNING
 from h42pki.services.authority import AuthorityService
 from h42pki.services.settings import SettingsWatcher
 from h42pki.services.tls_service import TlsMaterial, TlsServiceManager
 from h42pki.tasks.maintenance import (
+    acme_task,
     crl_task,
     expiry_task,
     parent_check_task,
@@ -145,6 +147,7 @@ class Launcher:
                 purge_task(),
                 parent_check_task(),
                 scep_ra_task(keystore),
+                acme_task(app.state.acme_validation),
             ]
         )
         self.status.tasks = {task.name: task.state for task in self._tasks}
@@ -211,6 +214,8 @@ class Launcher:
 
     async def _warn_at_start(self) -> None:
         settings = self._settings
+        if self._watcher.current.acme.insecure_skip_validation:
+            log.warning(LAB_MODE_WARNING)
         if settings.https_enabled and not settings.http_enabled:
             log.warning(
                 "HTTP is disabled while HTTPS is enabled: clients that check revocation or fetch "
@@ -284,6 +289,8 @@ class Launcher:
             log.info("log level set to %s", current.logging.level)
         if previous.tls_service != current.tls_service and self._renewal is not None:
             self._renewal.check_soon()
+        if current.acme.insecure_skip_validation and not previous.acme.insecure_skip_validation:
+            log.warning(LAB_MODE_WARNING)
         if previous.scep != current.scep:  # SCEP enabled, or RA settings changed: check the RA
             for task in self._tasks:
                 if task.name == "scep_ra":
